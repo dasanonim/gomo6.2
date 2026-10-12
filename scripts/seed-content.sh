@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# Gomo6 — dev content filler for the «Общение» section.
+# Gomo6 — dev content filler for the «Общее» section.
 #
 # Uses the EXISTING test accounts (demo / alice / bob) — no new users — and
-# fills the «Общение» раздел with on-topic threads (болталка / знакомства /
-# встречи / оффтоп), replies, likes and a few wall posts (some media-only).
+# fills the «Общее» раздел with on-topic threads (болталка / знакомства /
+# встречи / общие обсуждения), replies, likes and a few wall posts (some
+# media-only).
 #
 #   BASE_URL=http://localhost:8080  PASSWORD=gomo6-demo-9f3k2x
 #   THREADS=120 REPLIES=240 WALLPOSTS=20  ./scripts/seed-content.sh
-#   ./scripts/seed-content.sh --clean     # delete the seeded threads in «Общение»
+#   ./scripts/seed-content.sh --clean     # delete the seeded threads in «Общее»
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
@@ -78,7 +79,7 @@ echo "▸ accounts: ${U_NAME[*]}"
 SECTION_ID="$(req GET "/api/v1/thread_sections?slug=eq.$SECTION_SLUG" "" | jqget '.data[0].id')"
 [ -n "$SECTION_ID" ] && [ "$SECTION_ID" != "null" ] || { echo "section '$SECTION_SLUG' not found"; exit 1; }
 
-# ── Content banks (on-topic for «Общение») ───────────────────────────────────
+# ── Content banks (on-topic for «Общее») ─────────────────────────────────────
 TITLES=(
   "Оффтоп-тред" "Просто поболтать" "Как прошли выходные?" "Ищу компанию на вечер"
   "Кто откуда родом?" "Что вас радует сегодня?" "Планы на неделю" "Уютные вечера"

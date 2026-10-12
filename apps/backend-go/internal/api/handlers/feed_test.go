@@ -64,7 +64,7 @@ func TestGetUserFeed_AuthenticatedWithThreadAndWall(t *testing.T) {
 			`{"content":"games"}`, 3,
 			"author-1", "alice", "Alice", nil, false, "avatar1",
 			"board-1", "b", "Board", false,
-			"sec-1", "general", "Общение", "💬", nil, nil, nil,
+			"sec-1", "general", "Общее", "hash", nil, nil, nil,
 			nil,
 			5, 3, 0, true, 42,
 		).
@@ -233,7 +233,7 @@ func TestGetUserFeed_AttachesPublicIDs(t *testing.T) {
 			`{"content":"games"}`, 3,
 			"author-1", "alice", "Alice", nil, false, "avatar1",
 			"board-1", "b", "Board", false,
-			"sec-1", "general", "Общение", "💬", nil, nil, nil,
+			"sec-1", "general", "Общее", "hash", nil, nil, nil,
 			nil,
 			5, 3, 0, true, 42,
 		).

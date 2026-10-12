@@ -181,9 +181,9 @@ function setupLoggedIn() {
             {
               id: "sec-1",
               slug: "general",
-              name: "Общение",
+              name: "Общее",
               description: null,
-              icon: "message-circle",
+              icon: "hash",
               is_nsfw: false,
               sort_order: 10,
             },
@@ -191,19 +191,8 @@ function setupLoggedIn() {
           error: null,
         });
       case "thread_subsections":
-        return makePromiseChain({
-          data: [
-            {
-              id: "sub-1",
-              section_id: "sec-1",
-              slug: "dating",
-              name: "Знакомства",
-              description: null,
-              sort_order: 10,
-            },
-          ],
-          error: null,
-        });
+        // «Общее» is a flat catch-all — it has no подразделы (issue #506).
+        return makePromiseChain({ data: [], error: null });
       default:
         return makePromiseChain({ data: [], error: null });
     }
@@ -327,17 +316,17 @@ describe("Index", () => {
     mockParams.current = { sectionSlug: "general" };
     renderWithProviders(<IndexComponent />);
 
-    await waitFor(() => expect(screen.getByTestId("section-threads")).toHaveTextContent("Общение"));
+    await waitFor(() => expect(screen.getByTestId("section-threads")).toHaveTextContent("Общее"));
     expect(screen.queryByTestId("thread-feed")).not.toBeInTheDocument();
   });
 
   it("redirects the legacy ?section= URL to the /c/ path form", async () => {
     setupLoggedIn();
-    window.history.pushState({}, "", "/?section=general&sub=dating");
+    window.history.pushState({}, "", "/?section=humor&sub=memes");
     renderWithProviders(<IndexComponent />);
 
     await waitFor(() =>
-      expect(mockNavigate).toHaveBeenCalledWith("/c/general/dating", { replace: true }),
+      expect(mockNavigate).toHaveBeenCalledWith("/c/humor/memes", { replace: true }),
     );
   });
 
