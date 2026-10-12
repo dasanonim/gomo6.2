@@ -5,12 +5,7 @@
 # Всё, что закоммичено прямо в Codeberg/GitLab, будет перезаписано следующим
 # прогоном (push идёт с --force --prune).
 #
-# ⚠ Папка .forgejo/ осталась нетронутой, и в ней лежит СВОЙ mirror.yml —
-# Codeberg → GitHub. Пока он включён, два зеркала будут гонять refs по кругу
-# (каждое с --force). Поэтому:
-#   1. этот воркфлоу выключен, пока переменная PRIMARY_FORGE не равна `github`;
-#   2. при переезде — удалить или отключить .forgejo/workflows/mirror.yml,
-#      иначе петля останется.
+# Воркфлоу выключен, пока переменная репозитория PRIMARY_FORGE не равна `github`.
 #
 # Требуется (Settings → Secrets and variables → Actions):
 #   Secrets:

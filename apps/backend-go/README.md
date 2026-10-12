@@ -194,7 +194,7 @@ golangci-lint run --timeout=5m ./... # линт
 govulncheck ./...                    # проверка уязвимостей зависимостей
 ```
 
-`go test -race` требует рабочие `DATABASE_URL_TEST` и `REDIS_URL` (полный стек поднимается в CI, см. `.forgejo/workflows/coverage.yml`).
+`go test -race` требует рабочие `DATABASE_URL_TEST` и `REDIS_URL` (полный стек поднимается в CI, см. `.github/workflows/ci.yml`).
 
 ## Миграции
 
@@ -207,4 +207,4 @@ govulncheck ./...                    # проверка уязвимостей �
 - **Builder** (`--platform=$BUILDPLATFORM`, натив для раннера): `swag init` (регенерация спеки) + кросс-компиляция `CGO_ENABLED=0` c `-trimpath -ldflags="-s -w"`; версия и коммит вшиваются из build-args (`VERSION`, `GIT_COMMIT`) и отдаются в `/health`. Сборка использует только `vendor/` (без сети) и лимитируется `GOMEMLIMIT=256MiB`.
 - **Runtime** (alpine:3.23): бинарник + `.env` + `docs/` + `migrations/` + `ffmpeg` (видео-транскодинг). Healthcheck — `curl /health`.
 
-Публикация и деплой: push образа в Codeberg registry и рестарт сервиса на VPS делает `.forgejo/workflows/deploy.yml` (см. корневой [README](../README.md)).
+Публикация и деплой: push образа в ghcr.io и рестарт сервиса на VPS делает `.github/workflows/deploy.yml` (см. корневой [README](../README.md)).
