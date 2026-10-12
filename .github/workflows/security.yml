@@ -87,6 +87,9 @@ jobs:
           scanners: vuln,secret,misconfig
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+          # vendored third-party trees ship their own Dockerfiles/CI files —
+          # scanning them reports findings we cannot act on (DS-0002 etc.).
+          skip-dirs: apps/backend-go/vendor
           format: sarif
           output: trivy-results.sarif
           # Кэш БД уязвимостей: без него каждый прогон тянет её заново.
