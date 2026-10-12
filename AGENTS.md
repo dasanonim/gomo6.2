@@ -2,242 +2,210 @@
 
 Compact guidance for agents working in this repo.
 
+**gomo6** — a full-stack social network: forum boards/threads, profile walls with a
+customization studio, an encrypted messenger, Discord-style GomoSub communities
+(forum channels + live text chat), achievements, custom emoji packs, drops/gifts
+and Meilisearch-backed search. Monorepo (Turborepo + npm workspaces).
+
 ## Architecture
 
-Monorepo (Turborepo + npm workspaces). Four apps:
+| App | Stack | Dir | Dev port | Workspace |
+|-----|-------|-----|----------|-----------|
+| Web | React 18 + Vite + Tailwind + TypeScript | `apps/web` | 8081 | `@gomo6/web` |
+| Docs | TypeScript + Vite | `apps/docs` | 3001 | `@gomo6/docs` |
+| Dev Dashboard | TypeScript + Vite | `apps/dev-dashboard` | 3002 | `@gomo6/dev-dashboard` |
+| Backend | Go 1.26 + Gin + PostgreSQL 18 + Redis 7 + Garage S3 + Meilisearch | `apps/backend-go` | 8080 | — |
+| Bot SDK | TypeScript library | `packages/bot-sdk` | — | `@gomo6/bot` |
 
-| App | Stack | Dir | Dev port |
-|-----|-------|-----|----------|
-| Web | React 18 + Vite + Tailwind + TypeScript | `apps/web` | 8081 |
-| Docs | TypeScript + Vite | `apps/docs` | 3001 |
-| Dev Dashboard | TypeScript + Vite | `apps/dev-dashboard` | 3002 |
-| Backend | Go 1.26.4 + Gin + PostgreSQL + Redis + Garage S3 | `apps/backend-go` | 8080 |
+Production: Docker Compose on a single VPS behind Caddy (auto-routes `docs.*`,
+`dev.*`). The backend is vendored (offline build, `GOMEMLIMIT=256MiB`). Images are
+built in CI and pushed to `ghcr.io/elcrazycol/gomo6-*`; **the VPS never builds**,
+it only pulls. The app version lives in `VERSION`.
 
-Production: Docker Compose on single VPS. Caddy reverse proxy auto-routes subdomains (`docs.*`, `dev.*`). Backend vendored (no network at build time, `GOMEMLIMIT=256MiB`).
+### Canonical forge
+
+**GitHub is canonical** (`elcrazycol/gomo6.2`): CI, deploy, releases and
+code-scanning run there. Codeberg + GitLab are read-only mirrors force-pushed by
+`mirror.yml`. The repo variable `PRIMARY_FORGE=github` is the master switch — while
+it is unset, the deploy / mirror / release jobs are skipped. **Push to `origin`
+(GitHub); never push to the mirrors** — the next mirror run force-overwrites them.
 
 ## Quick commands
 
 ```bash
 # Local dev environment (one command)
-make dev                           # infra + backend + 3 frontends (tmux/overmind, Procfile.dev)
-make seed                          # idempotent demo data (backend must be running)
-make doctor                        # check prerequisites / ports / .env
+make dev                           # infra + backend + 3 frontends (scripts/dev.sh + Procfile.dev, tmux/overmind)
 make attach                        # re-attach to the `make dev` tmux session
-make dev-stop                      # stop the dev processes (infra keeps running)
+make dev-stop                      # stop dev processes (infra keeps running)
+make doctor                        # check prerequisites / ports / .env
+make seed                          # idempotent demo data (backend must be running)
 make reset-db                      # DESTRUCTIVE: drop dev Postgres/Redis/Garage volumes
+make infra | backend | web | logs | psql | redis-cli | stop | tools
+
+# Tests / lint (repo-wide convenience targets)
+make test                          # backend `go test ./...` + web vitest
+make lint                          # golangci-lint + `npm run lint`
+make typecheck                     # tsc for web, dev-dashboard, docs
+make reindex                       # rebuild Meilisearch indexes (needs `make infra`)
 
 # Frontend
-npm install                        # install all deps
+npm install                        # install all deps (runs scripts/patch-vaul.mjs)
 npm run dev                        # all apps in parallel
 npm run dev:web                    # web only
-npx tsc --noEmit -p apps/web/tsconfig.app.json   # typecheck web
-npm run lint --workspace=@gomo6/web               # lint web
-npm run test --workspace=@gomo6/web               # test web (vitest)
-npm run build --workspace=@gomo6/web              # build web
+npx tsc --noEmit -p apps/web/tsconfig.app.json
+npm run lint --workspace=@gomo6/web
+npm run test --workspace=@gomo6/web                # vitest
+npm run test:coverage --workspace=@gomo6/web
+npm run build --workspace=@gomo6/web
 
-# Backend
-cd apps/backend-go
+# Backend (from apps/backend-go)
 go build ./...                     # build all packages
 go vet ./...                       # vet
 golangci-lint run --timeout=5m ./...  # lint (v2.12.2)
-go test ./...                      # test (no DB needed for unit tests)
-go test -race -count=1 ./...       # test with race detector (needs Postgres+Redis)
-go run ./cmd/reindex               # rebuild Meilisearch indexes from Postgres (needs engine up)
+go test ./...                      # unit tests — no DB needed (sqlmock/miniredis)
+go test -race -count=1 ./...       # race detector — needs Postgres + Redis
+go run ./cmd/reindex               # rebuild Meilisearch indexes from Postgres
 
-# Local CI (mirrors GitHub Actions)
+# Local CI (mirrors GitHub Actions) and e2e
 ./scripts/ci-local.sh quick        # lint + typecheck only
 ./scripts/ci-local.sh              # full CI including builds
-
-# E2E smoke (requires docker compose stack running)
-./scripts/e2e-smoke.sh
+./scripts/e2e-smoke.sh             # requires the docker compose stack running
 ```
 
-## CI pipeline
+## CI/CD (GitHub Actions)
 
-**`ci.yml`** (every push/PR): go build → gofmt → go vet → golangci-lint → govulncheck → go mod tidy check → tsc (3 apps) → eslint → build (3 apps) → gitleaks → hadolint.
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `ci.yml` | PR, `workflow_call`, dispatch | The gate. Jobs: `Changes`, `Go · build · vet · fmt · test` (+coverage→Codecov), `Go · lint · vuln` (golangci-lint + govulncheck), `Frontend · checks` (tsc ×3 · eslint · turbo build), `Frontend · tests` (3 shards + coverage), `Secrets scan` (gitleaks), `Dockerfile lint` (hadolint), `Images` (PR-only, only when Docker files changed). |
+| `deploy.yml` | push to `main` (tags ignored), dispatch | `ci` gate → `plan` (git-diff which services to rebuild) → `ship` matrix: `buildx build --push` to ghcr + SSH restart on the VPS. Manual dispatch can pick `services` and a `reindex` flag. |
+| `tests-full.yml` | daily 06:00 UTC, dispatch | `backend-race` (real Postgres/Redis), `smoke` (register → upload → board → thread → post → like), `privacy`. |
+| `security.yml` | Mon 03:00 UTC, dispatch | CodeQL (`go` + `javascript-typescript`, suite `security-and-quality`) and Trivy fs scan → Security / code-scanning (SARIF). No auto-issues. |
+| `mirror.yml` | push (any branch/tag) | Force-mirror GitHub → Codeberg + GitLab. |
+| `release.yml` | tag `vX.Y.Z` | GitHub Release, body extracted from `CHANGELOG.md`. |
 
-**`full-tests.yml`** (daily cron or manual): adds Postgres/Redis services, runs `go test -race`, applies migrations, runs e2e smoke (register → upload → board → thread → post → like).
+Deploy pipeline details, secrets/variables, rollback and VPS setup live in
+[docs/wiki/DEPLOYMENT.md](docs/wiki/DEPLOYMENT.md). Required deploy secrets:
+`VPS_HOST` / `VPS_USER` / `VPS_SSH_KEY` (+ optional `VPS_PORT`), and web build args
+`VITE_TURNSTILE_SITEKEY` / `VITE_SENTRY_DSN` / `VITE_DEPAY_INTEGRATION_ID`.
 
-**`coverage.yml`** (push to main, PR, manual): on PRs runs **incremental tests only** (changed Go packages; vitest `--changed` for TS) and posts the result as a PR comment — a docs-only change runs nothing. On main it runs full Go + TS coverage, builds flat-square SVG badges + a minimal HTML dashboard via `scripts/coverage-report.py`, gates on `MIN_GO_COVERAGE` / `MIN_TS_COVERAGE` (set to 0 to disable), and deploys to Codeberg Pages (`crazycol.codeberg.page/gomo6.2/coverage/`) with the official `git-pages/action` (no pushes to repo branches). Toolchain setup steps are skipped — the self-hosted runner has Go/Node system-wide; Go caches persist under `/Users/lesha/.cache/gomo6-ci/` (adjust if the runner user differs).
+**Deploy only ships after the `ci` gate is green.** Never merge/deploy on red CI.
 
-Deploy to production only after CI passes on `main`.
+## Self-hosted build runner (this Mac)
 
-## Self-hosted runner (this Mac)
-
-CI/CD runs on the project Mac, not on Codeberg's infra — see
-[docs/wiki/SELF_HOSTED_RUNNER.md](docs/wiki/SELF_HOSTED_RUNNER.md) for the full
-guide. Short version:
+Image builds run on the project Mac (warm BuildKit cache), not on GitHub-hosted
+runners — everything else (PR checks, scheduled tests, scanners) is GitHub-hosted.
+Full guide: [docs/wiki/SELF_HOSTED_RUNNER.md](docs/wiki/SELF_HOSTED_RUNNER.md).
 
 ```bash
-# 1. Docker Desktop must be running (jobs use docker buildx)
+# Docker Desktop must be running (ship uses buildx)
 docker info >/dev/null && echo "docker: UP"
-# 2. Start the runner daemon
-cd ~/forgejo-runner && ~/bin/forgejo-runner daemon --config .forgejo-runner.yaml
+# runners live in ~/github-runner/runner-{1..4}, managed by launchd (svc.sh)
+gh api repos/elcrazycol/gomo6.2/actions/runners --jq '.runners[] | "\(.name)\t\(.status)"'
 ```
 
-Binary `~/bin/forgejo-runner`, config `~/forgejo-runner/.forgejo-runner.yaml`
-(host mode; labels `self-hosted` / `macos` / `arm64` / `macos-arm64`; capacity 4).
-There is no launchd agent — start it in `tmux`/`nohup` if it must survive the
-terminal. If jobs are not picked up, the registration token is stale:
-re-register with a fresh Codeberg runner token.
+Runner labels: base `self-hosted` / `macOS` / `ARM64` + `gomo6-build`; `ship` runs on
+`fromJSON(vars.BUILD_RUNNER || '["self-hosted","macOS","ARM64"]')`. BuildKit cache:
+`$HOME/gomo6-buildx-cache/<service>`. **Never** attach a self-hosted runner to a
+`pull_request` job. The old `forgejo-runner` (Codeberg) is retired.
 
 ## Pre-commit hook
 
-Runs on staged files only:
+Runs on staged files only (`.githooks/pre-commit`):
 - Go: gofmt → go mod tidy → go vet → go build → go test (changed packages only)
 - Frontend: eslint (staged files in web/dev-dashboard/docs)
 
 Enable: `git config core.hooksPath .githooks`
 
-## Production server setup (new VPS)
+## Backend structure
 
-### Step 1: SSH key on the server
+`apps/backend-go/`:
 
-```bash
-ssh-keygen -t ed25519 -C "deploy" -f ~/.ssh/id_ed25519 -N ""
-cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
-chmod 600 ~/.ssh/authorized_keys
-```
+- `cmd/` — `server` (the API), `reindex` (rebuild Meilisearch), `vapidgen` (VAPID
+  keys), `migrate-encrypt`, `wall-doc-audit`.
+- `internal/api/handlers` (42 src) — dedicated HTTP handlers; `internal/api/routes`
+  (one file) — all route registration + wiring.
 
-### Step 2: (not needed) GitHub deploy key
+| Package | Role |
+|---------|------|
+| `crudengine` | Generic CRUD engine, entity registry, wall + achievements dispatch. Per-table hooks in `table_hooks.go`; cache invalidation in `crud.go` |
+| `crud` | Stateless SQL helpers: filters, ordering, emoji validation |
+| `profiles` | Profile stats recomputation, CSS/background sanitizers, username lookup |
+| `notifications` | Notification Service (`New(db, redis, hub, push)` + `CreateParams`). **No package globals** — `routes` builds one and injects it via `SetNotifier` |
+| `privacy` | Profile-visibility rules (private profile, mutual friends, per-content gates) |
+| `channelaccess` | Shared read/write/moderate predicates for GomoSub text channels (REST handlers **and** the WS hub room gate) |
+| `gomosubchat` | GomoSub live text channels: keyset-paginated history, send/edit/delete REST, own rate-limit namespace, fan-out via `realtime:channel_chat` |
+| `messenger` | Encrypted personal messenger (E2E), bounded best-effort fan-out |
+| `wall` | Profile-wall domain + wall-post achievements |
+| `activity` | Append-only best-effort action log (moderation + honest time-series) |
+| `actieye` | Activity-summary widget (gradient circle + 30-day streak "дорога") |
+| `moderation` | Moderation queue / reports |
+| `sanctions` | Platform-sanction model (warn / mute / ban) + shared lookups |
+| `authz` | Centralized platform-role lookups against `user_roles` |
+| `gamification` | Small pure engine for game mechanics (chests, rarity ladders) |
+| `drops` | Drops payment domain (packages, callbacks, wallet, transfers) |
+| `gifts` | User gifts |
+| `rpc` | Public `/api/rpc` surface (likes batch/counts, recent likers, emoji resolve, avatar history, wall views, gomosub RPC) |
+| `search` | Meilisearch: stdlib client, schemas, privacy rules, `Service`, `Indexer`, `ReindexAll`. Optional — empty `MEILISEARCH_URL` disables it |
+| `linkpreview` | OpenGraph/Twitter-card fetch for link cards. SSRF-hardened: `safeDialContext` blocks private/loopback/link-local + an http(s) allow-list guard |
+| `socialpreview` | OG/Twitter Card pages rendered for link-preview crawlers |
+| `publicid` | Parses the human-readable public numbers («цифорки»); routes accept UUID **and** public id |
+| `translations` | Community translation proposals + votes |
+| `storage` | S3 (Garage) storage + `storage/handlers` |
+| `media` | Image processing / thumbhash |
+| `push` | Web Push (VAPID); nil-safe (disabled without keys) |
+| `websocket` | Realtime hub (`/ws`) |
+| `auth` | JWT, WebAuthn, 2FA; `oauth` — OAuth2 flows; `integrations` — external adapters |
+| `middleware` (21 src) | Rate limiting, auth, CORS, uploads |
+| `cache` / `database` / `config` / `metrics` / `crypto` / `geo` / `bg` | Redis cache, PG+Redis connections, config, Prometheus metrics, HMAC signing, geocoding, bounded background worker pool |
+| `httpx` / `textutil` / `models` / `backup` / `testutil` | Shared HTTP helpers, string helpers, data models, DB backup handler, test helpers |
 
-The GitHub mirror is dead — the repo is deployed from Codeberg. The VPS repo
-clones the public HTTPS URL, so no git credentials are needed on the server.
+Dependency direction: `routes → {handlers, crudengine, backup, profiles, notifications, rpc, …}`,
+`handlers → {auth, cache, crud, …}`, `crudengine → {achievements, crud, middleware, models, notifications, privacy, profiles, httpx, textutil, …}`.
+Leaf-ish packages (no inbound handlers imports): `crud`, `profiles`, `backup`,
+`notifications`, `privacy`, `httpx`, `textutil`.
 
-### Step 3: Clone the repo
+Composition note: `notifications` has **no package-level state**. `routes.setupRoutes`
+builds one `notifications.Service` and injects it into
+`LikesHandler`/`FriendsHandler`/`RPCHandler`/`crudengine.Engine` via `SetNotifier`;
+`MessengerHandler` gets the `*push.Service` via `SetPushService`. A nil
+notifier/push service silently disables that delivery path — no panic, no global to
+reset in tests.
 
-```bash
-cd ~ && git clone https://codeberg.org/crazycol/gomo6.2.git
-```
+**Migrations** (`migrations/`, 140+ files) are applied by the backend at startup
+(`database.RunMigrations`, tracked in `schema_migrations` with checksums — strict
+mode fails if an applied migration changed). Not `docker-entrypoint-initdb.d`.
 
-### Step 4: Create .env
+## Frontend conventions
 
-```bash
-cd ~/gomo6.2
-cat > .env << 'EOF'
-DOMAIN=gomo6.wtf
-JWT_SECRET=<взять из старого .env или сгенерировать: openssl rand -hex 32>
-FEDERATION_KEY=<взять из старого .env или сгенерировать: openssl rand -hex 16>
-ENVIRONMENT=production
-# Cloudflare Turnstile (CAPTCHA) — secret из dash.cloudflare.com → Turnstile → виджет.
-# В продакшене hostnames БЕЗ localhost/127.0.0.1!
-TURNSTILE_SECRET=<секрет виджета Turnstile>
-TURNSTILE_HOSTNAMES=gomo6.wtf
-# Публичный sitekey — для локальной сборки web (в CI передаётся секретом
-# VITE_TURNSTILE_SITEKEY в .forgejo/workflows/deploy.yml).
-VITE_TURNSTILE_SITEKEY=0x4AAAAAAEMbiZqJKU7PLzRG
-# Sentry public DSN (RUM: ошибки + трейсинг запросов) — для локальной сборки
-# web; в CI передаётся секретом VITE_SENTRY_DSN в .forgejo/workflows/deploy.yml.
-# Без него SDK — no-op. Проект: Sentry → Create project → React → Client Keys.
-VITE_SENTRY_DSN=
-# Observability — self-hosted VictoriaMetrics stack, config in observability/.
-# METRICS_TOKEN открывает /metrics на бэкенде (пусто = 404) и передаётся
-# vmagent'у, который скрейпит backend:8080. Grafana Cloud/Alloy больше не нужны
-# (проверено и выведено из эксплуатации).
-METRICS_TOKEN=
-# Telegram-алерты живут в observability/alertmanager.yml (gitignored) — шаблон
-# рядом: observability/alertmanager.yml.example
-# Product-итоги (app_*_total) берутся из БД с кэшем 5 минут — process-счётчики
-# обнуляются при рестарте. Приватные сообщения НЕ измеряются нигде.
-# Web Push (PWA): сгенерировать `cd apps/backend-go && go run ./cmd/vapidgen` и
-# вставить пару ключей. БЕЗ них push просто отключён (логируем предупреждение),
-# остальное работает. Ключи должны быть стабильны — существующие подписки
-# привязаны к публичному ключу, с которым были созданы.
-VAPID_PUBLIC_KEY=
-VAPID_PRIVATE_KEY=
-VAPID_SUBJECT=mailto:admin@gomo6.wtf
-# Search (Meilisearch) — движок поднимается Compose'ом, порт наружу не
-# публикуется. Пусто/unset MEILISEARCH_URL = поиск отключён (падаем на Postgres
-# FTS). Ключ: openssl rand -hex 32 (генератор .env создаёт сам).
-MEILI_MASTER_KEY=
-# MEILISEARCH_URL=http://meilisearch:7700
-# MEILISEARCH_INDEX_PREFIX=gomo6_
-ALLOWED_ORIGINS=https://gomo6.wtf,http://gomo6.wtf,https://docs.gomo6.wtf,http://docs.gomo6.wtf,https://dev.gomo6.wtf,http://dev.gomo6.wtf
-EOF
-chmod 600 .env
-```
-
-**ВАЖНО**: JWT_SECRET и FEDERATION_KEY должны совпадать со старым сервером. Иначе все JWT-токены пользователей сломаются.
-
-### Step 5: Start services
-
-```bash
-cd ~/gomo6.2
-docker compose up -d
-```
-
-### Step 6: Update Codeberg Actions secrets
-
-Codeberg → Settings → Actions → Secrets:
-
-| Secret | Значение |
-|--------|----------|
-| `VPS_HOST` | IP нового сервера |
-| `VPS_USER` | `root` |
-| `VPS_SSH_KEY` | Приватный ключ сервера (весь вывод `cat ~/.ssh/id_ed25519`) |
-| `VPS_PORT` | `22` (если стандартный) |
-| `CODEREG_TOKEN` | Codeberg PAT аккаунта `crazycol` со скоупами `read:package` + `write:package` (пуш образов в реестр) |
-
-### Step 7: Update DNS
-
-A-записи для:
-- `gomo6.wtf` → новый IP
-- `docs.gomo6.wtf` → новый IP
-- `dev.gomo6.wtf` → новый IP
-
-### How CI/CD works
-
-Active deployment is `.forgejo/workflows/deploy.yml` (Codeberg): change detection via the Codeberg compare API → incremental checkout into a persistent repo cache on the runner (`$HOME/gomo6-src`) → `docker buildx build --push` to the Codeberg container registry (`codeberg.org/crazycol/gomo6-*`, layer dedup — only changed layers upload) → per-service `docker pull` + retag + `docker compose up -d --no-build` on the VPS (`scripts/restart-service.sh`). Secret `CODEREG_TOKEN` (codeberg PAT, `read:package`+`write:package`) is required; the VPS pulls anonymously from public packages.
-
-**VPS repo syncs via git pull**: the repo at `/root/gomo6.2` tracks the PUBLIC `https://codeberg.org/crazycol/gomo6.2.git` origin (HTTPS, no credentials). `restart-service.sh` runs `git fetch origin main && git reset --hard origin/main` before every `docker compose up`, so `Caddyfile` (bind-mounted into caddy), `docker-compose.yml` (env for `--no-build` recreations) and scripts are always current. `reset --hard` never touches untracked files — `.env`, `.garage.toml` and `*.bak` survive. Caddy is restarted by the web job when the Caddyfile changed.
-
-The deploy script looks for the repo at `/root/gomo6.2` or `/home/*/gomo6.2`. The directory MUST be named `gomo6.2`.
-
-### Backup old server before migration
-
-```bash
-# Stop containers
-cd ~/gomo6.2 && docker compose down
-
-# Backup PostgreSQL
-docker compose exec postgres pg_dump -U gomo6 gomo6 > gomo6_db_$(date +%Y%m%d).sql
-
-# Backup .env (contains JWT_SECRET!)
-cp .env .env.backup
-
-# Copy to new server
-scp gomo6_db_*.sql root@NEW_IP:~/gomo6.2/
-scp .env.backup root@NEW_IP:~/gomo6.2/.env
-```
-
-### Restore on new server
-
-```bash
-cd ~/gomo6.2
-docker compose up -d postgres
-docker compose exec -T postgres psql -U gomo6 gomo6 < gomo6_db_*.sql
-docker compose up -d
-```
-
-## Key gotchas
-
-- **Repo is named `gomo6.2`** (not `gomo6`). Deploy scripts search for `/root/gomo6.2` or `/home/*/gomo6.2`. Wrong directory name = deploy fails.
-- **Local dev stack**: `make dev` writes `.dev.env` (gitignored — full backend env) which `Procfile.dev` sources; the dev infra ports are published to `127.0.0.1` only (so a Homebrew Postgres on IPv6 `[::1]:5432` coexists). `garage-init` must be named explicitly in `docker compose up` — Compose starts dependencies, not dependents.
-- **Cache invalidation for new tables**: `crud.go` handles generic CRUD. Adding a new table to the frontend requires adding a cache invalidation case in the `invalidateCacheForTableResult` switch. Missing this = stale data.
-- **Rate limit budgets are per-surface**: the generic REST surface uses `RATE_LIMIT_PER_USER` / `RATE_LIMIT_PER_IP` (900/300 per minute); the public `/api/rpc` surface (likes batch, recent likers, emoji resolve, avatar history — reachable by guests) has its own stricter budgets `RPC_RATE_LIMIT_PER_USER` / `RPC_RATE_LIMIT_PER_IP` (900/120 per minute) namespaced under the `rpc` Redis prefix. Tune via env without a rebuild.
-- **Caddy depends on all services**: backend crash = entire site 502s. Healthcheck at `/health` registered before heavy init.
-- **Garage S3 init can be slow**: `garage-init` retries up to 180 times waiting for RPC.
-- **Pre-existing CI errors**: some TS errors (UserMentions, ThreadCard, etc.) and Go lint issues exist in CI even with clean changes.
-- **React infinite loops**: circular useEffect dependencies cause error #310. Use refs or pass values as params to break cycles.
-- **Channel switching**: `channelSlug` must be in `loadBoard` effect deps in Board.tsx. Missing it = stale threads on channel nav.
-- **CI billing**: GitHub Actions billing failure blocks ALL CI jobs.
-- **Search is optional and rebuildable**: Meilisearch runs in Compose but is disabled when `MEILISEARCH_URL` is unset (Postgres FTS fallback stays in charge). `GET /api/v1/search` is served by the engine when configured — via one `/multi-search` round trip with `type`/`author`/`since`/`sort`/`limit` filters — and degrades to the SQL path on any engine error. Index-time privacy: private profiles and private-board content are *never* indexed (no query can leak them); `is_private` posts and wall posts on private/hidden walls too. Because those rows are absent from the index, the owner/mutual-friend view of their own private profile — and a viewer's visible private-wall posts — is merged back by a small SQL fallback in the handler. Categories: users, boards, threads, posts, and wall_posts. The index is disposable — `make reindex` (`go run ./cmd/reindex`) rebuilds it from Postgres and re-applies index settings, so **schema/settings changes need a reindex**. The write-path sync is best-effort: `search.Indexer` (`bg.Pool`, nil-safe) re-reads the row after each write and upserts-or-deletes, called explicitly at the users/boards/threads/posts write sites plus the `privacy_settings` and `profile_wall_posts` generic-engine hooks — a dropped event is recovered by the next write or a reindex. Because `users`/`boards`/`threads`/`posts` bypass the generic CRUD engine, a NEW write path for one of them must call the matching `Sync*` method. Ops: the backend image ships both `main` and `reindex`, so on the VPS `docker compose run --rm backend ./reindex` rebuilds the indexes (do it after a DB restore or an index-settings change); `/ready` reports `search: true|false`; watch `app_search_engine_fallback_total` (engine errors → SQL fallback) and `bg_dropped_total{pool="search"}` (dropped write-path events) in VictoriaMetrics.
+- **Theming**: single OKLCH registry at `src/theme/`. Token values in the generated
+  `src/theme/registry.data.ts` + `src/theme/theme.css`; catalogue + **surface
+  profiles + character** live in `scripts/gen-theme-registry.mts`; derivation/AA-tuning
+  (shared with the in-app constructor) in `src/theme/derive.ts`. Never declare theme
+  tokens in `index.css` or hardcode theme names/colours — add a theme in the catalogue
+  and regenerate (`cd apps/web && npx vite-node scripts/gen-theme-registry.mts`).
+  Surfaces (header, cards, dialogs/popovers, page background) read the per-theme
+  `--surface-*` / `--bg-*` tokens; `.bg-surface` and `.surface-panel` in `index.css`
+  are the shared hooks. Preferences: `color-theme` (id) + `theme-mode`
+  (`light|dark|system`) in localStorage; custom themes and favourites live in
+  `theme-custom` / `theme-favorites`. Pre-boot script in `index.html` paints the theme
+  (ids + single-mode map guarded by `src/theme/theme.test.ts`). WCAG AA is enforced by
+  a test across the whole registry.
+- API client: `@/integrations/api/client` (PostgREST-compatible REST layer:
+  `api.from(...)` query builder + raw `apiClient` for custom routes; auth via HttpOnly
+  cookies)
+- State: Zustand stores in `src/stores/`
+- Path alias: `@` → `src/` (configured in vite.config.ts and tsconfig)
+- UI: Radix UI primitives + Tailwind + class-variance-authority
 
 ## Testing
 
-- Frontend: vitest with jsdom. Config at `apps/web/vitest.config.ts`. Coverage: `npm run test:coverage --workspace=@gomo6/web`.
-- Backend: `go test ./...` (unit tests use sqlmock/miniredis, no real DB). Full tests need `DATABASE_URL_TEST` and `REDIS_URL` env vars.
-- E2E: `./scripts/e2e-smoke.sh` — full docker compose stack, tests auth → upload → CRUD flow.
+- Frontend: vitest with jsdom. Config at `apps/web/vitest.config.ts`. Coverage:
+  `npm run test:coverage --workspace=@gomo6/web` (CI shards the file set 3 ways and
+  uploads to Codecov).
+- Backend: `go test ./...` — unit tests use sqlmock/miniredis, no real DB. Full tests
+  need `DATABASE_URL_TEST` and `REDIS_URL` env vars (see `tests-full.yml`).
+- E2E: `./scripts/e2e-smoke.sh` (full compose stack, auth → upload → CRUD), plus
+  `scripts/e2e-privacy-wall.sh` and `scripts/public-id-acceptance.sh`.
 
 ## TypeScript check commands (exact, from CI)
 
@@ -247,52 +215,65 @@ npx tsc --noEmit -p apps/dev-dashboard/tsconfig.json
 npx tsc --noEmit -p apps/docs/tsconfig.json
 ```
 
-## Backend structure
+## Key gotchas
 
-`apps/backend-go/internal/`:
+- **Repo is named `gomo6.2`** (not `gomo6`). `restart-service.sh` searches
+  `/root/gomo6.2` or `/home/*/gomo6.2`. Wrong directory name = deploy fails.
+- **Local dev stack**: `make dev` writes `.dev.env` (gitignored — full backend env)
+  which `Procfile.dev` sources; dev infra ports are published to `127.0.0.1` only
+  (5432/6379/3900/7700, so a Homebrew Postgres on IPv6 `[::1]:5432` coexists).
+  `garage-init` must be named explicitly in `docker compose up` — Compose starts
+  dependencies, not dependents.
+- **Cache invalidation for new tables**: the generic engine lives in
+  `crudengine/crud.go`; add a case to the `invalidateCacheForTableResult` switch.
+  Missing this = stale data.
+- **Rate-limit budgets are per-surface**: the generic REST surface uses
+  `RATE_LIMIT_PER_USER` / `RATE_LIMIT_PER_IP` (900/300 per minute); the public
+  `/api/rpc` surface (reachable by guests) has stricter `RPC_RATE_LIMIT_PER_USER` /
+  `RPC_RATE_LIMIT_PER_IP` (900/120) namespaced under the `rpc` Redis prefix;
+  gomosubchat has its own. All tunable via env, no rebuild.
+- **Caddy depends on all services**: a backend crash = the whole site 502s.
+  `/health` is registered before heavy init (Docker healthcheck + deploy
+  verification); `/ready` reports readiness incl. `search: true|false`.
+- **Garage S3 init can be slow**: `garage-init` retries up to 180 times (×2s) waiting
+  for RPC.
+- **Migrations are strict**: applied files are checksum-tracked; editing an
+  already-applied migration fails startup. Add a new file instead.
+- **Search is optional and rebuildable**: Meilisearch is disabled when
+  `MEILISEARCH_URL` is unset (Postgres FTS fallback stays in charge). Index-time
+  privacy: private profiles and private-board content are *never* indexed (no query
+  can leak them); `is_private` posts and wall posts on private/hidden walls too. The
+  owner/mutual-friend view of their own private profile, and visible private-wall
+  posts, are merged back by a small SQL fallback in the handler. Categories: users,
+  boards, threads, posts, wall_posts. The index is disposable — `make reindex`
+  (`go run ./cmd/reindex`) rebuilds it, so **schema/settings changes need a reindex**.
+  Write-path sync is best-effort (`search.Indexer`, nil-safe, on `bg.Pool`), called at
+  the users/boards/threads/posts write sites + the `privacy_settings` /
+  `profile_wall_posts` generic-engine hooks. Because those tables bypass the generic
+  CRUD engine, a NEW write path must call the matching `Sync*` method. On the VPS:
+  `docker compose run --rm -T backend ./reindex`. Watch
+  `app_search_engine_fallback_total` (engine errors → SQL fallback) and
+  `bg_dropped_total{pool="search"}`.
+- **Link preview is SSRF-sensitive**: `linkpreview` refuses non-http(s) and
+  whitespace URLs, caps redirects/size/time, and `safeDialContext` never dials
+  private/loopback/link-local/CGNAT. CodeQL `go/request-forgery` only recognises a
+  barrier guard on the URL value itself, so the http(s) allow-list in `Fetch` must
+  stay inline (it dominates `client.Do`) — don't move it into a helper.
+- **React infinite loops**: circular `useEffect` dependencies cause error #310. Use
+  refs or pass values as params to break cycles.
+- **Channel switching**: `channelSlug` must be in the `loadBoard` effect deps in
+  `apps/web/src/pages/Board.tsx`. Missing it = stale threads on channel nav.
+- **Releases**: bump `VERSION` and add a `## [X.Y.Z]` section to `CHANGELOG.md`, then
+  tag `vX.Y.Z` (release.yml extracts that section). Deploy reads the version from
+  `VERSION`, not from the tag.
 
-| Package | Files | Role |
-|---------|-------|------|
-| `api/handlers` | 45 src | Dedicated HTTP handlers (posts, threads, boards, messenger, auth, …) |
-| `api/routes` | 1 | Route registration + wiring |
-| `crudengine` | 10 | Generic CRUD engine, entity registry, wall, achievements dispatch (ex-god-pakage) |
-| `crud` | 3 | Stateless SQL helpers: filters, ordering, emoji validation |
-| `profiles` | 3 | Profile stats recomputation, CSS/background sanitizers, username lookup |
-| `backup` | 1 | Database backup handler |
-| `notifications` | 1 | Notification Service: `notifications.New(db, redis, hub, push)` + `CreateParams`-based `CreateNotification`/`CreateWallNotification` (insert + cache invalidation + WS + push). No package globals — routes builds one instance and injects it into handlers/crudengine via `SetNotifier` |
-| `privacy` | 1 | Profile-visibility rules (private profile, mutual friends, per-content gates) |
-| `channelaccess` | 1 | Shared read/write/moderate predicates for gomosub text channels — used by both the REST handlers and the WS hub room gate |
-| `gomosubchat` | 2 | GomoSub text channels (Discord-style chat): keyset-paginated history, send/edit/delete REST (`/api/v1/gomosubchat/channels/:id/messages`) with own rate-limit namespace, realtime fan-out via `realtime:channel_chat` |
-| `httpx` | 1 | Shared HTTP helpers: `ServerError`, `AuthenticatedUserID` |
-| `textutil` | 1 | Shared string helpers: `TruncateRunes` |
-| `search` | 7 | Meilisearch integration: stdlib REST client, index schemas/docs, shared base queries + scanners, index-time privacy rules, `Service` (engine ops), `Indexer` (best-effort write-path sync), full `ReindexAll`. Engine optional — empty `MEILISEARCH_URL` disables it |
-| `auth` | 1 | JWT, WebAuthn, 2FA |
-| `middleware` | 20 | Rate limiting, auth, CORS, uploads |
-| `cache` | 2 | Redis cache layer |
-| `storage` | 4 | S3 storage + `storage/handlers` sub-pkg |
-| `websocket` | 5 | Realtime hub |
-| `models` | 2 | Shared data models |
-| `achievements` | 5 | Achievement event definitions |
-| `oauth` | 5 | OAuth2 flows |
-| `integrations` | 3 | External service adapters |
-| `media` | 3 | Image processing / thumbhash |
-| `push` | 1 | Web Push (VAPID) |
-| `crypto` | 1 | HMAC signing |
-| `geo` | 1 | Geocoding |
-| `config` | 1 | App configuration |
-| `metrics` | 1 | Prometheus metrics |
-| `database` | 2 | PostgreSQL + Redis connections |
+## Docs map
 
-Dependency direction: `routes → {handlers, crudengine, backup, profiles, notifications, …}`, `handlers → {auth, cache, crud, …}`, `crudengine → {achievements, crud, middleware, models, notifications, privacy, profiles, httpx, textutil, …}` — all leaf packages, no handlers import. `crud`, `profiles`, `backup`, `notifications`, `privacy`, `httpx`, `textutil` are leaf-ish packages with minimal inbound deps.
-
-Composition note: `notifications` has **no package-level state**. `routes.setupRoutes` builds one `notifications.Service` (`New(db, redis, wsHub, pushService)`) and injects it into `LikesHandler`/`FriendsHandler`/`RPCHandler`/`crudengine.Engine` via `SetNotifier`; `MessengerHandler` receives the `*push.Service` directly via `SetPushService`. A nil notifier/push service silently disables that delivery path — no panic, no global to reset in tests.
-
-Migrations in `migrations/` (44+ files, auto-applied via docker-entrypoint-initdb.d).
-
-## Frontend conventions
-
-- **Theming**: single OKLCH registry at `src/theme/`. Token values in the generated `src/theme/registry.data.ts` + `src/theme/theme.css`; catalogue + **surface profiles + character** live in `scripts/gen-theme-registry.mts`; derivation/AA-tuning (shared with the in-app constructor) in `src/theme/derive.ts`. Never declare theme tokens in `index.css` or hardcode theme names/colours — add a theme in the catalogue and regenerate (`cd apps/web && npx vite-node scripts/gen-theme-registry.mts`). Surfaces (header, cards, dialogs/popovers, page background) read the per-theme `--surface-*` / `--bg-*` tokens; `.bg-surface` and `.surface-panel` in `index.css` are the shared hooks. Preferences: `color-theme` (id) + `theme-mode` (`light|dark|system`) in localStorage; custom themes and favourites live in `theme-custom` / `theme-favorites`. Pre-boot script in `index.html` paints the theme (ids + single-mode map guarded by `src/theme/theme.test.ts`). WCAG AA is enforced by a test across the whole registry.
-- API client: `@/integrations/api/client` (PostgREST-compatible REST layer: `api.from(...)` query builder + raw `apiClient` for custom routes; auth via HttpOnly cookies)
-- State: Zustand stores in `src/stores/`
-- Path alias: `@` → `src/` (configured in vite.config.ts and tsconfig)
-- UI: Radix UI primitives + Tailwind + class-variance-authority
+`docs/wiki/`: [DEPLOYMENT](docs/wiki/DEPLOYMENT.md) · [SELF_HOSTED_RUNNER](docs/wiki/SELF_HOSTED_RUNNER.md) ·
+[DOCKER_SETUP](docs/wiki/DOCKER_SETUP.md) · [SECURITY_AUDIT](docs/wiki/SECURITY_AUDIT.md) ·
+[MESSENGER_SECURITY](docs/wiki/MESSENGER_SECURITY.md) · [OAUTH_API](docs/wiki/OAUTH_API.md) ·
+[PUBLIC_IDS](docs/wiki/PUBLIC_IDS.md) · [BOT_SYSTEM_ARCHITECTURE](docs/wiki/BOT_SYSTEM_ARCHITECTURE.md) ·
+[REALTIME_WEBSOCKET_PATTERN](docs/wiki/REALTIME_WEBSOCKET_PATTERN.md) ·
+[PRESENCE_SYSTEM_DESIGN](docs/wiki/PRESENCE_SYSTEM_DESIGN.md) ·
+[THREAD_ATTACHMENTS_GUIDE](docs/wiki/THREAD_ATTACHMENTS_GUIDE.md).
+Observability stack (VictoriaMetrics + Perses + Alertmanager): `observability/README.md`.
