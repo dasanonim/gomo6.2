@@ -80,7 +80,16 @@ const paramsFor = (entry: RouteDataEntry, pathname: string): Record<string, stri
     const match = matchPath({ path: pattern, end: true }, pathname);
     if (!match) continue;
     for (const [key, value] of Object.entries(match.params)) {
-      if (value != null) params[key] = value;
+      if (value == null) continue;
+      // defineProperty, not `params[key] = value`: route params are
+      // pattern-derived, but this keeps the write safe regardless — a
+      // `__proto__` key would otherwise hit the prototype setter (CWE-1321).
+      Object.defineProperty(params, key, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
     }
   }
   return params;

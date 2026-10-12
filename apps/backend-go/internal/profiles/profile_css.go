@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // L6: username_css / profile_badge_css are user-controlled CSS that is rendered
@@ -198,7 +199,11 @@ func cssUnescape(s string) string {
 			if i-start < 6 && i < len(s) && s[i] == ' ' {
 				i++
 			}
-			if v, err := strconv.ParseUint(s[start:end], 16, 32); err == nil {
+			// Bound the code point before narrowing uint32 → rune (int32): a
+			// value above utf8.MaxRune (or a surrogate) is not a valid Unicode
+			// scalar and would wrap to a negative rune. Anything invalid is
+			// dropped rather than turned into U+FFFD noise.
+			if v, err := strconv.ParseUint(s[start:end], 16, 32); err == nil && v <= utf8.MaxRune && !(v >= 0xD800 && v <= 0xDFFF) {
 				b.WriteRune(rune(v))
 			}
 			continue

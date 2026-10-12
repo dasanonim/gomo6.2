@@ -12,7 +12,7 @@
 // Must be idempotent (npm postinstall runs on every install) and fail loudly
 // if the target snippet is gone (vaul upgraded -> re-check the patch).
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,12 +22,18 @@ const file = join(repoRoot, "node_modules", "vaul", "dist", "index.mjs");
 const TARGET = `        if (openTime.current && date.getTime() - openTime.current.getTime() < 500) {`;
 const REPLACEMENT = `        if (openTime.current && date.getTime() - openTime.current.getTime() < 500 && !element.closest('[data-vaul-handle]')) {`;
 
-if (!existsSync(file)) {
-  console.warn("[patch-vaul] vaul not installed, skipping");
-  process.exit(0);
+// Read directly and treat ENOENT as "not installed" — an existsSync pre-check
+// would be a TOCTOU race (the file could vanish between check and read).
+let src;
+try {
+  src = readFileSync(file, "utf8");
+} catch (err) {
+  if (err && err.code === "ENOENT") {
+    console.warn("[patch-vaul] vaul not installed, skipping");
+    process.exit(0);
+  }
+  throw err;
 }
-
-const src = readFileSync(file, "utf8");
 
 if (src.includes(REPLACEMENT)) {
   console.log("[patch-vaul] already applied, skipping");
