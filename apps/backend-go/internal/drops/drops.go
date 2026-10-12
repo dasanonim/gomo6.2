@@ -30,6 +30,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gomo6/backend/internal/authz"
 	"github.com/gomo6/backend/internal/httpx"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gomo6/backend/internal/models"
 )
 
@@ -180,7 +181,7 @@ func (h *DropsHandler) DropsConfig(c *gin.Context) {
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(rawBody))
 
 	sigHeader := c.GetHeader("x-signature")
-	log.Printf("[Drops] Config request from %s, hasSig=%v, publicKey=%v",
+	logsafe.Printf("[Drops] Config request from %s, hasSig=%v, publicKey=%v",
 		c.ClientIP(), sigHeader != "", h.publicKey != nil)
 
 	// C2 (security audit): the config request must be authenticated one way or
@@ -226,11 +227,11 @@ func (h *DropsHandler) DropsConfig(c *gin.Context) {
 	}
 	var userExists bool
 	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", req.UserID).Scan(&userExists); err != nil || !userExists {
-		log.Printf("[Drops] Config: invalid user_id=%s err=%v exists=%v", req.UserID, err, userExists)
+		logsafe.Printf("[Drops] Config: invalid user_id=%s err=%v exists=%v", req.UserID, err, userExists)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid user"))
 		return
 	}
-	log.Printf("[Drops] Config: user validated: %s", req.UserID)
+	logsafe.Printf("[Drops] Config: user validated: %s", req.UserID)
 
 	priceUSD := float64(req.DropsAmount) * pricePerDropUSD
 
@@ -239,7 +240,7 @@ func (h *DropsHandler) DropsConfig(c *gin.Context) {
 		INSERT INTO drops_pending (user_id, drops_amount, price_usd)
 		VALUES ($1, $2, $3) RETURNING id
 	`, req.UserID, req.DropsAmount, priceUSD).Scan(&pendingID)
-	log.Printf("[Drops] Pending created: id=%s user=%s amount=%d price=%.2f",
+	logsafe.Printf("[Drops] Pending created: id=%s user=%s amount=%d price=%.2f",
 		pendingID, req.UserID, req.DropsAmount, priceUSD)
 
 	config, err := h.buildDropsConfig(priceUSD)
@@ -359,7 +360,7 @@ type DePayCallbackRequest struct {
 // @Failure      401 {object} models.APIResponse
 // @Router       /drops/callback [post]
 func (h *DropsHandler) DropsCallback(c *gin.Context) {
-	log.Printf("[Drops] Callback received from %s", c.ClientIP())
+	logsafe.Printf("[Drops] Callback received from %s", c.ClientIP())
 
 	rawBody, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -405,7 +406,7 @@ func (h *DropsHandler) DropsCallback(c *gin.Context) {
 	}
 
 	if payload.UserID == "" {
-		log.Printf("[Drops] Callback: no user_id in payload, tx=%s", req.Transaction)
+		logsafe.Printf("[Drops] Callback: no user_id in payload, tx=%s", req.Transaction)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Missing user_id in payload"))
 		return
 	}
@@ -418,14 +419,14 @@ func (h *DropsHandler) DropsCallback(c *gin.Context) {
 		return
 	}
 	if exists {
-		log.Printf("[Drops] Callback: duplicate tx: %s", req.Transaction)
+		logsafe.Printf("[Drops] Callback: duplicate tx: %s", req.Transaction)
 		c.JSON(http.StatusOK, gin.H{"status": "already_processed"})
 		return
 	}
 
 	dropsAmount := payload.DropsAmount
 	if dropsAmount < 1 || dropsAmount > 100000 {
-		log.Printf("[Drops] Callback: invalid drops amount=%d user=%s", dropsAmount, payload.UserID)
+		logsafe.Printf("[Drops] Callback: invalid drops amount=%d user=%s", dropsAmount, payload.UserID)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid drops amount in payload"))
 		return
 	}
@@ -441,7 +442,7 @@ func (h *DropsHandler) DropsCallback(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[Drops] Drops credited: user=%s amount=%d tx=%s blockchain=%s", payload.UserID, dropsAmount, req.Transaction, req.Blockchain)
+	logsafe.Printf("[Drops] Drops credited: user=%s amount=%d tx=%s blockchain=%s", payload.UserID, dropsAmount, req.Transaction, req.Blockchain)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -470,14 +471,14 @@ func (h *DropsHandler) creditDrops(amount int, userID, blockchain, txHash string
 
 	_, err = tx.Exec("UPDATE users SET drops = COALESCE(drops, 0) + $1 WHERE id = $2", amount, userID)
 	if err != nil {
-		log.Printf("[Drops] Callback: credit drops failed user=%s err=%v", userID, err)
+		logsafe.Printf("[Drops] Callback: credit drops failed user=%s err=%v", userID, err)
 		return 0, &callbackFailure{http.StatusInternalServerError, "Failed to credit drops"}
 	}
 
 	var balanceAfter int
 	err = tx.QueryRow("SELECT COALESCE(drops, 0) FROM users WHERE id = $1", userID).Scan(&balanceAfter)
 	if err != nil {
-		log.Printf("[Drops] Callback: get balance failed user=%s err=%v", userID, err)
+		logsafe.Printf("[Drops] Callback: get balance failed user=%s err=%v", userID, err)
 		return 0, &callbackFailure{http.StatusInternalServerError, "Failed to get balance"}
 	}
 
@@ -488,7 +489,7 @@ func (h *DropsHandler) creditDrops(amount int, userID, blockchain, txHash string
 		fmt.Sprintf("Purchased %d drops", amount),
 		blockchain, txHash)
 	if err != nil {
-		log.Printf("[Drops] Callback: record tx failed user=%s err=%v", userID, err)
+		logsafe.Printf("[Drops] Callback: record tx failed user=%s err=%v", userID, err)
 		return 0, &callbackFailure{http.StatusInternalServerError, "Failed to record transaction"}
 	}
 
@@ -498,12 +499,12 @@ func (h *DropsHandler) creditDrops(amount int, userID, blockchain, txHash string
 		WHERE user_id = $3 AND drops_amount = $4 AND status = 'initiated'
 		  AND created_at > NOW() - INTERVAL '1 hour'
 	`, blockchain, txHash, userID, amount); err != nil {
-		log.Printf("[Drops] Callback: mark pending failed user=%s err=%v", userID, err)
+		logsafe.Printf("[Drops] Callback: mark pending failed user=%s err=%v", userID, err)
 		return 0, &callbackFailure{http.StatusInternalServerError, "Failed to update pending payment"}
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Printf("[Drops] Callback: COMMIT FAILED user=%s err=%v", userID, err)
+		logsafe.Printf("[Drops] Callback: COMMIT FAILED user=%s err=%v", userID, err)
 		return 0, &callbackFailure{http.StatusInternalServerError, "Failed to commit"}
 	}
 
@@ -700,7 +701,7 @@ func (h *DropsHandler) ManualVerify(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[Drops] Manual verify OK: user=%s amount=%d tx=%s", userID, pendingAmount, req.TxHash)
+	logsafe.Printf("[Drops] Manual verify OK: user=%s amount=%d tx=%s", userID, pendingAmount, req.TxHash)
 	c.JSON(http.StatusOK, gin.H{"status": "credited", "drops": pendingAmount})
 }
 
@@ -832,7 +833,7 @@ func (h *DropsHandler) TransferDrops(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[Drops] Transfer: %s → %s amount=%d", senderID, recipientID, req.Amount)
+	logsafe.Printf("[Drops] Transfer: %s → %s amount=%d", senderID, recipientID, req.Amount)
 	c.JSON(http.StatusOK, models.SuccessResponse(models.TransferResult{
 		TransactionID: senderTxID,
 		Amount:        req.Amount,

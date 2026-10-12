@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/SherClockHolmes/webpush-go"
+	"github.com/gomo6/backend/internal/logsafe"
 )
 
 // Service sends Web Push notifications to a user's subscribed devices, filtered
@@ -240,7 +241,7 @@ func (s *Service) SendToUser(ctx context.Context, userID, notifType string, n No
 	}
 	subs, err := s.SubscriptionsForUser(ctx, userID)
 	if err != nil {
-		log.Printf("[push] list subscriptions for %s: %v", userID, err)
+		logsafe.Printf("[push] list subscriptions for %s: %v", userID, err)
 		return
 	}
 	if len(subs) == 0 {

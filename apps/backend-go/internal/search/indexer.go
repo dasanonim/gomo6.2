@@ -3,10 +3,10 @@ package search
 import (
 	"context"
 	"database/sql"
-	"log"
 	"time"
 
 	"github.com/gomo6/backend/internal/bg"
+	"github.com/gomo6/backend/internal/logsafe"
 )
 
 // indexPool bounds the write-path indexing work. Like the achievements pool it
@@ -83,7 +83,7 @@ func syncDoc[T any](i *Indexer, label, indexKey, query string, scan func(rowScan
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := syncNow(ctx, i, indexKey, query, scan, id); err != nil {
-			log.Printf("[search] sync %s %s failed: %v", label, id, err)
+			logsafe.Printf("[search] sync %s %s failed: %v", label, id, err)
 		}
 	})
 }

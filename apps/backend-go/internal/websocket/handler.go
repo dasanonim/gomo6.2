@@ -3,13 +3,13 @@ package websocket
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gomo6/backend/internal/auth"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -113,7 +113,7 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[WebSocket] HandleWebSocket called from %s", c.ClientIP())
+	logsafe.Printf("[WebSocket] HandleWebSocket called from %s", c.ClientIP())
 
 	// Upgrade HTTP connection — authentication is required in the first
 	// WebSocket frame or from the HttpOnly access cookie.

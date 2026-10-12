@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gomo6/backend/internal/logsafe"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -155,7 +156,7 @@ func deriveConversationKeyHKDF(conversationID string) []byte {
 		// HKDF-Extract/Expand with SHA-256 cannot fail in practice for 32 bytes,
 		// but if it ever does, fall back to the legacy derivation so we don't
 		// lose data. Log loudly because this should be investigated.
-		log.Printf("[Crypto] FATAL: HKDF key derivation failed for conversation %s: %v", conversationID, err)
+		logsafe.Printf("[Crypto] FATAL: HKDF key derivation failed for conversation %s: %v", conversationID, err)
 		return deriveConversationKeyLegacy(conversationID)
 	}
 

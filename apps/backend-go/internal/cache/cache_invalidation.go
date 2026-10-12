@@ -3,9 +3,9 @@ package cache
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -31,13 +31,13 @@ func InvalidateByPattern(redis *redis.Client, pattern string) {
 	for {
 		keys, nextCursor, err := redis.Scan(ctx, cursor, pattern, 100).Result()
 		if err != nil {
-			log.Printf("[Cache] Failed to scan keys for pattern %s: %v", pattern, err)
+			logsafe.Printf("[Cache] Failed to scan keys for pattern %s: %v", pattern, err)
 			return
 		}
 
 		if len(keys) > 0 {
 			if err := redis.Del(ctx, keys...).Err(); err != nil {
-				log.Printf("[Cache] Failed to delete keys for pattern %s: %v", pattern, err)
+				logsafe.Printf("[Cache] Failed to delete keys for pattern %s: %v", pattern, err)
 				return
 			}
 			totalDeleted += int64(len(keys))
@@ -50,7 +50,7 @@ func InvalidateByPattern(redis *redis.Client, pattern string) {
 	}
 
 	if totalDeleted > 0 {
-		log.Printf("[Cache] Deleted %d keys for pattern %s", totalDeleted, pattern)
+		logsafe.Printf("[Cache] Deleted %d keys for pattern %s", totalDeleted, pattern)
 	}
 }
 

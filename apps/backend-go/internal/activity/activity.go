@@ -18,10 +18,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/gomo6/backend/internal/bg"
+	"github.com/gomo6/backend/internal/logsafe"
 )
 
 const (
@@ -81,7 +81,7 @@ func (r *Recorder) Record(userID, eventType, targetType, targetID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), insertTimeout)
 		defer cancel()
 		if _, err := r.db.ExecContext(ctx, insertSQL, userID, eventType, tt, ti); err != nil {
-			log.Printf("[activity] insert %q for %s failed: %v", eventType, userID, err)
+			logsafe.Printf("[activity] insert %q for %s failed: %v", eventType, userID, err)
 		}
 	})
 }

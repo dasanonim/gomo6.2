@@ -2,12 +2,12 @@ package httpx
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gomo6/backend/internal/auth"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gomo6/backend/internal/models"
 	"github.com/lib/pq"
 )
@@ -46,11 +46,11 @@ func IsClientInputError(err error) bool {
 //   - everything else → 500.
 func ServerError(c *gin.Context, context string, err error) {
 	if IsClientInputError(err) {
-		log.Printf("[HTTP] %s (invalid input): %v", context, err)
+		logsafe.Printf("[HTTP] %s (invalid input): %v", context, err)
 		c.AbortWithStatusJSON(http.StatusBadRequest, models.ErrorResponse("Invalid request value"))
 		return
 	}
-	log.Printf("[HTTP] %s: %v", context, err)
+	logsafe.Printf("[HTTP] %s: %v", context, err)
 	_ = c.Error(err)
 	c.AbortWithStatusJSON(http.StatusInternalServerError, models.ErrorResponse("Internal server error"))
 }

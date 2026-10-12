@@ -3,12 +3,12 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gomo6/backend/internal/httpx"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gomo6/backend/internal/privacy"
 
 	"github.com/gin-gonic/gin"
@@ -738,7 +738,7 @@ func (h *ProfilesHandler) UpdateProfile(c *gin.Context) {
 	// browser (the "profile-cache:invalidate" event is local to that tab).
 	if h.hub != nil {
 		if err := h.hub.PublishProfileUpdated(id); err != nil {
-			log.Printf("[profiles] failed to publish profile_updated for %s: %v", id, err)
+			logsafe.Printf("[profiles] failed to publish profile_updated for %s: %v", id, err)
 		}
 	}
 
