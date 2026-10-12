@@ -47,7 +47,7 @@
 
 ```bash
 # Скопируй пример .env и заполни значения
-cp .env.docker .env
+cp .env.example .env
 ```
 
 Минимальные настройки в `.env`:
@@ -160,8 +160,7 @@ docker compose down -v
 gomo6/
 ├── docker-compose.yml          # Основной compose-файл
 ├── Caddyfile                   # Конфиг Caddy reverse proxy (CSP/HSTS в @production)
-├── .env                        # Переменные окружения (создать из .env.docker)
-├── .env.docker                 # Пример .env
+├── .env                        # Переменные окружения (создать из .env.example)
 ├── .garage.toml                # Рендерится из .env скриптом generate-garage-config.sh (НЕ в git)
 ├── scripts/
 │   ├── generate-garage-config.sh   # Генерирует .garage.toml из GARAGE_RPC_SECRET/GARAGE_ADMIN_TOKEN

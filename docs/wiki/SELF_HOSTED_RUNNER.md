@@ -119,5 +119,5 @@ ls -t "$D"/_diag/*.log | head -1 | xargs tail -f  # логи агента
 - **Диск.** Растут `$HOME/gomo6-buildx-cache` и `runner-*/_work`. Держите хотя бы 20 ГБ свободными:
   `docker builder prune -f && docker image prune -f` (хост-каталог buildx-кэша при этом цел, скорость сборок не
   теряется).
-- **Старый `forgejo-runner`** (Codeberg) выведен из игры вместе с `.forgejo` → `.forgejo-old`: он больше не нужен,
-  сборку и деплой ведёт GitHub.
+- **Старый `forgejo-runner`** (Codeberg) выведен из игры и удалён из репозитория: он больше не нужен, сборку и
+  деплой ведёт GitHub.

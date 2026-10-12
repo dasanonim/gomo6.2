@@ -17,7 +17,7 @@
 #   · сборка идёт на self-hosted Mac (переменная BUILD_RUNNER), где между
 #     запусками живут тёплый BuildKit-кэш ($HOME/gomo6-buildx-cache/<service>)
 #     и cache-mounts из Dockerfile'ов (go-build, npm). Это ровно та же
-#     механика, что в .forgejo-пайплайне — она даёт ~60s на web-only коммит.
+#     механика: тёплый кэш даёт ~60s на web-only коммит.
 #   · параллельность — matrix. ВНИМАНИЕ: один процесс actions-runner умеет
 #     ровно один job за раз. Чтобы 4 сервиса собирались одновременно, нужно
 #     зарегистрировать 4 инстанса раннера (actions-runner, actions-runner2, …).
@@ -221,7 +221,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Тот же обход, что и в .forgejo-пайплайне, и он тут нужен по тем же
+      # Этот обход нужен по двум причинам:
       # причинам: отдельный DOCKER_CONFIG не даёт Docker Desktop утащить креды
       # в macOS keychain (там живут устаревшие записи, которые молча выигрывают),
       # а cliPluginsExtraDirs возвращает видимость плагина buildx — иначе
@@ -260,7 +260,7 @@ jobs:
           # --platform linux/amd64: VPS — amd64, а раннер — arm64; собирается
           # всё равно нативно ($BUILDPLATFORM в Dockerfile'ах), эмуляции нет.
           # $ARGS намеренно без кавычек: это набор флагов через пробел, его
-          # НУЖНО разбить на слова (тот же приём, что в .forgejo-пайплайне).
+          # НУЖНО разбить на слова.
           # shellcheck disable=SC2086
           docker buildx build \
             --platform linux/amd64 \

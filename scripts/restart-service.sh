@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-# restart-service.sh — run ON the VPS by .forgejo/workflows/deploy.yml.
+# restart-service.sh — run ON the VPS by .github/workflows/deploy.yml.
 #
-# Pulls ONE service's image from the Codeberg container registry, retags it to
+# Pulls ONE service's image from ghcr.io, retags it to
 # the docker-compose image name (ghcr.io/elcrazycol/*), and recreates exactly
 # that container. The VPS never builds images and never pulls our old streams.
 #
 # Usage:  restart-service.sh <service>
-# Env:    REG (default codeberg.org/crazycol)   — container registry to pull
+# Env:    REG (default ghcr.io/elcrazycol)      — container registry to pull
 #         COMPOSE_NAMESPACE (default ghcr.io/elcrazycol) — docker-compose image:
 #              names; the pulled image is retagged to this namespace
 #         TAG (default latest) — registry tag to pull; use TAG=sha-<commit>
@@ -57,7 +57,7 @@ done
 [ "$SYNCED" = "1" ] || { echo "[restart-service] git sync failed 3 times — giving up"; exit 1; }
 echo "[restart-service] synced to $(git rev-parse --short HEAD)"
 
-REGISTRY="${REG:-codeberg.org/crazycol}"            # Codeberg container registry
+REGISTRY="${REG:-ghcr.io/elcrazycol}"                # container registry to pull from
 COMPOSE_NAMESPACE="${COMPOSE_NAMESPACE:-ghcr.io/elcrazycol}" # image: names in docker-compose.yml
 
 echo "[restart-service] $SERVICE: pulling $REGISTRY/gomo6-$SERVICE:$TAG"
