@@ -97,3 +97,40 @@ func TestValidateURL(t *testing.T) {
 		}
 	}
 }
+
+// TestFetchableURLPattern locks in the input-validation barrier that sits in
+// front of the request (CodeQL go/request-forgery): only absolute http(s) URLs
+// with a non-empty authority and no whitespace pass.
+func TestFetchableURLPattern(t *testing.T) {
+	allowed := []string{
+		"http://example.com",
+		"https://example.com/x?q=1#frag",
+		"https://sub.example.com:8443/a/b",
+		"http://[::1]:8080/status",
+		"https://пример.рф/новость",
+		"HTTPS://EXAMPLE.COM/Path",
+	}
+	for _, raw := range allowed {
+		if !fetchableURLPattern.MatchString(raw) {
+			t.Errorf("expected %q to pass the allow-list", raw)
+		}
+	}
+
+	rejected := []string{
+		"",
+		"ftp://example.com",
+		"file:///etc/passwd",
+		"javascript:alert(1)",
+		"http://",
+		"https://",
+		"//example.com",
+		"http://exa mple.com/path",
+		"https://example.com/pa th",
+		"http://169.254.169.254 latest/meta-data/",
+	}
+	for _, raw := range rejected {
+		if fetchableURLPattern.MatchString(raw) {
+			t.Errorf("expected %q to be rejected by the allow-list", raw)
+		}
+	}
+}
