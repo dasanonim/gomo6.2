@@ -26,7 +26,7 @@ COPY apps/docs/package.json ./apps/docs/
 COPY apps/web/package.json ./apps/web/
 COPY apps/dev-dashboard/package.json ./apps/dev-dashboard/
 
-ENV NODE_OPTIONS="--max-old-space-size=1024"
+ENV NODE_OPTIONS="--max-old-space-size=2048"
 # npm download cache persists on the runner disk. This RUN layer is cached by
 # BuildKit: it re-executes only when a package file changes, i.e. exactly when
 # a fresh install is needed.
