@@ -449,7 +449,10 @@ class WebSocketService {
         try {
           handler(message);
         } catch (error) {
-          console.error(`[WebSocket] Handler error for ${type}:`, error);
+          // Pass `type` as an argument, not interpolated into the format
+          // string: a server-supplied message type could otherwise carry
+          // console format specifiers (js/tainted-format-string).
+          console.error("[WebSocket] Handler error for", type, error);
         }
       });
     }

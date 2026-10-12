@@ -60,8 +60,11 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM --platform=$TARGETPLATFORM alpine:3.23
 
 RUN sed -i 's/https/http/g' /etc/apk/repositories && \
-    apk --no-cache add ca-certificates curl ffmpeg
-WORKDIR /root/
+    apk --no-cache add ca-certificates curl ffmpeg && \
+    addgroup -S gomo6 && adduser -S -G gomo6 gomo6
+# Non-root runtime (Trivy DS-0002). Temp work (audio/video) goes to /tmp, which
+# is world-writable in Alpine, so nothing needs to live under a root-owned dir.
+WORKDIR /app
 
 COPY --from=builder /app/main .
 COPY --from=builder /app/reindex .
@@ -69,9 +72,13 @@ COPY --from=builder /app/.env .env
 COPY --from=builder /app/docs ./docs
 COPY --from=builder /app/migrations ./migrations
 
+RUN chown -R gomo6:gomo6 /app
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8080/health || exit 1
+
+USER gomo6
 
 CMD ["./main"]
