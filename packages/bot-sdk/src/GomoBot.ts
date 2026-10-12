@@ -8,6 +8,12 @@ import { WsClient } from "./client/wsClient.js";
 const DEFAULT_BASE_URL = "https://gomo6.wtf";
 const DEFAULT_WS_URL = "wss://gomo6.wtf/ws";
 
+/**
+ * Strip CR/LF so a value that arrived over the socket cannot forge log lines
+ * (CWE-117 log injection).
+ */
+const sanitizeLog = (value: unknown): string => String(value).replace(/[\r\n]/g, "");
+
 export class GomoBot extends EventEmitter<BotEvents> {
   private http: HttpClient;
   private ws: WsClient;
@@ -37,10 +43,10 @@ export class GomoBot extends EventEmitter<BotEvents> {
     this.ws.on("connected", () => this.emit("ready"));
     this.ws.on("raw", (msg) => this.routeEvent(msg as RawWsMessage));
     this.ws.on("reconnect_error", (err) => {
-      console.error("[GomoBot] WebSocket reconnect error:", err instanceof Error ? err.message : err);
+      console.error("[GomoBot] WebSocket reconnect error:", sanitizeLog(err instanceof Error ? err.message : err));
     });
     this.ws.on("reconnect_failed", (err) => {
-      console.error("[GomoBot] WebSocket reconnect failed:", err instanceof Error ? err.message : err);
+      console.error("[GomoBot] WebSocket reconnect failed:", sanitizeLog(err instanceof Error ? err.message : err));
       this.emit("error", err instanceof Error ? err : new Error(String(err)));
     });
     this.ws.on("error", (err) => this.emit("error", err instanceof Error ? err : new Error(String(err))));
@@ -48,7 +54,7 @@ export class GomoBot extends EventEmitter<BotEvents> {
     this.ws.on("reconnecting", (n) => this.emit("reconnecting", n as number));
 
     this.on("error", (err) => {
-      console.error("[GomoBot] Error:", err instanceof Error ? err.message : err);
+      console.error("[GomoBot] Error:", sanitizeLog(err instanceof Error ? err.message : err));
     });
   }
 
