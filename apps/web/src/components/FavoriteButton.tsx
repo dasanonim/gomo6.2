@@ -1,6 +1,7 @@
 import { Bookmark } from "lucide-react";
 
 import { favoriteKey, useFavoritesStore, type FavoriteItemType } from "@/stores/favoritesStore";
+import { syncFavoriteNote } from "@/utils/favoriteNotes";
 
 interface FavoriteButtonProps {
   itemType: FavoriteItemType;
@@ -23,7 +24,14 @@ export const FavoriteButton = ({ itemType, itemId }: FavoriteButtonProps) => {
       title={isFavorited ? "Убрать из избранного" : "В избранное"}
       onClick={(event) => {
         event.stopPropagation();
-        void toggle(itemType, itemId);
+        const wasFavorited = isFavorited;
+        void toggle(itemType, itemId).then((nowFavorited) => {
+          // A failed toggle rolls back to the pre-click state; skip note churn
+          // so a failed add never deletes a note and a failed remove never
+          // re-creates one (issue #509).
+          if (nowFavorited === wasFavorited) return;
+          void syncFavoriteNote({ itemType, itemId, nowFavorited });
+        });
       }}
       className={`grid h-8 w-8 place-items-center transition-colors ${
         isFavorited ? "text-primary" : "text-muted-foreground hover:text-foreground"

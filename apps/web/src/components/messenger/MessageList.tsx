@@ -44,6 +44,7 @@ const DATE_SEPARATOR_HEIGHT = 34;  // .date-separator — margin 12/6 + line
 const SENDER_NAME_HEIGHT = 18;     // .msg-sender-name — group chats, first of author
 const QUOTED_MESSAGE_HEIGHT = 34;  // .quoted-message — padding 6/6 + line + mb
 const LINK_PREVIEW_HEIGHT = 60;    // .msg-link-panel — loading (40) to loaded (~90)
+const ROW_GAP_HEIGHT = 8;          // .bubble-row padding-bottom — gap between messages
 
 export interface MessageRenderExtras {
   dateLabel: string | null;
@@ -84,15 +85,15 @@ function estimateMessageHeight(
   prev: MessageView | null = null,
   isGroup = false,
 ): number {
-  if (!message) return 72;
+  if (!message) return 72 + ROW_GAP_HEIGHT;
   // Shared-post cards (__SHARE__ token) have a deterministic layout: clamped
   // text lines + a fixed 16:9 thumbnail block. Estimate the full-card height
   // upfront so the virtualizer never reflows when the entity resolves; the
   // measured height matches within a few px (or the anchor correction absorbs
   // the difference when the post has no image).
-  if (message.content?.startsWith("__SHARE__")) return 430;
+  if (message.content?.startsWith("__SHARE__")) return 430 + ROW_GAP_HEIGHT;
   // Gift cards render a fixed standalone card.
-  if (message.content?.startsWith("__GIFT__")) return 190;
+  if (message.content?.startsWith("__GIFT__")) return 190 + ROW_GAP_HEIGHT;
 
   // Elements above the bubble that the content estimate cannot see. Kept in
   // sync with renderMessage: the date separator shows on the first message of
@@ -119,12 +120,12 @@ function estimateMessageHeight(
       const captionLines = message.content?.trim()
         ? Math.max(1, Math.ceil(message.content.length / 55))
         : 0;
-      return extra + 14 + boxHeight + captionLines * 21;
+      return extra + 14 + boxHeight + captionLines * 21 + ROW_GAP_HEIGHT;
     }
   }
   const chars = message.content?.length ?? 0;
   const lines = chars === 0 ? 1 : Math.max(1, Math.ceil(chars / 55));
-  return extra + 18 + lines * 21;
+  return extra + 18 + lines * 21 + ROW_GAP_HEIGHT;
 }
 
 /**

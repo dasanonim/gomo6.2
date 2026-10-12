@@ -319,7 +319,8 @@ describe("MessageList virtualization", () => {
     ];
     mountList();
     const estimateSize = h.virtualizerOpts.estimateSize as (index: number) => number;
-    expect(estimateSize(0)).toBe(190);
+    // 190 (card) + 8 (bubble-row bottom gap).
+    expect(estimateSize(0)).toBe(198);
   });
 
   it("pins the view to the bottom while at the bottom when content grows", () => {

@@ -395,7 +395,12 @@ export const MessageBubble = memo(function MessageBubble({
 
   // Measure the actual rendered line count so every one-line message gets the
   // compact inline timestamp, regardless of its character length.
+  // A shared post (__SHARE__) renders a full-height card instead of text: line
+  // measurement does not apply, and the card reserves its own meta space, so
+  // skip the whole compact/multiline path for it.
+  const isShareMessage = message.content?.startsWith("__SHARE__") ?? false;
   const canUseInlineMeta = !isMediaBubble
+    && !isShareMessage
     && !message.attachments?.length
     && message.localStatus !== "failed";
 
@@ -504,7 +509,7 @@ export const MessageBubble = memo(function MessageBubble({
             in the overlay below. */}
         <div
           ref={messageBubbleRef}
-          className={`message-bubble${isMine ? " is-mine" : ""}${isPinned ? " is-pinned" : ""}${message.localStatus === "failed" ? " is-stuck" : ""}${isNew ? " is-new" : ""}${isMediaBubble ? " is-media-bubble" : ""}${isMediaBubble && message.content.trim() ? " has-caption" : ""}${isCompact ? " is-compact" : ""}${hasMeasuredLines && !isCompact && !isMediaBubble ? " is-multiline" : ""}${menuOpen ? " is-menu-hidden" : ""}`}
+          className={`message-bubble${isMine ? " is-mine" : ""}${isPinned ? " is-pinned" : ""}${message.localStatus === "failed" ? " is-stuck" : ""}${isNew ? " is-new" : ""}${isMediaBubble ? " is-media-bubble" : ""}${isMediaBubble && message.content.trim() ? " has-caption" : ""}${isShareMessage ? " is-share-bubble" : ""}${isCompact ? " is-compact" : ""}${hasMeasuredLines && !isCompact && !isMediaBubble ? " is-multiline" : ""}${menuOpen ? " is-menu-hidden" : ""}`}
           data-message-id={message.id}
           onContextMenu={(e) => { e.preventDefault(); openMenu(); }}
         >

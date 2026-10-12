@@ -8,6 +8,7 @@ import { Drawer, DrawerClose, DrawerContent, DrawerHeader, DrawerTitle } from "@
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { storageUrl } from "@/utils/storage";
+import { messengerConversationPreview } from "@/components/messenger/messengerRichTextUtils";
 import { searchProfiles, type ProfileSearchResult } from "@/utils/searchProfiles";
 import { useMessengerStore } from "@/stores/messengerStore";
 import type { ConversationView } from "@/components/messenger/types";
@@ -331,7 +332,8 @@ export const ShareSheet = ({ open, onOpenChange, target, url, title }: ShareShee
                 <span className="block truncate text-sm font-medium">{name}</span>
                 <span className="block truncate text-xs text-muted-foreground">
                   {conv.last_message_preview
-                    || (conv.is_group ? t("share.members", { count: conv.member_count }) : t("share.chat"))}
+                    ? messengerConversationPreview(conv.last_message_preview)
+                    : (conv.is_group ? t("share.members", { count: conv.member_count }) : t("share.chat"))}
                 </span>
               </span>
               {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
