@@ -69,14 +69,15 @@ if [ "$HAS_BACKEND" -eq 1 ]; then
   # ── gofmt (exclude vendor/) ──
   STAGED_GO_NOVENDOR=()
   for f in "${STAGED_GO[@]}"; do
-    [[ "$f" == vendor/* ]] || STAGED_GO_NOVENDOR+=("$f")
+    # Staged paths are repo-root-relative, so match on the full backend path.
+    [[ "$f" == "$BACKEND_DIR"/vendor/* ]] || STAGED_GO_NOVENDOR+=("$f")
   done
   if [ ${#STAGED_GO_NOVENDOR[@]} -gt 0 ]; then
     UNFMT="$(gofmt -l "${STAGED_GO_NOVENDOR[@]}" 2>&1 || true)"
     if [ -n "$UNFMT" ]; then
       fail "gofmt — неотформатированные файлы:"
       while IFS= read -r line; do echo "    $line"; done <<< "$UNFMT"
-      warn "Исправь: gofmt -w ${STAGED_GO[*]} && git add ${STAGED_GO[*]}"
+      warn "Исправь: gofmt -w ${STAGED_GO_NOVENDOR[*]} && git add ${STAGED_GO_NOVENDOR[*]}"
       exit 1
     fi
     pass "gofmt"
