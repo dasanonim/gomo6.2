@@ -1,0 +1,96 @@
+name: "❓ Question"
+description: "Ask about usage, self-hosting or development — задать вопрос по использованию, хостингу или разработке."
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 🇬🇧 English
+        Before asking, it's worth a minute: search the existing issues, skim the [wiki](https://github.com/elcrazycol/gomo6.2/tree/main/docs/wiki)
+        and the [quick start](https://github.com/elcrazycol/gomo6.2/blob/main/README.md#quick-start). Most setup questions are answered there.
+
+        ### 🇷🇺 Русский
+        Перед вопросом стоит потратить минуту: поищите по существующим issues, загляните в
+        [wiki](https://github.com/elcrazycol/gomo6.2/tree/main/docs/wiki) и [quick start](https://github.com/elcrazycol/gomo6.2/blob/main/README.md#quick-start).
+        Большинство вопросов по установке там уже разобрано.
+
+        > Это **не** канал для багов (→ [Bug report](https://github.com/elcrazycol/gomo6.2/issues/new?template=bug_report.yml))
+        > и не для уязвимостей (→ [SECURITY.md](https://github.com/elcrazycol/gomo6.2/blob/main/SECURITY.md)).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: "Pre-flight / Перед отправкой"
+      options:
+        - label: "I searched existing issues and read the docs / wiki. / Я поискал по issues и прочитал доки / wiki."
+          required: true
+        - label: "This is not a bug report and not a security issue. / Это не багрепорт и не вопрос безопасности."
+          required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: "Your question / Ваш вопрос"
+      description: "Be specific — what exactly are you trying to achieve? / Сформулируйте конкретно: чего именно вы хотите добиться?"
+      placeholder: "How do I add a custom emoji pack to a GomoSub, and is there an API for it?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: "What have you tried? / Что вы уже пробовали?"
+      description: "Commands, config, docs you checked. / Команды, конфиг, какие доки смотрели."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Area / Область"
+      options:
+        - "Setup & deployment / Установка и деплой"
+        - "Local development (make dev) / Локальная разработка"
+        - "Configuration & environment (.env) / Конфигурация и .env"
+        - "Feed, boards & threads / Лента, разделы и темы"
+        - "Profile, wall & studio / Профиль, стена и студия"
+        - "Messenger / Мессенджер"
+        - "GomoSub (forum + live chat) / GomoSub (каналы и чат)"
+        - "Search / Поиск"
+        - "Auth, OAuth & 2FA / Вход, OAuth и 2FA"
+        - "Bot SDK & API / Bot SDK и API"
+        - "Moderation & admin / Модерация и админка"
+        - "Other / Другое"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: "Where are you running it? / Где вы это запускаете?"
+      options:
+        - "Local development (make dev) / Локальная разработка"
+        - "Self-hosted instance / Свой инстанс"
+        - "Docker Compose stack / Docker Compose"
+        - "gomo6.wtf (as a user) / Как пользователь"
+        - "Not applicable / Не применимо"
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: "Version / Версия"
+      description: "If relevant — from the footer or `curl -s <url>/health`. / Если важно — из футера или `curl -s <url>/health`."
+      placeholder: "2.18.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: "Additional context / Дополнительный контекст"
+      description: "Config snippets (strip secrets), logs, links, screenshots. / Куски конфига (уберите секреты), логи, ссылки, скриншоты."
+    validations:
+      required: false

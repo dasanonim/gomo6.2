@@ -1,0 +1,174 @@
+name: "🐞 Bug report"
+description: "Something isn't working — что-то работает не так."
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 🇬🇧 English
+        Thanks for taking the time to report a bug. The more of this you fill in, the faster it gets fixed —
+        a reproducible case with logs is worth ten "it's broken" reports.
+
+        ### 🇷🇺 Русский
+        Спасибо, что нашли время сообщить о баге. Чем подробнее заполните — тем быстрее починим:
+        воспроизводимый кейс с логами стоит десяти сообщений «у меня не работает».
+
+        > ⚠️ **Security / Безопасность** — уязвимости, утечки данных и приватности **не** пишите в публичный
+        > issue: их нужно отправлять приватно по
+        > [SECURITY.md](https://github.com/elcrazycol/gomo6.2/blob/main/SECURITY.md).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: "Pre-flight / Перед отправкой"
+      description: "Please confirm / Пожалуйста, подтвердите:"
+      options:
+        - label: "I searched the existing issues — this hasn't been reported yet. / Я поискал существующие issues — такого ещё нет."
+          required: true
+        - label: "This bug is not about security, privacy or leaked data. / Этот баг не про безопасность, приватность или утечки данных."
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: "What happened? / Что произошло?"
+      description: "A clear, concise description of the bug. / Краткое и чёткое описание бага."
+      placeholder: "When I open a thread and press Like, nothing happens and the counter stays at 0."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Steps to reproduce / Шаги воспроизведения"
+      description: "Numbered steps from a clean state. Include the URL or the exact clicks. / Пронумерованные шаги из чистого состояния. Укажите URL или точные клики."
+      placeholder: |
+        1. Sign in, open /board/announcements
+        2. Open any thread
+        3. Click 👍 on the first post
+        4. …
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected behavior / Ожидаемое поведение"
+      description: "What you expected to happen. / Что должно было произойти."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: "Actual behavior / Фактическое поведение"
+      description: "What actually happened. / Что произошло на самом деле."
+    validations:
+      required: true
+
+  - type: input
+    id: frequency
+    attributes:
+      label: "How often? / Как часто воспроизводится?"
+      placeholder: "Always / always on mobile / once, cannot reproduce"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Area / Область"
+      description: "Which part of the product is affected? Pick the closest one. / Какая часть продукта затронута? Выберите ближайшее."
+      options:
+        - "Feed / Лента"
+        - "Boards & threads / Разделы и темы"
+        - "Profile, wall & studio / Профиль, стена и студия"
+        - "Messenger / Мессенджер"
+        - "GomoSub (forum + live chat) / GomoSub (каналы и чат)"
+        - "Search / Поиск"
+        - "Achievements, drops & gifts / Достижения, дропы, подарки"
+        - "Notifications / Уведомления"
+        - "Auth, OAuth & 2FA / Вход, OAuth и 2FA"
+        - "Media & uploads / Медиа и загрузки"
+        - "Moderation / Модерация"
+        - "Not sure / Не знаю"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: "Severity / Критичность"
+      options:
+        - "Critical — data loss, cannot log in, whole site down / Критично: потеря данных, не войти, сайт лежит"
+        - "Major — a feature is unusable / Серьёзно: фича не работает"
+        - "Minor — cosmetic, has a workaround / Мелочь: косметика, есть обходной путь"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: "Where does it happen? / Где воспроизводится?"
+      options:
+        - "gomo6.wtf (production) / Прод"
+        - "Self-hosted instance / Свой инстанс"
+        - "Local development (make dev) / Локальная разработка"
+        - "Docker Compose stack / Docker Compose"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "Version / Версия"
+      description: "From the site footer or `curl -s <url>/health`. / Из футера сайта или `curl -s <url>/health`."
+      placeholder: "2.18.0"
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: "Browser / Браузер"
+      placeholder: "Safari 18.2, Chrome 141, Firefox 145, iOS app…"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: "Device & OS / Устройство и ОС"
+      placeholder: "iPhone 15 / iOS 18.2, macOS 15.2, Windows 11, Android 15…"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs & errors / Логи и ошибки"
+      description: "Browser console, network/WebSocket errors, or `make logs`. Strip secrets, tokens and cookies. / Консоль браузера, ошибки сети/WebSocket или `make logs`. Уберите секреты, токены и cookie."
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: "Screenshots or screen recording / Скриншоты или запись экрана"
+      description: "Drag & drop images or videos here. / Перетащите изображения или видео сюда."
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: "Additional context / Дополнительный контекст"
+      description: "Related issues, recent changes, hunches, extra setup details. / Связанные issues, недавние изменения, догадки, особенности конфигурации."
+    validations:
+      required: false

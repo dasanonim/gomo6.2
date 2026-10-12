@@ -1,0 +1,108 @@
+name: "✨ Feature request"
+description: "Suggest an idea or improvement — предложить идею или улучшение."
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 🇬🇧 English
+        Start from the problem, not the solution — knowing *why* you need this makes the feature far easier to design.
+
+        ### 🇷🇺 Русский
+        Начните с проблемы, а не с решения: понять, *зачем* это нужно, важнее, чем точная формулировка фичи.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: "Pre-flight / Перед отправкой"
+      options:
+        - label: "I searched the existing issues and this hasn't been suggested yet. / Я поискал существующие issues — такого предложения ещё нет."
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Problem / Проблема"
+      description: "What is hard, missing or annoying today? Describe the pain, not the UI. / Что сейчас неудобно, отсутствует или раздражает? Опишите боль, а не интерфейс."
+      placeholder: "As a moderator of a large GomoSub, I cannot see which channels a report came from, so triage takes forever."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: "Proposed solution / Предлагаемое решение"
+      description: "How would you like it to work? Sketches, mockups and references to other products are welcome. / Как это должно работать? Приветствуются наброски, макеты и примеры из других продуктов."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Alternatives considered / Рассмотренные альтернативы"
+      description: "Other approaches you thought about, and existing workarounds. / Другие варианты, которые вы рассматривали, и текущие обходные пути."
+    validations:
+      required: false
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: "Use cases / Сценарии использования"
+      description: "Who benefits and when? Concrete scenarios help prioritise. / Кому и когда это поможет? Конкретные сценарии помогают с приоритетом."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Area / Область"
+      options:
+        - "Feed / Лента"
+        - "Boards & threads / Разделы и темы"
+        - "Profile, wall & studio / Профиль, стена и студия"
+        - "Messenger / Мессенджер"
+        - "GomoSub (forum + live chat) / GomoSub (каналы и чат)"
+        - "Search / Поиск"
+        - "Achievements, drops & gifts / Достижения, дропы, подарки"
+        - "Notifications / Уведомления"
+        - "Auth, OAuth & 2FA / Вход, OAuth и 2FA"
+        - "Media & uploads / Медиа и загрузки"
+        - "Themes & appearance / Темы и оформление"
+        - "Moderation & admin / Модерация и админка"
+        - "Bot SDK & API / Bot SDK и API"
+        - "Other / Другое"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: audience
+    attributes:
+      label: "Who is it for? / Для кого это?"
+      options:
+        - "Everyday users / Обычные пользователи"
+        - "Community moderators & admins / Модераторы и админы"
+        - "Self-hosters / Самохостинг"
+        - "Bot & integration developers / Разработчики ботов и интеграций"
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: "Additional context / Дополнительный контекст"
+      description: "Links, prior art, related issues. / Ссылки, аналоги, связанные issues."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: "Would you like to implement it? / Хотите реализовать сами?"
+      description: "Not a promise — helps us know whether to add a \"help wanted\" label. / Не обязательство — так мы поймём, нужна ли метка \"help wanted\"."
+      options:
+        - "Yes, I can open a PR / Да, могу сделать PR"
+        - "Yes, with some guidance / Да, но нужна помощь"
+        - "No, just suggesting / Нет, только предлагаю"
+    validations:
+      required: false

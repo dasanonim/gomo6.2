@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "🔒 Report a security vulnerability"
+    url: https://github.com/elcrazycol/gomo6.2/security/advisories/new
+    about: "Privately report vulnerabilities, privacy leaks or leaked data. Never in a public issue. / Уязвимости, утечки приватности и данных — только приватно."
+  - name: "📖 Documentation & wiki"
+    url: https://github.com/elcrazycol/gomo6.2/tree/main/docs/wiki
+    about: "Deployment, Docker setup, OAuth API, messenger security model, realtime and presence patterns. / Деплой, Docker, OAuth API, безопасность мессенджера, realtime."
+  - name: "🚀 Local development & troubleshooting"
+    url: https://github.com/elcrazycol/gomo6.2/blob/main/README.md#quick-start
+    about: "make dev, make doctor, demo data and the demo sign-in. / make dev, make doctor, демо-данные и вход."

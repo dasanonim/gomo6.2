@@ -1,0 +1,162 @@
+name: "🐌 Performance issue"
+description: "Something is slow or eats resources — что-то тормозит или жрёт ресурсы."
+title: "[Performance]: "
+labels: ["performance"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 🇬🇧 English
+        Numbers beat adjectives. "The feed takes ~4 s to render a 200-thread page; Lighthouse TBT 3.1 s"
+        is actionable — "it's slow" is not. Please attach measurements.
+
+        ### 🇷🇺 Русский
+        Цифры важнее эпитетов. «Лента рендерит страницу на 200 тем ~4 с, Lighthouse TBT 3.1 с» — это то,
+        с чем можно работать, а «тормозит» — нет. Приложите замеры.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: "Pre-flight / Перед отправкой"
+      options:
+        - label: "I searched the existing issues — this hasn't been reported yet. / Я поискал существующие issues — такого ещё нет."
+          required: true
+        - label: "This is a performance problem, not a crash or a wrong result. / Это именно про производительность, а не падение и не неверный результат."
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: "Summary / Кратко"
+      description: "What is slow, and where? One or two sentences. / Что тормозит и где? Одно-два предложения."
+      placeholder: "Opening a GomoSub channel with 500+ messages scrolls at ~20 fps on mobile Safari."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Steps to reproduce / Шаги воспроизведения"
+      description: "Include the URL and, if it matters, the data size (threads, posts, messages). / Укажите URL и, если важно, объём данных (темы, посты, сообщения)."
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: input
+    id: timing
+    attributes:
+      label: "Measured timing / Замеренное время"
+      description: "Expected vs actual, with the unit. / Ожидаемое vs фактическое, с единицами."
+      placeholder: "Timeline loads in ~6 s; expected ~1 s. TTFB 2.4 s."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: consistency
+    attributes:
+      label: "Reproducibility / Воспроизводимость"
+      options:
+        - "Always / Всегда"
+        - "Often, but not always / Часто, но не всегда"
+        - "Occasionally / Иногда"
+        - "Only under load or on large data / Только под нагрузкой или на больших данных"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Area / Область"
+      options:
+        - "Page load & first render / Загрузка и первый рендер"
+        - "Scrolling & interaction / Скролл и отзывчивость UI"
+        - "Feed / Лента"
+        - "Boards & threads / Разделы и темы"
+        - "Messenger / Мессенджер"
+        - "GomoSub (forum + live chat) / GomoSub (каналы и чат)"
+        - "Search / Поиск"
+        - "Media processing & uploads / Обработка медиа и загрузки"
+        - "Notifications & WebSocket / Уведомления и WebSocket"
+        - "Backend API / Бэкенд API"
+        - "Database / База данных"
+        - "Memory, CPU or disk on the server / Память, CPU или диск на сервере"
+        - "Other / Другое"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: "Where does it happen? / Где воспроизводится?"
+      options:
+        - "gomo6.wtf (production) / Прод"
+        - "Self-hosted instance / Свой инстанс"
+        - "Local development (make dev) / Локальная разработка"
+        - "Docker Compose stack / Docker Compose"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "Version / Версия"
+      description: "From the site footer or `curl -s <url>/health`. / Из футера сайта или `curl -s <url>/health`."
+      placeholder: "2.18.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "Environment / Окружение"
+      description: "Browser & OS, device, network (Wi-Fi / 4G), server specs and data volume. / Браузер и ОС, устройство, сеть (Wi-Fi / 4G), характеристики сервера и объём данных."
+      value: |
+        - Browser / Браузер:
+        - Device & OS / Устройство и ОС:
+        - Network / Сеть:
+        - Server specs / Характеристики сервера:
+        - Data volume / Объём данных (threads / posts / messages / users):
+    validations:
+      required: true
+
+  - type: textarea
+    id: measurements
+    attributes:
+      label: "Measurements & profile / Замеры и профиль"
+      description: |
+        Browser: Performance panel (timings, long tasks), Lighthouse report, network waterfall or HAR.
+        Server: `make logs`, Prometheus queries, a `pprof` profile.
+        / Браузер: Performance-панель, отчёт Lighthouse, waterfall/HAR. Сервер: `make logs`, запросы Prometheus, `pprof`-профиль.
+      placeholder: "DevTools → Performance, ~8 s recording. Top long task: 2.3 s in `renderMessages`."
+    validations:
+      required: false
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: "Attachments / Вложения"
+      description: "Drag & drop HAR files, Lighthouse JSON, `pprof` profiles, screenshots or recordings. Remove tokens and cookies first. / Перетащите HAR, Lighthouse JSON, `pprof`-профили, скриншоты или записи. Сначала удалите токены и cookie."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: "Impact / Влияние"
+      options:
+        - "Blocking — the feature is unusable / Блокирует: фичей пользоваться нельзя"
+        - "Major — noticeably degrades the experience / Сильно мешает"
+        - "Minor — noticeable only when measured / Заметно только на замерах"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: "Additional context / Дополнительный контекст"
+      description: "When did it start? What changed around then? Related issues. / Когда началось? Что менялось рядом? Связанные issues."
+    validations:
+      required: false

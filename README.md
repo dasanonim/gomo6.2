@@ -166,10 +166,13 @@ The VPS is small (1 vCPU / 1 GB) and never builds anything — it only pulls ima
 - **Developer docs** — the live docs site ([`apps/docs`](apps/docs)): bot quick start, events, API and OAuth 2.0 flow guides
 - **Wiki** ([`docs/wiki`](docs/wiki)) — deployment, Docker setup, OAuth API, messenger security model, realtime WebSocket patterns, presence design, attachments
 - **Changelog** — [CHANGELOG.md](CHANGELOG.md) (Keep a Changelog + SemVer; the version lives in [`VERSION`](VERSION))
+- **Security** — [SECURITY.md](SECURITY.md): how to report vulnerabilities privately, scope and response times
 
 ## Contributing
 
 Issues and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md); the release ritual and versioning rules live there too. Before pushing, `./scripts/ci-local.sh quick` runs the same lint and type checks CI does, and the pre-commit hook (`git config core.hooksPath .githooks`) checks changed packages on every commit.
+
+Found a security or privacy issue? **Do not open a public issue** — report it privately per [SECURITY.md](SECURITY.md).
 
 ## License
 
