@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gomo6/backend/internal/auth"
 	"github.com/gomo6/backend/internal/geo"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gomo6/backend/internal/models"
 	"github.com/redis/go-redis/v9"
 )
@@ -69,7 +69,7 @@ func insertSessionRow(db *sql.DB, userID, sessionID, refreshHash, accessJTI, use
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, '')::inet, $10, $11)
 		ON CONFLICT (id) DO NOTHING`,
 		sessionID, userID, refreshHash, accessJTI, userAgent, osName, browserName, deviceType, ip, countryCode, countryName); err != nil {
-		log.Printf("[sessions] failed to insert session row for user %s: %v", userID, err)
+		logsafe.Printf("[sessions] failed to insert session row for user %s: %v", userID, err)
 	}
 }
 

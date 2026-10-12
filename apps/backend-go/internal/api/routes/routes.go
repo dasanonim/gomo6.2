@@ -23,6 +23,7 @@ import (
 	"github.com/gomo6/backend/internal/gifts"
 	"github.com/gomo6/backend/internal/gomosubchat"
 	"github.com/gomo6/backend/internal/linkpreview"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gomo6/backend/internal/messenger"
 	"github.com/gomo6/backend/internal/middleware"
 	"github.com/gomo6/backend/internal/moderation"
@@ -972,7 +973,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 							// are logged so an outage is not mistaken for a plain 403.
 							canViewWall, err := privacy.CanViewWall(db, viewerID, ownerID)
 							if err != nil {
-								log.Printf("[storage] wall visibility check failed for viewer=%s owner=%s: %v", viewerID, ownerID, err)
+								logsafe.Printf("[storage] wall visibility check failed for viewer=%s owner=%s: %v", viewerID, ownerID, err)
 							}
 							if !canViewWall {
 								c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
@@ -1045,7 +1046,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 					}
 				}
 				consentURL := frontendURL + "/oauth/consent?" + c.Request.URL.RawQuery
-				log.Printf("Redirecting to consent page: %s", consentURL)
+				logsafe.Printf("Redirecting to consent page: %s", consentURL)
 				c.Redirect(http.StatusTemporaryRedirect, consentURL)
 				return
 			}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gomo6/backend/internal/httpx"
+	"github.com/gomo6/backend/internal/logsafe"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gomo6/backend/internal/auth"
@@ -644,7 +645,7 @@ func (h *MessengerHandler) deliverMessagePush(ctx context.Context, conversationI
 		WHERE conversation_id = $1 AND user_id != $2 AND COALESCE(is_muted, false) = false
 	`, conversationID, senderID)
 	if err != nil {
-		log.Printf("[Messenger] list push recipients %s: %v", conversationID, err)
+		logsafe.Printf("[Messenger] list push recipients %s: %v", conversationID, err)
 		return
 	}
 	defer rows.Close()

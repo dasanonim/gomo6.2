@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gomo6/backend/internal/auth"
 	"github.com/gomo6/backend/internal/httpx"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gomo6/backend/internal/models"
 	stor "github.com/gomo6/backend/internal/storage"
 	"github.com/google/uuid"
@@ -1030,7 +1031,7 @@ func (h *BackupHandler) uploadImportedFiles(newBoardID string, fileEntries []fil
 		// Files need to be re-read from the original archive. This is handled by
 		// re-uploading during import from the original tar stream.
 		// For now, log that files would be uploaded.
-		log.Printf("backup import: would upload %s/%s -> %s/%s", fe.bucket, fe.key, fe.bucket, newKey)
+		logsafe.Printf("backup import: would upload %s/%s -> %s/%s", fe.bucket, fe.key, fe.bucket, newKey)
 	}
 }
 

@@ -4,6 +4,7 @@
 // Relative WebSocket URL (works through Vite proxy in dev, Caddy in Docker).
 // Override with VITE_WS_URL for custom setups.
 import { apiClient } from "@/integrations/api/client";
+import { sanitizeLog } from "@/lib/logSanitize";
 
 const WS_BASE_URL = import.meta.env.VITE_WS_URL || '/ws';
 
@@ -449,10 +450,10 @@ class WebSocketService {
         try {
           handler(message);
         } catch (error) {
-          // Pass `type` as an argument, not interpolated into the format
-          // string: a server-supplied message type could otherwise carry
-          // console format specifiers (js/tainted-format-string).
-          console.error("[WebSocket] Handler error for", type, error);
+          // `type` comes from the server's message payload, so it is stripped
+          // of CR/LF before it reaches the console (CWE-117). `error` is kept
+          // as an object so devtools still shows its stack.
+          console.error("[WebSocket] Handler error for", sanitizeLog(type), error);
         }
       });
     }

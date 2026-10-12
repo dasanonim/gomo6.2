@@ -3,13 +3,13 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gomo6/backend/internal/cache"
 	"github.com/gomo6/backend/internal/httpx"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gomo6/backend/internal/models"
 	"github.com/gomo6/backend/internal/search"
 	"github.com/gomo6/backend/internal/websocket"
@@ -228,7 +228,7 @@ func (h *PublicIDHandler) invalidate(targetID, previousOwnerID string) {
 		}
 		if h.hub != nil {
 			if err := h.hub.PublishProfileUpdated(id); err != nil {
-				log.Printf("[public-id] failed to publish profile_updated for %s: %v", id, err)
+				logsafe.Printf("[public-id] failed to publish profile_updated for %s: %v", id, err)
 			}
 		}
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/gomo6/backend/internal/bg"
 	"github.com/gomo6/backend/internal/channelaccess"
 	"github.com/gomo6/backend/internal/crypto"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gomo6/backend/internal/metrics"
 	"github.com/gomo6/backend/internal/privacy"
 	"github.com/redis/go-redis/v9"
@@ -248,7 +249,7 @@ func (h *Hub) Run() {
 			removed := h.removeClientLocked(client)
 			h.mu.Unlock()
 			if removed {
-				log.Printf("[WebSocket] Client disconnected: %s (%s)", client.Username, client.UserID)
+				logsafe.Printf("[WebSocket] Client disconnected: %s (%s)", client.Username, client.UserID)
 				// Multi-connection fix: leave the "online" state only when this was
 				// the user's LAST live connection — another tab or device of the
 				// same user may legitimately still be connected.
@@ -918,7 +919,7 @@ func (h *Hub) SubscribeToRoom(client *Client, room string) {
 	h.rooms[room][client] = true
 	client.Rooms[room] = true
 
-	log.Printf("[WebSocket] Client %s subscribed to room %s", client.Username, room)
+	logsafe.Printf("[WebSocket] Client %s subscribed to room %s", client.Username, room)
 }
 
 // UnsubscribeFromRoom removes a client from a room
@@ -936,7 +937,7 @@ func (h *Hub) UnsubscribeFromRoom(client *Client, room string) {
 		}
 	}
 
-	log.Printf("[WebSocket] Client %s unsubscribed from room %s", client.Username, room)
+	logsafe.Printf("[WebSocket] Client %s unsubscribed from room %s", client.Username, room)
 }
 
 // ForceUnsubscribeFromWallRooms revokes every live subscription of viewerID to
@@ -963,7 +964,7 @@ func (h *Hub) ForceUnsubscribeFromWallRooms(viewerID, targetID string) {
 		}
 		delete(roomClients, client)
 		delete(client.Rooms, room)
-		log.Printf("[WebSocket] Client %s force-unsubscribed from %s (friendship revoked)", client.Username, room)
+		logsafe.Printf("[WebSocket] Client %s force-unsubscribed from %s (friendship revoked)", client.Username, room)
 	}
 	if len(roomClients) == 0 {
 		delete(h.rooms, room)
@@ -995,7 +996,7 @@ func (h *Hub) ForceUnsubscribeFromNowPlayingRooms(viewerID, targetID string) {
 		}
 		delete(roomClients, client)
 		delete(client.Rooms, room)
-		log.Printf("[WebSocket] Client %s force-unsubscribed from %s (friendship revoked)", client.Username, room)
+		logsafe.Printf("[WebSocket] Client %s force-unsubscribed from %s (friendship revoked)", client.Username, room)
 	}
 	if len(roomClients) == 0 {
 		delete(h.rooms, room)
@@ -1107,7 +1108,7 @@ func (h *Hub) ForceUnsubscribeFromChatRooms(userID, conversationID string) {
 		}
 		delete(roomClients, client)
 		delete(client.Rooms, room)
-		log.Printf("[WebSocket] Client %s force-unsubscribed from %s (membership revoked)", client.Username, room)
+		logsafe.Printf("[WebSocket] Client %s force-unsubscribed from %s (membership revoked)", client.Username, room)
 	}
 	if len(roomClients) == 0 {
 		delete(h.rooms, room)
@@ -1307,7 +1308,7 @@ func (h *Hub) TouchPresence(userID string) {
 	pipe.ZAdd(ctx, redisPresenceKey, redis.Z{Score: float64(now.Unix()), Member: userID})
 	pipe.Set(ctx, fmt.Sprintf(redisPresenceLastSeenKey, userID), now.Format(time.RFC3339), redisPresenceLastSeenTTL)
 	if _, err := pipe.Exec(ctx); err != nil {
-		log.Printf("[Presence] touch failed for %s: %v", userID, err)
+		logsafe.Printf("[Presence] touch failed for %s: %v", userID, err)
 	}
 }
 
@@ -1424,7 +1425,7 @@ func (h *Hub) flushOfflineToDB(userID string, lastSeen time.Time) {
 		`UPDATE users SET is_online = false, last_seen_at = $1 WHERE id = $2 AND is_online = true`,
 		lastSeen, userID,
 	); err != nil {
-		log.Printf("[Presence] failed to flush offline status for %s: %v", userID, err)
+		logsafe.Printf("[Presence] failed to flush offline status for %s: %v", userID, err)
 	}
 }
 
@@ -1657,6 +1658,6 @@ func (h *Hub) CheckOrigin(r *http.Request) bool {
 		}
 	}
 
-	log.Printf("[WebSocket] Rejected connection from unauthorized origin: %s", origin)
+	logsafe.Printf("[WebSocket] Rejected connection from unauthorized origin: %s", origin)
 	return false
 }

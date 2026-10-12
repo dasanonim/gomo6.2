@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gomo6/backend/internal/auth"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gorilla/websocket"
 )
 
@@ -157,7 +158,7 @@ func (c *Client) readPump() {
 		// Apply rate limiting (except for ping messages)
 		if message.Type != MessageTypePing {
 			if !c.Hub.rateLimiter.Allow(c.UserID) {
-				log.Printf("[WebSocket] Rate limit exceeded for user %s", c.UserID)
+				logsafe.Printf("[WebSocket] Rate limit exceeded for user %s", c.UserID)
 				c.sendError("Rate limit exceeded. Please slow down.")
 				continue
 			}
@@ -263,7 +264,7 @@ func (c *Client) readPump() {
 			}
 
 		default:
-			log.Printf("[WebSocket] Unknown message type: %s", message.Type)
+			logsafe.Printf("[WebSocket] Unknown message type: %s", message.Type)
 		}
 	}
 }
@@ -307,7 +308,7 @@ func (c *Client) handleAuth(data json.RawMessage) error {
 			go c.Hub.updateUserOnlineStatus(c.UserID, true)
 			go c.Hub.broadcastUserStatus(c.UserID, c.Username, true)
 
-			log.Printf("[WebSocket] Authenticated bot: %s (%s)", c.Username, c.UserID)
+			logsafe.Printf("[WebSocket] Authenticated bot: %s (%s)", c.Username, c.UserID)
 
 			// Auto-subscribe bot to all its chat rooms
 			go c.autoSubscribeBotsChats()
@@ -348,7 +349,7 @@ func (c *Client) handleAuth(data json.RawMessage) error {
 		go c.Hub.markSessionOnline(c.UserID, c.SessionID)
 	}
 
-	log.Printf("[WebSocket] Authenticated user: %s (%s)", c.Username, c.UserID)
+	logsafe.Printf("[WebSocket] Authenticated user: %s (%s)", c.Username, c.UserID)
 
 	// NOTE: no set_config on the pooled connection here. The old call executed
 	// set_config('app.current_user_id', ...) without a transaction, which
@@ -392,7 +393,7 @@ func (c *Client) autoSubscribeBotsChats() {
 		log.Printf("[WebSocket] Failed to fetch bot conversations: %v", err)
 		return
 	}
-	log.Printf("[WebSocket] Bot %s auto-subscribed to chat rooms", c.Username)
+	logsafe.Printf("[WebSocket] Bot %s auto-subscribed to chat rooms", c.Username)
 }
 
 // sendError sends an error message to the client and then closes the connection.

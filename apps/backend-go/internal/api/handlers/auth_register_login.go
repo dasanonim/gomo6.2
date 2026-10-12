@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gomo6/backend/internal/httpx"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gomo6/backend/internal/metrics"
 	"github.com/gomo6/backend/internal/middleware"
 	"github.com/gomo6/backend/internal/models"
@@ -43,7 +44,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	if req.Website != "" {
 		// Log the event but return success to mislead the bot
 		clientIP := c.ClientIP()
-		log.Printf("[Honeypot] Bot detected on register from IP %s (website=%q)", clientIP, req.Website)
+		logsafe.Printf("[Honeypot] Bot detected on register from IP %s (website=%q)", clientIP, req.Website)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"message": "Registration successful. Please check your email for confirmation.",
 		}))
@@ -188,7 +189,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	// ── Honeypot check ──
 	if req.Website != "" {
 		clientIP := c.ClientIP()
-		log.Printf("[Honeypot] Bot detected on login from IP %s (website=%q)", clientIP, req.Website)
+		logsafe.Printf("[Honeypot] Bot detected on login from IP %s (website=%q)", clientIP, req.Website)
 		// Silently succeed to mislead the bot — generic invalid credentials
 		c.JSON(http.StatusUnauthorized, models.ErrorResponseWithCode(models.ErrInvalidCredentials, "Invalid credentials", nil))
 		return

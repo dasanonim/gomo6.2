@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	"github.com/gomo6/backend/internal/crypto"
+	"github.com/gomo6/backend/internal/logsafe"
 )
 
 type FileInfo struct {
@@ -201,7 +202,7 @@ func (s *StorageClient) GetFileEncrypted(bucket, key string) ([]byte, string, er
 		// Objects uploaded before attachment encryption are still readable.
 		// Log the fallback so malformed/new ciphertext is observable instead of
 		// silently looking like a valid download.
-		log.Printf("storage: serving legacy/plain attachment %s/%s after decrypt failure: %v", bucket, key, err)
+		logsafe.Printf("storage: serving legacy/plain attachment %s/%s after decrypt failure: %v", bucket, key, err)
 		return data, contentType, nil
 	}
 	return decrypted, contentType, nil

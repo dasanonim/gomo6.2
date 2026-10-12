@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"github.com/gomo6/backend/internal/activity"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
@@ -122,7 +122,7 @@ func (e *Engine) SetActivityRecorder(r *activity.Recorder) {
 }
 
 func (e *Engine) logf(format string, args ...interface{}) {
-	log.Printf("[Achievements] "+format, args...)
+	logsafe.Printf("[Achievements] "+format, args...)
 }
 
 // HandleEvent processes one user action: increments mapped counters, then

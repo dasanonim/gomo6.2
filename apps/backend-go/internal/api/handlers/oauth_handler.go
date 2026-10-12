@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gomo6/backend/internal/auth"
+	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gomo6/backend/internal/oauth"
 )
 
@@ -533,7 +534,7 @@ func (h *OAuthHandler) handleAuthorizationCodeGrant(c *gin.Context, req oauth.To
 	if err != nil {
 		// Log the real cause, never return it: the wrapped error chain can carry
 		// raw driver/DB detail. RFC 6749 only requires the generic invalid_grant.
-		log.Printf("[OAuth] authorization code rejected (client=%s): %v", req.ClientID, err)
+		logsafe.Printf("[OAuth] authorization code rejected (client=%s): %v", req.ClientID, err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":             oauth.ErrorInvalidGrant,
 			"error_description": "The provided authorization grant is invalid, expired or does not match the redirect URI",
@@ -614,7 +615,7 @@ func (h *OAuthHandler) handleRefreshTokenGrant(c *gin.Context, req oauth.TokenRe
 	newAccessToken, newRefreshToken, idToken, err := h.oauthSvc.RefreshAccessToken(req.RefreshToken, req.ClientID)
 	if err != nil {
 		// See above: never surface the wrapped error, log it instead.
-		log.Printf("[OAuth] refresh token rejected (client=%s): %v", req.ClientID, err)
+		logsafe.Printf("[OAuth] refresh token rejected (client=%s): %v", req.ClientID, err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":             oauth.ErrorInvalidGrant,
 			"error_description": "The provided refresh token is invalid or expired",
