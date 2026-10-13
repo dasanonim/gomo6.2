@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { MessageCircle, ThumbsUp } from "lucide-react";
@@ -22,6 +22,37 @@ export interface ThreadLastPost {
 const PREVIEW_WIDTH = 340;
 const PREVIEW_DELAY_MS = 200;
 const PREVIEW_MARGIN = 12;
+/** Gap between the card and the row it is anchored to. */
+const PREVIEW_GAP = 8;
+/**
+ * Card height assumed for the very first paint, before the real card has been
+ * measured (see ThreadHoverPreview). Only ever used for one frame.
+ */
+const PREVIEW_FALLBACK_HEIGHT = 240;
+
+/**
+ * Where the floating preview goes: above the row when the card fits there,
+ * otherwise below it.
+ *
+ * `cardHeight` is the card's MEASURED height. Anchoring the decision on the real
+ * height is what lets a short card open upward even when its row sits close to
+ * the top of the viewport — a fixed estimate (the old 240px) was too pessimistic
+ * and dropped the panel down while there was clearly room above.
+ */
+const placePreview = (
+  rect: DOMRect,
+  cardHeight: number,
+): { top: number | null; bottom: number | null } => {
+  if (rect.top >= cardHeight + PREVIEW_MARGIN) {
+    // Anchor by `bottom` (not `top`) so the card stays glued just above the
+    // row's top edge whatever its height is.
+    return { top: null, bottom: window.innerHeight - rect.top + PREVIEW_GAP };
+  }
+  return {
+    top: Math.min(rect.bottom + PREVIEW_GAP, window.innerHeight - cardHeight - PREVIEW_MARGIN),
+    bottom: null,
+  };
+};
 
 const threadPath = (row: ThreadApiRow): string => {
   const slug = row.boards?.slug || "";
@@ -243,23 +274,22 @@ const ThreadHoverPreview = ({
 }) => {
   const thread = toFeedThread(row);
   const content = (thread.content || "").trim();
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [placement, setPlacement] = useState(() => placePreview(rect, PREVIEW_FALLBACK_HEIGHT));
 
-  // Open upward, above the row itself. Anchoring by `bottom` (instead of `top`)
-  // keeps the card glued just over the row's top edge whatever its height is;
-  // when there is no room above, it drops below instead.
-  const gap = 8;
-  const estimatedHeight = 240;
+  // Measure the real card and re-place it before the browser paints: the
+  // fallback estimate above is deliberately pessimistic and would otherwise
+  // push a short preview below a row that has plenty of room above it.
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    setPlacement(placePreview(rect, card.getBoundingClientRect().height));
+  }, [rect, row]);
+
   const left = Math.min(
     Math.max(PREVIEW_MARGIN, rect.left),
     Math.max(PREVIEW_MARGIN, window.innerWidth - PREVIEW_WIDTH - PREVIEW_MARGIN),
   );
-  let top: number | null = null;
-  let bottom: number | null = null;
-  if (rect.top >= estimatedHeight + PREVIEW_MARGIN) {
-    bottom = window.innerHeight - rect.top + gap;
-  } else {
-    top = Math.min(rect.bottom + gap, window.innerHeight - estimatedHeight - PREVIEW_MARGIN);
-  }
 
   return createPortal(
     <div
@@ -267,11 +297,11 @@ const ThreadHoverPreview = ({
       style={{
         left,
         width: PREVIEW_WIDTH,
-        ...(top != null ? { top } : { bottom: bottom ?? 0 }),
+        ...(placement.top != null ? { top: placement.top } : { bottom: placement.bottom ?? 0 }),
       }}
       className="pointer-events-none fixed z-50 animate-in fade-in-0 zoom-in-95 duration-150 motion-reduce:animate-none"
     >
-      <div className="rounded-[var(--card-radius)] border border-border/70 bg-card p-3.5 shadow-xl shadow-black/20">
+      <div ref={cardRef} className="rounded-[var(--card-radius)] border border-border/70 bg-card p-3.5 shadow-xl shadow-black/20">
         <div className="flex items-start gap-3">
           <UserAvatar
             src={thread.profiles?.avatar_url}

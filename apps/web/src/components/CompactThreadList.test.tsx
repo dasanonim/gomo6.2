@@ -36,6 +36,7 @@ describe("CompactThreadList", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("renders a dense row with replies, likes and the last poster", () => {
@@ -137,5 +138,69 @@ describe("CompactThreadList", () => {
 
     fireEvent.mouseOut(link);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("opens the preview upward when the measured card fits above the row", () => {
+    // jsdom has no layout engine, so stub the rects: a row near the top of the
+    // viewport (top=150) with a short card (100px). The old fixed 240px estimate
+    // would have refused to open upward and dropped the panel down instead.
+    const rect = (top: number, height: number) =>
+      ({
+        top,
+        bottom: top + height,
+        left: 0,
+        right: 300,
+        width: 300,
+        height,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this.closest('[role="tooltip"]') ? rect(0, 100) : rect(150, 40);
+    });
+
+    renderList(<CompactThreadList rows={[row]} currentUserId="me" />);
+
+    fireEvent.mouseOver(screen.getByRole("link"));
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    // Anchored by `bottom` → it opened above the row.
+    expect(tooltip.style.bottom).not.toBe("");
+    expect(tooltip.style.top).toBe("");
+  });
+
+  it("still drops the preview below when the card does not fit above", () => {
+    const rect = (top: number, height: number) =>
+      ({
+        top,
+        bottom: top + height,
+        left: 0,
+        right: 300,
+        width: 300,
+        height,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this.closest('[role="tooltip"]') ? rect(0, 400) : rect(150, 40);
+    });
+
+    renderList(<CompactThreadList rows={[row]} currentUserId="me" />);
+
+    fireEvent.mouseOver(screen.getByRole("link"));
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.style.top).not.toBe("");
+    expect(tooltip.style.bottom).toBe("");
   });
 });
