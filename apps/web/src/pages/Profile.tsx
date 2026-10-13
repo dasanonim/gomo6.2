@@ -27,8 +27,7 @@ import { UsernameDialog, AvatarGalleryDialog } from "./profile/ProfileDialogs";
 import type { Profile, ProfilePrivacyData } from "./profile/types";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ForumProfilePanel } from "./profile/ForumProfilePanel";
-import { ForumProfileEdgeToggle, type ForumSide } from "./profile/ForumProfileEdgeToggle";
-import { DEFAULT_FORUM_SIDE, PROFILE_VIEW_MODE_EVENT, getProfileViewMode } from "@/lib/profileViewMode";
+import { DEFAULT_FORUM_SIDE, PROFILE_VIEW_MODE_EVENT, getProfileViewMode, type ForumSide } from "@/lib/profileViewMode";
 
 /** Whether the viewport is wide enough for the desktop-only forum layout. */
 const isDesktopViewport = () =>
@@ -351,12 +350,12 @@ const Profile = () => {
 
   // ── Forum layout ─────────────────────────────────────────────────────────
   // An alternate profile layout: the avatar, write/subscribe actions and the
-  // social graph move into a side column on the side whose edge strip was
-  // pressed, while the rest of the profile reflows around it. The viewer's
-  // default (Settings → Appearance: social or forum) decides how a profile
-  // opens; manual toggling is per-visit and the layout closes while editing.
+  // social graph move into a side column, while the rest of the profile reflows
+  // around it. There are no in-page controls — the viewer's «Вид профилей по
+  // умолчанию» (Settings → Appearance: social or forum) is the only switch, and
+  // the profile follows it live. The panel always opens on the left; the layout
+  // closes while editing.
   const forumMode = forumLayout;
-  const showForumToggle = !!profile && !!currentUser && !editing.isEditing;
   const panelVisibleRef = useRef(false);
 
   useEffect(() => {
@@ -369,8 +368,8 @@ const Profile = () => {
     setForumSide(null);
   }, []);
 
-  const openForum = useCallback((side: ForumSide = DEFAULT_FORUM_SIDE) => {
-    setForumSide(side);
+  const openForum = useCallback(() => {
+    setForumSide(DEFAULT_FORUM_SIDE);
     setPanelVisible(true);
     setForumLayout(true);
   }, []);
@@ -410,18 +409,6 @@ const Profile = () => {
     return () => window.removeEventListener(PROFILE_VIEW_MODE_EVENT, sync);
   }, [applyForumPreference]);
 
-  const toggleForumSide = useCallback((side: ForumSide) => {
-    if (panelVisible && forumSide === side) {
-      // Close: hide the panel to start the exit animation. The wide layout is
-      // kept until it completes (handleForumExitComplete), so nothing snaps.
-      setPanelVisible(false);
-      return;
-    }
-    setForumSide(side);
-    setPanelVisible(true);
-    setForumLayout(true);
-  }, [panelVisible, forumSide]);
-
   const handleForumExitComplete = useCallback(() => {
     // Reopening during the exit cancels it; only collapse the layout when the
     // panel really stayed hidden.
@@ -438,12 +425,6 @@ const Profile = () => {
     : forumSide === "left"
       ? "max(1rem, calc(50vw - 512px))"
       : "max(1rem, calc(50vw - 304px))";
-
-  // Edge controls live in the gutters beside the content column. The whole
-  // gutter (up to a cap) is a hover target; the arrow sits a fixed gap from the
-  // content. The column is wider (max-w-5xl) when the forum panel is open.
-  const forumToggleGutter = `clamp(0px, calc(50vw - ${forumMode ? "512px" : "336px"}), 40rem)`;
-  const forumToggleGap = "48px";
 
   // Set default tab based on wall visibility. The wall tab is available to
   // every viewer while showProfileWall is on (for non-friends on a private
@@ -868,29 +849,6 @@ const Profile = () => {
           >
             <Plus className={`h-5 w-5 transition-transform duration-300 ease-out ${wallCreateOpen ? "rotate-45" : "rotate-0"}`} />
           </Button>
-        )}
-
-        {/* Edge controls that unfold the profile into the forum layout. Desktop
-            only — hidden under `lg`, where there is no hover and no room for a
-            second column. The same side closes; the opposite side moves the
-            panel across. */}
-        {showForumToggle && (
-          <>
-            <ForumProfileEdgeToggle
-              side="left"
-              active={forumSide === "left"}
-              onToggle={toggleForumSide}
-              gutterWidth={forumToggleGutter}
-              gap={forumToggleGap}
-            />
-            <ForumProfileEdgeToggle
-              side="right"
-              active={forumSide === "right"}
-              onToggle={toggleForumSide}
-              gutterWidth={forumToggleGutter}
-              gap={forumToggleGap}
-            />
-          </>
         )}
       </main>
   );
