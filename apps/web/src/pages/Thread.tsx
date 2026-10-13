@@ -41,9 +41,7 @@ import { SectionIcon } from "@/components/topic/sectionIcons";
 import type { AttachmentMeta } from "@/types/forum";
 import { entityParam } from "@/utils/entityUrl";
 import {
-  MAX_PINNED_PROFILE_THREADS,
-  usePinnedThreadIds,
-  useTogglePinnedThread,
+  useThreadPinToggle,
 } from "@/hooks/queries/useProfilePinnedThreads";
 
 interface ThreadWithExtras extends ThreadModel {
@@ -143,22 +141,24 @@ const Thread = () => {
   // «Закрепить в профиле» (issue #518): any signed-in user can pin a thread —
   // their own or somebody else's — into their own profile. The menu item lives
   // here rather than in the owner block below, so it shows for every viewer.
-  const pinnedIds = usePinnedThreadIds(user?.id);
-  const togglePinnedThread = useTogglePinnedThread(user?.id);
-  const isThreadPinned = Boolean(resolvedThreadId && pinnedIds.data?.includes(resolvedThreadId));
-  const pinnedCount = pinnedIds.data?.length ?? 0;
-  const pinnedLimitReached = !isThreadPinned && pinnedCount >= MAX_PINNED_PROFILE_THREADS;
+  const {
+    isPinned: isThreadPinned,
+    limitReached: pinnedLimitReached,
+    toggle: toggleThreadPin,
+  } = useThreadPinToggle(resolvedThreadId || undefined, user?.id);
 
-  const handleToggleThreadPin = () => {
-    if (!resolvedThreadId) return;
-    const nextPinned = !isThreadPinned;
-    togglePinnedThread.mutate(
-      { threadId: resolvedThreadId, pinned: nextPinned },
-      {
-        onSuccess: () =>
-          toast.success(nextPinned ? t("thread.pinnedToProfile") : t("thread.unpinnedFromProfile")),
-        onError: () => toast.error(t("thread.pinProfileError")),
-      },
+  const handleToggleThreadPin = async () => {
+    const outcome = await toggleThreadPin();
+    if (outcome.status === "ok") {
+      toast.success(
+        outcome.pinned ? t("thread.pinnedToProfile") : t("thread.unpinnedFromProfile"),
+      );
+      return;
+    }
+    // The cap is a normal, expected rejection — say why instead of the generic
+    // failure, and the hook has already refreshed the (stale) pin list.
+    toast.error(
+      outcome.status === "limit" ? t("thread.pinLimitReached") : t("thread.pinProfileError"),
     );
   };
 

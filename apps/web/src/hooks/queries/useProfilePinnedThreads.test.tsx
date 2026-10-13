@@ -7,6 +7,7 @@ import {
   MAX_PINNED_PROFILE_THREADS,
   usePinnedThreadIds,
   useProfilePinnedThreads,
+  useThreadPinToggle,
   useTogglePinnedThread,
 } from "./useProfilePinnedThreads";
 
@@ -20,6 +21,10 @@ let pinnedRows: Array<{ thread_id: string; position: number }> = [];
 let threadRows: Array<Record<string, unknown>> = [];
 let inserted: Array<Record<string, unknown>> = [];
 let deletedThreadIds: string[] = [];
+/** Set to make the next pin attempt reject (e.g. `{ status: 409 }`). */
+let insertError: unknown = null;
+/** How many times the pin-id list has been fetched (refetch assertions). */
+let pinnedListFetches = 0;
 
 const awaitable = (data: unknown) => ({
   then: (onFulfilled: (value: { data: unknown; error: null }) => unknown, onRejected?: (reason: unknown) => unknown) =>
@@ -38,15 +43,20 @@ const selectChain = (data: unknown) => {
 const mockFrom = vi.fn((table: string) => {
   if (table === "profile_pinned_threads") {
     return {
-      select: () => selectChain(pinnedRows),
+      select: () => {
+        pinnedListFetches += 1;
+        return selectChain(pinnedRows);
+      },
       insert: (row: Record<string, unknown>) => {
         inserted.push(row);
-        return awaitable([row]);
+        return insertError
+          ? Promise.reject(insertError)
+          : Promise.resolve({ data: [row], error: null });
       },
       delete: () => ({
         eq: (_column: string, value: string) => {
           deletedThreadIds.push(value);
-          return awaitable([]);
+          return Promise.resolve({ data: [], error: null });
         },
       }),
     };
@@ -85,6 +95,8 @@ beforeEach(() => {
   threadRows = [];
   inserted = [];
   deletedThreadIds = [];
+  insertError = null;
+  pinnedListFetches = 0;
 });
 
 describe("useProfilePinnedThreads", () => {
@@ -168,4 +180,102 @@ describe("useTogglePinnedThread", () => {
 
 it("caps the list at the backend limit", () => {
   expect(MAX_PINNED_PROFILE_THREADS).toBe(3);
+});
+
+// ─── useThreadPinToggle (the thread page's «три точки» item) ─────────────────
+
+describe("useThreadPinToggle", () => {
+  const renderToggle = (threadId: string | undefined, userId: string | null = "me") =>
+    renderHook(() => useThreadPinToggle(threadId, userId), { wrapper });
+
+  it("reports an unpinned thread and pins it", async () => {
+    const { result } = renderToggle("t1");
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(result.current.isPinned).toBe(false);
+    expect(result.current.limitReached).toBe(false);
+
+    let outcome: Awaited<ReturnType<typeof result.current.toggle>> | undefined;
+    await act(async () => {
+      outcome = await result.current.toggle();
+    });
+
+    expect(inserted).toEqual([{ thread_id: "t1" }]);
+    expect(outcome).toEqual({ status: "ok", pinned: true });
+  });
+
+  it("reports a pinned thread and unpins it", async () => {
+    pinnedRows = [{ thread_id: "t1", position: 1 }];
+    const { result } = renderToggle("t1");
+    await waitFor(() => expect(result.current.isPinned).toBe(true));
+
+    let outcome: Awaited<ReturnType<typeof result.current.toggle>> | undefined;
+    await act(async () => {
+      outcome = await result.current.toggle();
+    });
+
+    expect(deletedThreadIds).toEqual(["t1"]);
+    expect(outcome).toEqual({ status: "ok", pinned: false });
+  });
+
+  it("flags the cap for a new thread but never blocks unpinning a pinned one", async () => {
+    pinnedRows = [
+      { thread_id: "a", position: 1 },
+      { thread_id: "b", position: 2 },
+      { thread_id: "c", position: 3 },
+    ];
+
+    const atCap = renderToggle("new-thread");
+    await waitFor(() => expect(atCap.result.current.limitReached).toBe(true));
+    expect(atCap.result.current.isPinned).toBe(false);
+
+    const alreadyPinned = renderToggle("a");
+    await waitFor(() => expect(alreadyPinned.result.current.isPinned).toBe(true));
+    // The cap must not trap a thread that is already pinned — otherwise it could
+    // never be removed without unpinning something else first.
+    expect(alreadyPinned.result.current.limitReached).toBe(false);
+  });
+
+  it("maps a 409 to the limit outcome and refreshes the stale pin list", async () => {
+    insertError = Object.assign(new Error("Pinned threads limit reached"), { status: 409 });
+    const { result } = renderToggle("t1");
+    await waitFor(() => expect(pinnedListFetches).toBe(1));
+
+    let outcome: Awaited<ReturnType<typeof result.current.toggle>> | undefined;
+    await act(async () => {
+      outcome = await result.current.toggle();
+    });
+
+    expect(outcome).toEqual({ status: "limit" });
+    // The rejected pin proves the cached list was stale — it must be refetched so
+    // the menu stops offering an action that can only fail again.
+    await waitFor(() => expect(pinnedListFetches).toBe(2));
+  });
+
+  it("maps any other failure to the generic outcome without a refetch", async () => {
+    insertError = Object.assign(new Error("boom"), { status: 500 });
+    const { result } = renderToggle("t1");
+    await waitFor(() => expect(pinnedListFetches).toBe(1));
+
+    let outcome: Awaited<ReturnType<typeof result.current.toggle>> | undefined;
+    await act(async () => {
+      outcome = await result.current.toggle();
+    });
+
+    expect(outcome).toEqual({ status: "error" });
+    expect(pinnedListFetches).toBe(1);
+  });
+
+  it("refuses to toggle without a thread id", async () => {
+    const { result } = renderToggle(undefined);
+
+    let outcome: Awaited<ReturnType<typeof result.current.toggle>> | undefined;
+    await act(async () => {
+      outcome = await result.current.toggle();
+    });
+
+    expect(outcome).toEqual({ status: "error" });
+    expect(inserted).toEqual([]);
+    expect(deletedThreadIds).toEqual([]);
+  });
 });

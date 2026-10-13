@@ -84,6 +84,10 @@ export function usePinnedThreadIds(userId: string | null | undefined) {
   });
 }
 
+/** The server rejects a fourth pin with 409 (crudengine.MaxPinnedProfileThreads). */
+const isPinLimitError = (error: unknown): boolean =>
+  (error as { status?: number } | null)?.status === 409;
+
 /** Pin or unpin a thread in the current user's profile. */
 export function useTogglePinnedThread(userId: string | null | undefined) {
   const queryClient = useQueryClient();
@@ -99,5 +103,59 @@ export function useTogglePinnedThread(userId: string | null | undefined) {
       queryClient.invalidateQueries({ queryKey: ['profile-pinned-threads'] });
       queryClient.invalidateQueries({ queryKey: ['pinned-thread-ids'] });
     },
+    onError: (error) => {
+      // A rejected pin (the 3-pin cap → 409) proves our cached id list is stale:
+      // otherwise the menu keeps offering a pin that can only fail again.
+      if (isPinLimitError(error)) {
+        queryClient.invalidateQueries({ queryKey: ['pinned-thread-ids'] });
+      }
+    },
   });
+}
+
+/**
+ * What a pin/unpin attempt resolved to — the caller owns the user-facing wording.
+ *
+ * Discriminated by a STRING tag, not a boolean: the app compiles with
+ * `strict: false`, and with `strictNullChecks` off TypeScript does not narrow a
+ * union through `!outcome.ok` (only through `===`), which made the obvious
+ * caller code fail to compile.
+ */
+export type PinToggleOutcome =
+  | { status: 'ok'; pinned: boolean }
+  | { status: 'limit' }
+  | { status: 'error' };
+
+/**
+ * «Закрепить/Открепить в профиле» state for ONE thread — used by the thread
+ * page's «три точки» menu.
+ *
+ * Owns the two derivations the menu needs (is this thread pinned by me? is the
+ * 3-pin cap already reached?) plus the toggle itself. `toggle` RESOLVES to the
+ * outcome rather than toasting, so the messaging stays in the component and this
+ * hook stays free of UI concerns — which is also what makes it directly
+ * testable.
+ */
+export function useThreadPinToggle(threadId: string | undefined, userId: string | null | undefined) {
+  const pinnedIds = usePinnedThreadIds(userId);
+  const togglePin = useTogglePinnedThread(userId);
+
+  const pinnedList = pinnedIds.data;
+  const isPinned = Boolean(threadId && pinnedList?.includes(threadId));
+  // The cap only gates pinning something NEW — an already-pinned thread must
+  // stay unpinnable however full the list is.
+  const limitReached = !isPinned && (pinnedList?.length ?? 0) >= MAX_PINNED_PROFILE_THREADS;
+
+  const toggle = async (): Promise<PinToggleOutcome> => {
+    if (!threadId) return { status: 'error' };
+    const nextPinned = !isPinned;
+    try {
+      await togglePin.mutateAsync({ threadId, pinned: nextPinned });
+      return { status: 'ok', pinned: nextPinned };
+    } catch (error) {
+      return isPinLimitError(error) ? { status: 'limit' } : { status: 'error' };
+    }
+  };
+
+  return { isPinned, limitReached, isPending: togglePin.isPending, toggle };
 }
