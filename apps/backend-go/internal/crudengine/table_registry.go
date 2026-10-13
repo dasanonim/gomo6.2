@@ -443,6 +443,39 @@ var genericTables = []TableMeta{
 		AfterWrite:       afterProfileCustomizationWrite,
 	},
 	{
+		Name: "profile_pinned_threads",
+		// «Закреплённые темы» на странице профиля: владелец профиля (user_id)
+		// закрепляет до трёх тем — своих или чужих. Reads are served by the
+		// dedicated query (handleProfilePinnedThreadsGet) — it applies the same
+		// profile-privacy gate as the threads tab and returns only the pin rows
+		// ({thread_id, position}); the caller resolves the thread bodies through
+		// GET /threads, which already enforces board/channel visibility, so a
+		// pin can never widen what a viewer may read. Writes are POST (pin,
+		// idempotent upsert) + DELETE (unpin); user_id is forced to the caller
+		// (OwnSingle) and the 3-pin cap, the thread/board lookup and the
+		// position assignment live in preparePinnedThreadBody.
+		ReadAccess:   GuestRead,
+		ReadWildcard: true,
+		Writes: []TableRoute{
+			{Method: "POST"},
+			{Method: "DELETE"},
+		},
+		WriteGroup: GenericWrite,
+		// Mass-assignment allow-list: only the target thread is client-supplied;
+		// user_id (forced by OwnSingle) and position (server-assigned) must not
+		// be client-writable.
+		WritableColumns: map[string]bool{
+			"thread_id": true,
+		},
+		PostOwner:       OwnSingle,
+		WriteOwner:      OwnSingle,
+		Upsert:          true,
+		BuildUpsert:     upsertPinnedThread,
+		PrepareBody:     preparePinnedThreadBody,
+		ReadHandler:     (*Engine).handleProfilePinnedThreadsGet,
+		InvalidateCache: invalidatePinnedThreadsCache,
+	},
+	{
 		Name:             "profile_wall_comment_likes",
 		ReadAccess:       GuestRead,
 		ReadWildcard:     true,

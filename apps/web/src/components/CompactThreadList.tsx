@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { MessageCircle, ThumbsUp } from "lucide-react";
@@ -34,6 +34,13 @@ interface CompactThreadListProps {
   /** threadId → latest reply, when the thread has any. */
   lastPosts?: Map<string, ThreadLastPost>;
   currentUserId: string | null;
+  /**
+   * Extra per-row controls rendered as a trailing column, right of the last
+   * poster — hidden until the row is hovered/focused (always on for touch), the
+   * same affordance as the bookmark slot. Used by the profile's «Закреплённые
+   * темы» block for its «три точки» menu (issue #518).
+   */
+  renderRowActions?: (row: ThreadApiRow) => ReactNode;
 }
 
 /**
@@ -47,6 +54,7 @@ export const CompactThreadList = ({
   likes,
   lastPosts,
   currentUserId,
+  renderRowActions,
 }: CompactThreadListProps) => {
   const [preview, setPreview] = useState<{
     row: ThreadApiRow;
@@ -178,6 +186,15 @@ export const CompactThreadList = ({
                   alt={lastUsername}
                 />
               </div>
+
+              {/* Trailing per-row controls (e.g. the pinned-thread menu). Kept
+                  as its own column so it sits at the far right on every
+                  viewport — the last-poster column above is sm+ only. */}
+              {renderRowActions && (
+                <div className="pointer-events-none relative z-20 flex shrink-0 items-center self-center opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
+                  {renderRowActions(row)}
+                </div>
+              )}
             </div>
           );
         })}
