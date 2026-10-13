@@ -78,6 +78,50 @@ describe("CompactThreadList", () => {
     expect(screen.getByRole("button", { name: "В избранное" })).toBeInTheDocument();
   });
 
+  it("drops the whole last-poster column (and its bookmark) when asked", () => {
+    renderList(
+      <CompactThreadList
+        rows={[row]}
+        lastPosts={
+          new Map<string, ThreadLastPost>([
+            ["t1", { user_id: "u2", username: "alice", avatar_url: null, created_at: "2026-01-02T10:00:00Z" }],
+          ])
+        }
+        currentUserId="me"
+        hideLastPoster
+        hideBookmark
+      />,
+    );
+
+    expect(screen.queryByText("alice")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "В избранное" })).not.toBeInTheDocument();
+    // The meta line keeps the thread author, so the row still identifies it.
+    expect(screen.getByText("bob")).toBeInTheDocument();
+  });
+
+  it("can hide only the bookmark and keep the last-poster column", () => {
+    renderList(<CompactThreadList rows={[row]} currentUserId="me" hideBookmark />);
+
+    expect(screen.queryByRole("button", { name: "В избранное" })).not.toBeInTheDocument();
+    // Author shows twice: the meta line and the last-poster column.
+    expect(screen.getAllByText("bob").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("lets the caller replace the container surface", () => {
+    const { container } = renderList(
+      <CompactThreadList
+        rows={[row]}
+        currentUserId="me"
+        containerClassName="surface-panel rounded-xl border border-border/60 shadow-sm"
+      />,
+    );
+
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("surface-panel");
+    expect(root.className).toContain("rounded-xl");
+    expect(root.className).not.toContain("bg-surface/40");
+  });
+
   it("shows the mini preview on hover after the delay, and hides on leave", () => {
     renderList(<CompactThreadList rows={[row]} currentUserId="me" />);
 

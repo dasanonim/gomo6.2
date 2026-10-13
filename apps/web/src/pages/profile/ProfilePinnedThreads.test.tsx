@@ -47,21 +47,27 @@ vi.mock("@/integrations/api/compat", () => ({
 }));
 
 // The real list is a dense forum row (router links, hover previews); the block
-// only needs to prove it passes the pins through and wires the row actions.
+// only needs to prove it passes the pins through, strips the section-page chrome
+// and wires the row actions.
+const listProps = vi.fn();
 vi.mock("@/components/CompactThreadList", () => ({
-  CompactThreadList: ({ rows, renderRowActions }: {
+  CompactThreadList: (props: {
     rows: Array<{ id: string; title: string }>;
     renderRowActions?: (row: { id: string; title: string }) => ReactNode;
-  }) => (
-    <div data-testid="compact-list">
-      {rows.map((row) => (
-        <div key={row.id} data-testid="pinned-row">
-          <span>{row.title}</span>
-          {renderRowActions?.(row)}
-        </div>
-      ))}
-    </div>
-  ),
+  }) => {
+    listProps(props);
+    const { rows, renderRowActions } = props;
+    return (
+      <div data-testid="compact-list">
+        {rows.map((row) => (
+          <div key={row.id} data-testid="pinned-row">
+            <span>{row.title}</span>
+            {renderRowActions?.(row)}
+          </div>
+        ))}
+      </div>
+    );
+  },
 }));
 
 vi.mock("@/components/PostActionsMenu", () => ({
@@ -106,6 +112,18 @@ beforeEach(() => {
   pinnedRows = [];
   threadRows = [];
   deletedThreadIds = [];
+  listProps.mockClear();
+});
+
+const pinnedThreadRow = (title: string) => ({
+  id: "t1",
+  title,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  user_id: "author",
+  username: "author",
+  is_anonymous: false,
+  boards: { slug: "general", name: "General" },
 });
 
 describe("ProfilePinnedThreads", () => {
@@ -126,18 +144,7 @@ describe("ProfilePinnedThreads", () => {
 
   it("lists the pinned threads and offers the owner an unpin action", async () => {
     pinnedRows = [{ thread_id: "t1", position: 1 }];
-    threadRows = [
-      {
-        id: "t1",
-        title: "Закреплённая тема",
-        created_at: "2026-01-01T00:00:00Z",
-        updated_at: "2026-01-01T00:00:00Z",
-        user_id: "author",
-        username: "author",
-        is_anonymous: false,
-        boards: { slug: "general", name: "General" },
-      },
-    ];
+    threadRows = [pinnedThreadRow("Закреплённая тема")];
 
     renderBlock({ isOwner: true });
 
@@ -148,20 +155,26 @@ describe("ProfilePinnedThreads", () => {
     await waitFor(() => expect(deletedThreadIds).toEqual(["t1"]));
   });
 
+  it("renders a bare list: no heading, no last-poster column, no bookmark", async () => {
+    pinnedRows = [{ thread_id: "t1", position: 1 }];
+    threadRows = [pinnedThreadRow("Закреплённая тема")];
+
+    renderBlock({ isOwner: true });
+
+    await screen.findByText("Закреплённая тема");
+    expect(screen.queryByText("Закреплённые темы")).not.toBeInTheDocument();
+    expect(listProps).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hideLastPoster: true,
+        hideBookmark: true,
+        containerClassName: expect.stringContaining("surface-panel"),
+      }),
+    );
+  });
+
   it("hides the unpin action from visitors", async () => {
     pinnedRows = [{ thread_id: "t1", position: 1 }];
-    threadRows = [
-      {
-        id: "t1",
-        title: "Чужая закреплённая тема",
-        created_at: "2026-01-01T00:00:00Z",
-        updated_at: "2026-01-01T00:00:00Z",
-        user_id: "author",
-        username: "author",
-        is_anonymous: false,
-        boards: { slug: "general", name: "General" },
-      },
-    ];
+    threadRows = [pinnedThreadRow("Чужая закреплённая тема")];
 
     renderBlock();
 

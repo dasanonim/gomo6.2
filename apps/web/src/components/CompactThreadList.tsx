@@ -9,6 +9,7 @@ import { FavoriteButton } from "@/components/FavoriteButton";
 import { formatShortRelativeTime } from "@/utils/relativeTimeShort";
 import { toFeedThread, type ThreadApiRow } from "@/utils/threadFeedItem";
 import { entityParam } from "@/utils/entityUrl";
+import { cn } from "@/lib/utils";
 
 /** Latest reply of a thread (right column + hover preview). */
 export interface ThreadLastPost {
@@ -41,6 +42,20 @@ interface CompactThreadListProps {
    * темы» block for its «три точки» menu (issue #518).
    */
   renderRowActions?: (row: ThreadApiRow) => ReactNode;
+  /**
+   * Hide the trailing last-poster column (author + avatar + activity time).
+   * The profile's pinned block shows only the thread's own meta line, so the
+   * whole right column goes away.
+   */
+  hideLastPoster?: boolean;
+  /** Hide the per-row bookmark button (it lives inside the last-poster column). */
+  hideBookmark?: boolean;
+  /**
+   * Root container classes. Defaults to the section-page surface (translucent
+   * `bg-surface/40`); the profile passes its own panel classes so the rows sit
+   * on the same opaque surface as the rest of the page.
+   */
+  containerClassName?: string;
 }
 
 /**
@@ -55,6 +70,9 @@ export const CompactThreadList = ({
   lastPosts,
   currentUserId,
   renderRowActions,
+  hideLastPoster,
+  hideBookmark,
+  containerClassName,
 }: CompactThreadListProps) => {
   const [preview, setPreview] = useState<{
     row: ThreadApiRow;
@@ -88,7 +106,12 @@ export const CompactThreadList = ({
 
   return (
     <>
-      <div className="overflow-hidden rounded-[var(--card-radius)] border border-border/60 bg-surface/40">
+      <div
+        className={cn(
+          "overflow-hidden",
+          containerClassName ?? "rounded-[var(--card-radius)] border border-border/60 bg-surface/40",
+        )}
+      >
         {rows.map((row) => {
           const thread = toFeedThread(row);
           const like = likes?.get(thread.id);
@@ -154,38 +177,40 @@ export const CompactThreadList = ({
                 </div>
               </div>
 
-              <div className="relative z-10 hidden w-[230px] shrink-0 items-center justify-end gap-2 text-right sm:flex">
-                {/* Bookmark: a reserved slot that fades in on hover, like the
-                    feed card's corner action — no layout shift, and always on
-                    for touch devices. */}
-                {currentUserId && (
-                  <div className="pointer-events-none self-end translate-y-3 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
-                    <FavoriteButton itemType="thread" itemId={thread.id} />
+              {!hideLastPoster && (
+                <div className="relative z-10 hidden w-[230px] shrink-0 items-center justify-end gap-2 text-right sm:flex">
+                  {/* Bookmark: a reserved slot that fades in on hover, like the
+                      feed card's corner action — no layout shift, and always on
+                      for touch devices. */}
+                  {currentUserId && !hideBookmark && (
+                    <div className="pointer-events-none self-end translate-y-3 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
+                      <FavoriteButton itemType="thread" itemId={thread.id} />
+                    </div>
+                  )}
+                  <div className="pointer-events-none min-w-0">
+                    <UserBadge
+                      userId={lastUserId}
+                      username={lastUsername}
+                      displayName={last ? undefined : thread.profiles?.display_name}
+                      emojiId={last ? undefined : thread.profiles?.nickname_emoji_id}
+                      isAnonymous={last ? false : thread.profiles?.is_anonymous}
+                      className="pointer-events-auto block max-w-full overflow-hidden text-foreground"
+                    />
+                    <time
+                      dateTime={lastAt}
+                      className="block text-[12px] text-muted-foreground"
+                    >
+                      {formatShortRelativeTime(lastAt)}
+                    </time>
                   </div>
-                )}
-                <div className="pointer-events-none min-w-0">
-                  <UserBadge
-                    userId={lastUserId}
-                    username={lastUsername}
-                    displayName={last ? undefined : thread.profiles?.display_name}
-                    emojiId={last ? undefined : thread.profiles?.nickname_emoji_id}
-                    isAnonymous={last ? false : thread.profiles?.is_anonymous}
-                    className="pointer-events-auto block max-w-full overflow-hidden text-foreground"
+                  <UserAvatar
+                    src={lastAvatar}
+                    userId={last ? undefined : thread.user_id}
+                    className="h-8 w-8 shrink-0"
+                    alt={lastUsername}
                   />
-                  <time
-                    dateTime={lastAt}
-                    className="block text-[12px] text-muted-foreground"
-                  >
-                    {formatShortRelativeTime(lastAt)}
-                  </time>
                 </div>
-                <UserAvatar
-                  src={lastAvatar}
-                  userId={last ? undefined : thread.user_id}
-                  className="h-8 w-8 shrink-0"
-                  alt={lastUsername}
-                />
-              </div>
+              )}
 
               {/* Trailing per-row controls (e.g. the pinned-thread menu). Kept
                   as its own column so it sits at the far right on every
