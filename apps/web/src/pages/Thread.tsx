@@ -309,6 +309,11 @@ const Thread = () => {
       invalidateByPrefix("/api/v1/threads");
       invalidateByPrefix("/api/v1/boards");
       invalidateByPrefix("/api/v1/feed");
+      // The pin row cascades away with the thread — drop the cached pin list so
+      // a profile's «Закреплённые темы» block stops showing the deleted thread.
+      invalidateByPrefix("/api/v1/profile_pinned_threads");
+      queryClient.invalidateQueries({ queryKey: ["profile-pinned-threads"] });
+      queryClient.invalidateQueries({ queryKey: ["pinned-thread-ids"] });
       navigate(boardBasePath || "/", { replace: true });
     } catch {
       toast.error(t("thread.threadDeleteError"));
