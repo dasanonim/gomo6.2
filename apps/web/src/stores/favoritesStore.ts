@@ -19,7 +19,14 @@ type FavoritesState = {
   ids: Set<string>;
   loaded: boolean;
   load: (force?: boolean) => Promise<void>;
-  toggle: (type: FavoriteItemType, id: string) => Promise<void>;
+  /**
+   * Toggles a bookmark and resolves to the COMMITTED state afterwards: `true`
+   * when the item is now favorited, `false` when it is not. On an API failure
+   * the optimistic change is rolled back, so the caller (FavoriteButton) can
+   * compare against the pre-click state and skip note churn when nothing
+   * actually changed.
+   */
+  toggle: (type: FavoriteItemType, id: string) => Promise<boolean>;
   reset: () => void;
 };
 
@@ -55,12 +62,14 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
           body: JSON.stringify({ item_type: type, item_id: id }),
         });
       }
+      return !had;
     } catch {
       // Roll back the optimistic change.
       const revert = new Set(get().ids);
       if (had) revert.add(key);
       else revert.delete(key);
       set({ ids: revert });
+      return had;
     }
   },
   reset: () => set({ ids: new Set<string>(), loaded: false }),

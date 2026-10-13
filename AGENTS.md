@@ -72,6 +72,65 @@ go run ./cmd/reindex               # rebuild Meilisearch indexes from Postgres
 ./scripts/e2e-smoke.sh             # requires the docker compose stack running
 ```
 
+## Local dev & browser testing (operational)
+
+Things that cost time to rediscover. Frontend changes only need the web dev server;
+the backend + Docker infra can stay up across restarts.
+
+- **The running dev stack does NOT follow you into a worktree.** `make dev` serves
+  whatever checkout it was launched from — a session started in the main checkout
+  keeps serving `/…/gomo6/apps/web`, so your worktree edits are invisible in the
+  browser. Vite serves from the worktree only after you restart `make dev` there.
+  Verify which tree a running Vite serves with:
+  `lsof -p $(lsof -nP -iTCP:8081 -sTCP:LISTEN -t | head -1) -a -d cwd -Fn | grep '^n'`.
+- **`make dev` from a worktree needs two fixes** (dev.sh re-derives everything from
+  the repo root; a worktree has no `.env`/`.dev.env` and different compose labels):
+  1. Provide the env files — copy the generated ones from the main checkout (they
+     are gitignored, and `generate-keys.sh` preserves the existing `POSTGRES_PASSWORD`
+     so the already-initialised Postgres volume keeps working):
+     ```bash
+     WT=$(git rev-parse --show-toplevel)
+     cp -p /Users/lesha/codes/gomo6/.env /Users/lesha/codes/gomo6/.dev.env "$WT/"
+     ```
+  2. Run with a fixed compose project so it **reuses** the existing infra instead of
+     starting a second set of containers, and skip the interactive/tmux-agnostic path:
+     `COMPOSE_PROJECT_NAME=gomo6 GOMO6_RUNNER=tmux make dev`.
+     Without this, `make dev` aborts with *"PostgreSQL volume exists but its password
+     is not available"* — its container lookup filters by
+     `com.docker.compose.project.working_dir` = the worktree (not the label the
+     running container carries), so it fails to find the password.
+- **Restart from the worktree** (backend binary is built once and reused; Vite is the
+  only thing that has to reload for frontend edits). Kill the old session, then fan
+  `Procfile.dev` out yourself from the worktree — this bypasses dev.sh's failing
+  compose/env checks:
+  ```bash
+  tmux kill-session -t gomo6-dev 2>/dev/null
+  tmux new-session -d -s gomo6-dev -c "$WT" -n backend \
+    "[ -f .dev.env ] && . ./.dev.env; cd apps/backend-go && go run cmd/server/main.go"
+  tmux new-window -t gomo6-dev -c "$WT" -n web "npm run dev --workspace @gomo6/web"
+  tmux new-window -t gomo6-dev -c "$WT" -n docs "npm run dev --workspace @gomo6/docs"
+  tmux new-window -t gomo6-dev -c "$WT" -n dev-dashboard "npm run dev --workspace @gomo6/dev-dashboard"
+  ```
+  (These tmux commands run on the host via the Terminal panel — the agent's sandbox
+  blocks tmux/docker; see the sandbox note below.)
+- **Ports**: web `8081`, backend `8080`, docs `3001`, dev-dashboard `3002`; the web
+  dev server proxies `/api`, `/ws`, `/storage`, `/oauth`, `/og` → `localhost:8080`.
+- **Demo login** (after `make seed`): `demo@gomo6.local` / `gomo6-demo-9f3k2x`
+  (also `alice@` / `bob@` with the same password). See `scripts/seed.sh`.
+- **Smoke checks before handing off to the browser**:
+  ```bash
+  curl -s -o /dev/null -w "web:%{http_code}\n"  http://localhost:8081/
+  curl -s -o /dev/null -w "api:%{http_code}\n"  "http://localhost:8081/api/v1/feed?limit=1"
+  curl -s -o /dev/null -w "health:%{http_code}\n" http://localhost:8080/health
+  ```
+- **Sandbox note**: the agent's Bash sandbox refuses `listen` on any local port
+  (EPERM) and denies the Docker/tmux sockets, so it cannot start or restart the dev
+  stack itself. Drive those steps through the Terminal panel (runs on the host):
+  `run_in_terminal`/`read_terminal`, then `open "http://localhost:8081"` for the user.
+- **Manage the stack**: `tmux attach -t gomo6-dev` (windows: backend/web/docs/
+  dev-dashboard; `Ctrl-b d` detaches), `tmux kill-session -t gomo6-dev` stops it
+  (Docker infra keeps running).
+
 ## CI/CD (GitHub Actions)
 
 | Workflow | Trigger | Purpose |
@@ -261,6 +320,26 @@ npx tsc --noEmit -p apps/docs/tsconfig.json
   stay inline (it dominates `client.Do`) — don't move it into a helper.
 - **React infinite loops**: circular `useEffect` dependencies cause error #310. Use
   refs or pass values as params to break cycles.
+- **Messenger «Заметки» (Notes) are a normal self-chat, not a special store.**
+  `chat_conversations.is_notes=true` + one `chat_members` row (owner). Content is
+  **client-side E2E** (`e2enote1:` + AES-256-GCM, device key in localStorage
+  `gomo6:notes:key:v1`, never sent to the server); the server only checks the prefix
+  and caps (content 24000 / meta 4096) and stores blobs verbatim. Folders/tags/pin
+  are NOT tables — they live in each message's encrypted `notes_meta`
+  (`{pinned,folder,tags}`), so there is no folder list/rename API. Files:
+  `apps/web/src/utils/notesCrypto.ts`, `stores/messengerStore.ts`,
+  `services/messengerApi.ts`; backend `internal/messenger/messenger_messages.go`.
+- **Rich post/thread cards inside messages already exist.** A message whose content
+  is a share token `__SHARE__:thread:<uuid>` / `__SHARE__:wall:<uuid>`
+  (`components/share/share.ts`, `buildShareToken`) renders as an X-style card via
+  `MessageContent` → `ShareCard` (fetches the entity, RLS-guarded). This is how you
+  embed a post preview in a chat without new UI or backend work.
+- **Never automate a background chat message through `sendMessage`.** It optimistically
+  inserts into `s.messages` (the *selected* chat) regardless of the `conversationId`
+  override and uses `get().me!` — so a background write pollutes the open chat, and
+  crashes if the messenger store is uninitialized. Add a dedicated store action that
+  targets an explicit `conversationId` and touches `s.messages` only when that chat is
+  open (pattern: `messengerStore.createFavoriteNote`, issue #509).
 - **Channel switching**: `channelSlug` must be in the `loadBoard` effect deps in
   `apps/web/src/pages/Board.tsx`. Missing it = stale threads on channel nav.
 - **Releases**: bump `VERSION` and add a `## [X.Y.Z]` section to `CHANGELOG.md`, then

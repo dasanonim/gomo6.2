@@ -570,6 +570,121 @@ describe("messengerStore", () => {
       const wire = vi.mocked(messengerApi.updateNotesMeta).mock.calls[0]![2];
       expect(wire.startsWith("e2enote1:")).toBe(true);
     });
+
+    // ── favorite → notes mirror (issue #509) ──────────────────────────────
+    describe("favorite notes", () => {
+      const CONTENT = "__SHARE__:thread:t-1";
+
+      it("creates an encrypted note in the notes chat with folder/tags meta", async () => {
+        vi.mocked(messengerApi.getOrCreateNotes).mockResolvedValue({ conversation_id: "notes-1" });
+        vi.mocked(messengerApi.listConversations).mockResolvedValue([notesConv()]);
+        vi.mocked(messengerApi.sendMessage).mockImplementation(
+          async (_convId, content) => mockMsg({ id: "fav-1", client_id: "fav", content }),
+        );
+        vi.mocked(messengerApi.updateNotesMeta).mockResolvedValue({ updated: true });
+
+        const id = await useMessengerStore.getState().createFavoriteNote(CONTENT, {
+          folder: "Избранное",
+          tags: ["тема"],
+        });
+
+        expect(id).toBe("fav-1");
+        // The note body leaves the device only as ciphertext.
+        const wire = vi.mocked(messengerApi.sendMessage).mock.calls[0]![1];
+        expect(wire.startsWith("e2enote1:")).toBe(true);
+        expect(wire.includes("__SHARE__")).toBe(false);
+        // Meta is written to the created note, also encrypted.
+        const meta = vi.mocked(messengerApi.updateNotesMeta).mock.calls[0]![2];
+        expect(meta.startsWith("e2enote1:")).toBe(true);
+      });
+
+      it("does not leak the note into a different open conversation", async () => {
+        useMessengerStore.setState({
+          selectedConversationId: "conv-other",
+          conversations: [mockConv({ id: "conv-other" })],
+          messages: [mockMsg({ id: "other-1", conversation_id: "conv-other" })],
+        });
+        vi.mocked(messengerApi.getOrCreateNotes).mockResolvedValue({ conversation_id: "notes-1" });
+        vi.mocked(messengerApi.listConversations).mockResolvedValue([mockConv({ id: "conv-other" }), notesConv()]);
+        vi.mocked(messengerApi.sendMessage).mockImplementation(
+          async (_convId, content) => mockMsg({ id: "fav-1", client_id: "fav", content }),
+        );
+        vi.mocked(messengerApi.updateNotesMeta).mockResolvedValue({ updated: true });
+
+        await useMessengerStore.getState().createFavoriteNote(CONTENT, { folder: "Избранное", tags: ["тема"] });
+
+        // The open (non-notes) chat is untouched.
+        const messages = useMessengerStore.getState().messages;
+        expect(messages).toHaveLength(1);
+        expect(messages[0].id).toBe("other-1");
+      });
+
+      it("inserts the note into the open notes chat and skips a duplicate", async () => {
+        useMessengerStore.setState({
+          selectedConversationId: "notes-1",
+          conversations: [notesConv()],
+          messages: [],
+        });
+        vi.mocked(messengerApi.getOrCreateNotes).mockResolvedValue({ conversation_id: "notes-1" });
+        vi.mocked(messengerApi.listConversations).mockResolvedValue([notesConv()]);
+        vi.mocked(messengerApi.sendMessage).mockImplementation(
+          async (_convId, content) => mockMsg({ id: "fav-1", client_id: "fav", content }),
+        );
+        vi.mocked(messengerApi.updateNotesMeta).mockResolvedValue({ updated: true });
+
+        await useMessengerStore.getState().createFavoriteNote(CONTENT, { folder: "Избранное", tags: ["тема"] });
+
+        const msg = useMessengerStore.getState().messages[0];
+        expect(msg.id).toBe("fav-1");
+        expect(msg.content).toBe(CONTENT);
+        expect(msg.notesFolder).toBe("Избранное");
+        expect(msg.notesTags).toEqual(["тема"]);
+
+        // Second call for the same item must not create another note.
+        await useMessengerStore.getState().createFavoriteNote(CONTENT, { folder: "Избранное", tags: ["тема"] });
+        expect(useMessengerStore.getState().messages).toHaveLength(1);
+        expect(messengerApi.sendMessage).toHaveBeenCalledTimes(1);
+      });
+
+      it("deletes a favorite note matched by decrypted content", async () => {
+        useMessengerStore.setState({
+          selectedConversationId: "conv-other",
+          conversations: [mockConv({ id: "conv-other" }), notesConv()],
+          messages: [],
+        });
+        const payload = await encryptNote(CONTENT, "notes-1");
+        const other = await encryptNote("другая заметка", "notes-1");
+        vi.mocked(messengerApi.getMessages).mockResolvedValue([
+          mockMsg({ id: "m-other", content: other }),
+          mockMsg({ id: "m-fav", content: payload }),
+        ]);
+        vi.mocked(messengerApi.deleteMessage).mockResolvedValue({ deleted: true });
+
+        await useMessengerStore.getState().deleteFavoriteNote(CONTENT);
+
+        expect(messengerApi.deleteMessage).toHaveBeenCalledWith("notes-1", "m-fav");
+      });
+
+      it("does not create a notes chat when deleting and none exists", async () => {
+        useMessengerStore.setState({ conversations: [mockConv({ id: "conv-other" })], messages: [] });
+        vi.mocked(messengerApi.listConversations).mockResolvedValue([mockConv({ id: "conv-other" })]);
+
+        await useMessengerStore.getState().deleteFavoriteNote(CONTENT);
+
+        expect(messengerApi.getOrCreateNotes).not.toHaveBeenCalled();
+        expect(messengerApi.deleteMessage).not.toHaveBeenCalled();
+      });
+
+      it("no-ops delete when no note matches", async () => {
+        useMessengerStore.setState({ conversations: [notesConv()], messages: [] });
+        const other = await encryptNote("чужое", "notes-1");
+        vi.mocked(messengerApi.getMessages).mockResolvedValue([mockMsg({ id: "m-other", content: other })]);
+
+        await useMessengerStore.getState().deleteFavoriteNote(CONTENT);
+
+        expect(messengerApi.deleteMessage).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe("local actions", () => {

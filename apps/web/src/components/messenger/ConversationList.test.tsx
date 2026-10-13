@@ -215,6 +215,17 @@ describe("ConversationList", () => {
       expect(screen.queryByText(/__GIFT__/)).not.toBeInTheDocument();
     });
 
+    it("renders the notes card share preview prettily (no raw token)", () => {
+      mockStore.conversations = [mockConversation({
+        id: "notes-1",
+        is_notes: true,
+        last_message_preview: "__SHARE__:thread:t-1",
+      })];
+      render(<ConversationList />);
+      expect(screen.getByText("Поделился записью")).toBeInTheDocument();
+      expect(screen.queryByText(/__SHARE__/)).not.toBeInTheDocument();
+    });
+
     it("shows a single tick for my message the peer has not read", () => {
       mockStore.me = { id: "u2" };
       mockStore.conversations = [mockConversation({ other_last_read_at: null })];

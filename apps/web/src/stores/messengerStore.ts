@@ -348,6 +348,13 @@ type MessengerStore = {
   setNotesMeta: (messageId: string, meta: NotesMeta) => Promise<void>;
   /** Flips the pin flag of a note. */
   toggleNotesPin: (messageId: string) => Promise<void>;
+  /** Mirrors a favorited post/thread into the notes chat as a note. Best-effort
+   *  (issue #509); returns the note id, or null on failure. Never disturbs the
+   *  currently open chat and never depends on `me` being loaded. */
+  createFavoriteNote: (content: string, meta: NotesMeta) => Promise<string | null>;
+  /** Removes the note mirroring an unfavorited item, matched by its decrypted
+   *  content. Best-effort; never creates a notes chat just to delete. */
+  deleteFavoriteNote: (content: string) => Promise<void>;
   loadReceipts: (conversationId: string) => Promise<void>;
 
   // ── Actions (local) ───────────────────────────────────────────────────
@@ -870,6 +877,112 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
       folder: message.notesFolder ?? null,
       tags: message.notesTags ?? [],
     });
+  },
+
+  // ── Favorite → notes mirror (issue #509) ──────────────────────────────
+  // These run in the BACKGROUND, from the feed/wall, where the messenger may
+  // not be initialized and a different chat may be open. So they deliberately
+  // avoid sendMessage's optimistic insert into `s.messages` (the selected
+  // conversation) and never touch `me`.
+  createFavoriteNote: async (content, meta) => {
+    try {
+      const convId = await get().ensureNotesConversation();
+      if (!convId) return null;
+
+      // Idempotency: if the notes chat is open and already shows this note
+      // (e.g. a WS echo landed first), don't create a second one.
+      if (get().selectedConversationId === convId && get().messages.some((m) => m.content === content)) {
+        return null;
+      }
+
+      // Encrypting is a write, so this may mint the device key on first use —
+      // intended for the first favorite note on a fresh device.
+      const wireContent = await encryptNote(content, convId);
+      const clientId = `fav_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const msg = await messengerApi.sendMessage(convId, wireContent, clientId);
+
+      // Meta is separate from the body: a meta failure must not lose the note.
+      try {
+        const wireMeta = await encryptNotesMeta(meta, convId);
+        await messengerApi.updateNotesMeta(convId, msg.id, wireMeta);
+      } catch {
+        // Note created without organization meta — leave it visible.
+      }
+
+      set((s) => {
+        // Only ever touch the OPEN conversation's list — never leak the note
+        // into a different chat that happens to be selected.
+        if (s.selectedConversationId !== convId) return s;
+        if (s.messages.some((m) => m.id === msg.id || m.client_id === clientId)) return s;
+        const optimistic: MessageView = {
+          ...msg,
+          content,
+          notesPinned: Boolean(meta.pinned),
+          notesFolder: meta.folder?.trim() ? meta.folder.trim() : null,
+          notesTags: meta.tags ?? [],
+        };
+        const messages = [...s.messages, optimistic].sort(
+          (a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime(),
+        );
+        rememberLatestEventId(convId, messages);
+        // Notes are device-encrypted — never persisted to IndexedDB.
+        return { messages };
+      });
+      return msg.id;
+    } catch {
+      return null;
+    }
+  },
+
+  deleteFavoriteNote: async (content) => {
+    try {
+      let convId = get().conversations.find((c) => c.is_notes)?.id ?? null;
+      if (!convId) {
+        // Discover the notes chat without creating it (POST /notes would).
+        await get().loadConversations();
+        convId = get().conversations.find((c) => c.is_notes)?.id ?? null;
+      }
+      if (!convId) return;
+
+      // Fast path: the open notes chat already holds decrypted plaintext.
+      let messageId: string | null = null;
+      if (get().selectedConversationId === convId) {
+        const hit = get().messages.find((m) => !m.is_deleted && m.content === content);
+        if (hit) messageId = hit.id;
+      }
+
+      // Slow path: page through the notes conversation, decrypting as we go.
+      if (!messageId) {
+        let before: string | undefined;
+        for (let page = 0; page < 200; page += 1) {
+          const pageRaw = await messengerApi.getMessages(convId, before, undefined, 100);
+          if (pageRaw.length === 0) break;
+          for (const raw of pageRaw) {
+            if (raw.is_deleted) continue;
+            if ((await decryptNote(raw.content, convId)) === content) {
+              messageId = raw.id;
+              break;
+            }
+          }
+          if (messageId) break;
+          if (pageRaw.length < 100) break;
+          before = pageRaw[0].id;
+        }
+      }
+      if (!messageId) return;
+
+      await messengerApi.deleteMessage(convId, messageId);
+      set((s) => {
+        if (s.selectedConversationId !== convId) return s;
+        return {
+          messages: s.messages.map((m) =>
+            m.id === messageId ? { ...m, is_deleted: true, content: "" } : m,
+          ),
+        };
+      });
+    } catch {
+      // Best-effort — the unfavorite already succeeded.
+    }
   },
 
   // ── Load receipts (debounced) ─────────────────────────────────────────

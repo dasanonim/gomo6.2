@@ -4,6 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ShareCard } from "./ShareCard";
 
+vi.mock("@/utils/relativeTimeShort", () => ({
+  formatShortRelativeTime: () => "2д",
+}));
+
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
 const mockFrom = vi.fn();
@@ -51,18 +55,25 @@ describe("ShareCard", () => {
     vi.clearAllMocks();
   });
 
-  it("renders a thread card with title, snippet and board label", async () => {
+  it("renders a thread card with a header of title + author handle and the snippet", async () => {
     mockFrom.mockImplementation((table: string) => {
       if (table === "threads") {
         return chain([{
           id: "t1",
+          user_id: "u1",
           title: "Заголовок записи",
           content: "Текст записи для карточки",
           image_url: null,
           image_urls: null,
           attachments: null,
           boards: { slug: "games", name: "Игры", is_gomosub: false },
-          profiles: { username: "author", display_name: null, is_anonymous: false, avatar_url: null },
+          section: { name: "Игры" },
+          subsection: { name: "ПК" },
+          created_at: "2026-10-01T02:54:38Z",
+          username: "author",
+          display_name: null,
+          is_anonymous: false,
+          avatar_url: null,
         }]);
       }
       return chain([]);
@@ -72,31 +83,41 @@ describe("ShareCard", () => {
 
     expect(await screen.findByText("Заголовок записи")).toBeInTheDocument();
     expect(screen.getByText(/Текст записи для карточки/)).toBeInTheDocument();
-    expect(screen.getByText(/Запись · \/games/)).toBeInTheDocument();
-    expect(screen.getByText("@author")).toBeInTheDocument();
+    // The meta line shows the handle, the section · subsection and the date —
+    // and no raw board label like the removed "/games" line.
+    expect(screen.getByText("@author · Игры · ПК · 2д")).toBeInTheDocument();
+    expect(screen.queryByText(/\/games/)).not.toBeInTheDocument();
     expect(screen.getByRole("button")).toBeInTheDocument();
   });
 
-  it("uses the /g/ prefix for gomosub boards", async () => {
+  it("renders an author avatar in the header", async () => {
     mockFrom.mockImplementation((table: string) => {
       if (table === "threads") {
         return chain([{
           id: "t1",
+          user_id: "u1",
           title: "Запись",
           content: "",
           image_url: null,
           image_urls: null,
           attachments: null,
           boards: { slug: "gomo", name: "Gomo", is_gomosub: true },
-          profiles: { username: "author", is_anonymous: false, avatar_url: null },
+          username: "author",
+          display_name: "Автор",
+          is_anonymous: false,
+          avatar_url: "avatar.png",
         }]);
       }
       return chain([]);
     });
 
-    renderCard({ type: "thread", id: "t1" });
+    const { container } = renderCard({ type: "thread", id: "t1" });
     await screen.findByText("Запись");
-    expect(screen.getByText(/Запись · g\/gomo/)).toBeInTheDocument();
+    const avatar = container.querySelector(".msg-share-card-head .msg-share-card-avatar");
+    expect(avatar).toHaveAttribute("src", "avatar.png");
+    // The card still resolves to the gomosub thread URL on click.
+    await userEvent.click(screen.getByRole("button"));
+    expect(mockNavigate).toHaveBeenCalledWith("/g/gomo/thread/t1");
   });
 
   it("renders a wall post card with author and content", async () => {
@@ -106,6 +127,7 @@ describe("ShareCard", () => {
           id: "w1",
           user_id: "u1",
           content: "Запись со стены",
+          created_at: "2026-10-01T02:54:38Z",
           image_url: null,
           attachments: null,
           author: { username: "bob", display_name: null, is_anonymous: false, avatar_url: null },
@@ -116,9 +138,10 @@ describe("ShareCard", () => {
 
     renderCard({ type: "wall", id: "w1" });
 
-    // The label and the content snippet both say "Запись со стены".
-    expect(await screen.findAllByText("Запись со стены")).toHaveLength(2);
-    expect(screen.getByText("@bob")).toBeInTheDocument();
+    // Wall posts have no title and no section: the meta line is just the handle
+    // and the date, and the body shows the content snippet.
+    expect(await screen.findByText("Запись со стены")).toBeInTheDocument();
+    expect(screen.getByText("@bob · 2д")).toBeInTheDocument();
   });
 
   it("renders the first image attachment as the card thumbnail", async () => {

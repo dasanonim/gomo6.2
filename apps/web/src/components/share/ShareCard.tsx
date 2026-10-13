@@ -2,9 +2,10 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowUpRight, Hash, ImageIcon, MessageSquare } from "lucide-react";
+import { Hash, MessageSquare } from "lucide-react";
 import { api } from "@/integrations/api/compat";
 import { storageUrl } from "@/utils/storage";
+import { formatShortRelativeTime } from "@/utils/relativeTimeShort";
 import { messengerPlainPreview } from "@/components/messenger/messengerRichTextUtils";
 import type { ShareTarget } from "./share";
 import { entityParam } from "@/utils/entityUrl";
@@ -15,19 +16,32 @@ import { wallPostUrl } from "@/utils/entityUrl";
 interface ShareCardThread {
   id: string;
   public_id?: number | null;
+  user_id?: string | null;
+  user_public_id?: number | null;
   title: string | null;
   content: string | null;
+  created_at?: string | null;
   image_url?: string | null;
   image_urls?: string[] | null;
   attachments?: unknown;
   boards?: { name: string; slug: string; is_gomosub: boolean } | null;
-  profiles?: {
-    username: string;
-    display_name?: string | null;
-    nickname_emoji_id?: string | null;
-    is_anonymous: boolean;
-    avatar_url?: string | null;
-  } | null;
+  section?: { name: string; slug?: string | null } | null;
+  subsection?: { name: string; slug?: string | null } | null;
+  // Author fields arrive FLAT on the threads row (GET /api/v1/threads embeds no
+  // `profiles` relation), unlike wall posts which expose `author:profiles!author_id`.
+  username?: string | null;
+  display_name?: string | null;
+  nickname_emoji_id?: string | null;
+  is_anonymous?: boolean | null;
+  avatar_url?: string | null;
+}
+
+/** Normalized author shape the card renders (from either entity). */
+interface ShareCardAuthor {
+  username: string;
+  display_name?: string | null;
+  is_anonymous: boolean;
+  avatar_url?: string | null;
 }
 
 interface ShareCardWallPost {
@@ -38,6 +52,7 @@ interface ShareCardWallPost {
   author_id?: string;
   title?: string | null;
   content?: string | null;
+  created_at?: string | null;
   image_url?: string | null;
   attachments?: unknown;
   author?: {
@@ -93,7 +108,7 @@ export const ShareCard = ({ target }: ShareCardProps) => {
         const { data: rows } = await api
           .from("threads")
           .select(
-            "id, public_id, title, content, image_url, image_urls, attachments, boards(name, slug, is_gomosub), profiles(username, display_name, nickname_emoji_id, is_anonymous, avatar_url)",
+            "id, public_id, user_id, user_public_id, title, content, created_at, image_url, image_urls, attachments, boards(name, slug, is_gomosub), section(name, slug), subsection(name, slug), username, display_name, nickname_emoji_id, is_anonymous, avatar_url",
           )
           .eq("id", target.id)
           .limit(1);
@@ -103,7 +118,7 @@ export const ShareCard = ({ target }: ShareCardProps) => {
       const { data: rows } = await api
         .from("profile_wall_posts")
         .select(
-          "id, public_id, user_id, user_public_id, author_id, title, content, image_url, attachments, author:profiles!author_id(username, display_name, is_anonymous, avatar_url)",
+          "id, public_id, user_id, user_public_id, author_id, title, content, created_at, image_url, attachments, author:profiles!author_id(username, display_name, is_anonymous, avatar_url)",
         )
         .eq("id", target.id)
         .limit(1);
@@ -121,8 +136,15 @@ export const ShareCard = ({ target }: ShareCardProps) => {
     const wall = data?.wall;
     if (!thread && !wall) return null;
 
-    const author = thread
-      ? thread.profiles
+    const author: ShareCardAuthor | null | undefined = thread
+      ? (thread.user_id
+        ? {
+            username: thread.username ?? "",
+            display_name: thread.display_name,
+            is_anonymous: Boolean(thread.is_anonymous),
+            avatar_url: thread.avatar_url,
+          }
+        : null)
       : wall!.author;
     const title = thread?.title || wall?.title || "";
     const content = thread?.content || wall?.content || "";
@@ -135,9 +157,13 @@ export const ShareCard = ({ target }: ShareCardProps) => {
 
     const board = thread?.boards;
     const hasBoard = Boolean(thread && board?.slug);
-    const boardLabel = hasBoard
-      ? `${board?.is_gomosub ? "g/" : "/"}${board?.slug}`
+
+    // Trail after the handle: the section (· subsection) a thread was posted in
+    // and when. Wall posts carry no section, so they show only the date.
+    const sectionLabel = thread
+      ? ([thread.section?.name, thread.subsection?.name].filter(Boolean) as string[]).join(" · ") || null
       : null;
+    const createdIso = (thread?.created_at ?? wall?.created_at) ?? null;
 
     const url = thread
       ? hasBoard
@@ -145,7 +171,7 @@ export const ShareCard = ({ target }: ShareCardProps) => {
         : `/thread/${entityParam(thread)}`
       : wallPostUrl({ id: wall!.user_id, public_id: wall!.user_public_id }, wall!);
 
-    return { author, title, snippet, image, boardLabel, url, isThread: Boolean(thread) };
+    return { author, title, snippet, image, url, sectionLabel, createdIso };
   }, [data]);
 
   if (!card) {
@@ -169,8 +195,18 @@ export const ShareCard = ({ target }: ShareCardProps) => {
     );
   }
 
-  const displayName = card.author?.display_name || card.author?.username || "";
+  // The handle line shows the actual @username (not the display name), matching
+  // how the feed's post header renders it.
+  const handle = card.author?.username ? `@${card.author.username}` : "";
   const avatarUrl = storageUrl("post-images", card.author?.avatar_url ?? null);
+  // "@user · Раздел · Подраздел · 2ч" — the author, where it was posted and when.
+  const metaLine = [
+    card.author ? (card.author.is_anonymous ? t("common.anonymous") : handle) : "",
+    card.sectionLabel,
+    card.createdIso ? formatShortRelativeTime(card.createdIso) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <button
@@ -182,42 +218,31 @@ export const ShareCard = ({ target }: ShareCardProps) => {
         navigate(card.url);
       }}
     >
+      {/* Header: author avatar on the left, with the post title and the
+          author's handle stacked to its right. */}
       <div className="msg-share-card-head">
-        <span className="msg-share-card-icon">
-          {card.isThread ? <Hash size={14} /> : <MessageSquare size={14} />}
-        </span>
-        <span className="msg-share-card-label">
-          {card.isThread ? t("share.thread") : t("share.wallPost")}
-          {card.boardLabel ? ` · ${card.boardLabel}` : ""}
-        </span>
-        <ArrowUpRight size={14} className="msg-share-card-arrow" />
-      </div>
-
-      {card.author && (
-        <div className="msg-share-card-author">
+        <span className="msg-share-card-avatar-wrap">
           {avatarUrl ? (
             <img src={avatarUrl} alt="" className="msg-share-card-avatar" loading="lazy" />
           ) : (
             <span className="msg-share-card-avatar msg-share-card-avatar-fallback">
-              {((card.author?.username || "?")[0] || "?").toUpperCase()}
+              {(card.author?.username?.[0] || card.title?.[0] || "?").toUpperCase()}
             </span>
           )}
-          <span className="msg-share-card-username">
-            {card.author.is_anonymous ? t("common.anonymous") : `@${displayName}`}
-          </span>
-        </div>
-      )}
+        </span>
+        <span className="msg-share-card-heading">
+          {card.title && <span className="msg-share-card-title line-clamp-2">{card.title}</span>}
+          {metaLine && <span className="msg-share-card-meta">{metaLine}</span>}
+        </span>
+      </div>
 
-      {card.title && <div className="msg-share-card-title line-clamp-2">{card.title}</div>}
       {card.snippet && <div className="msg-share-card-text line-clamp-3">{card.snippet}</div>}
 
-      {card.image ? (
+      {/* No placeholder when the post has no image — the card simply ends after
+          the text instead of showing an empty 16:9 box. */}
+      {card.image && (
         <div className="msg-share-card-image">
           <img src={card.image} alt="" loading="lazy" decoding="async" />
-        </div>
-      ) : (
-        <div className="msg-share-card-image msg-share-card-image-empty">
-          <ImageIcon size={18} />
         </div>
       )}
     </button>

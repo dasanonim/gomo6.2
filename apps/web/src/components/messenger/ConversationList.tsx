@@ -181,7 +181,9 @@ const NotesCard = memo(function NotesCard({
         </div>
         <div className="conversation-meta">
           {notes?.last_message_preview ? (
-            <span className="conversation-preview notes-preview">{notes.last_message_preview}</span>
+            <span className="conversation-preview notes-preview">
+              {messengerConversationPreview(notes.last_message_preview)}
+            </span>
           ) : creating ? (
             <span className="conversation-preview muted">Создаём чат...</span>
           ) : (

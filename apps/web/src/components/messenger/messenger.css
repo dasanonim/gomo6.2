@@ -741,7 +741,9 @@ main.is-messenger-page {
    are absolutely positioned inside it (top: header + row.start). The gutter
    lives on the item so bubbles fit the viewport width. */
 .message-virtual-list {
-  --message-gutter: clamp(16px, 2.5vw, 32px);
+  /* Side inset of every message row. Kept to a hairline: bubbles should reach
+     the edge, with just enough so a shadow/border is not clipped. */
+  --message-gutter: 2px;
   position: relative;
   box-sizing: border-box;
   width: 100%;
@@ -830,7 +832,11 @@ main.is-messenger-page {
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
-  margin-bottom: 4px;
+  /* Vertical gap between messages. Padding (not margin) — the virtualizer
+     measures border-box and ignores margins, so a margin gap would not take
+     part in the layout and messages would overlap. Consecutive (same-sender)
+     rows get a tighter pad below. */
+  padding-bottom: 8px;
 }
 
 .bubble-row.is-mine {
@@ -919,6 +925,22 @@ main.is-messenger-page {
 .message-bubble.is-mine {
   border-color: oklch(var(--primary) / 0.25);
   background: oklch(var(--primary) / 0.06);
+}
+
+/* A shared post (__SHARE__): the bubble becomes a transparent, borderless,
+   padding-less frame so the ShareCard paints the bubble background/border
+   itself. Result: a shared post looks exactly like a normal message bubble
+   rather than a panel nested inside one. */
+.message-bubble.is-share-bubble,
+.message-bubble.is-share-bubble.is-mine {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+/* Keep the time/status readable now that they sit on the card, not the bubble
+   background (the card reserves room via its bottom padding). */
+.message-bubble.is-share-bubble .message-meta {
+  opacity: 1;
 }
 
 /* Responsive media bubbles: preserve the source proportions and let the
@@ -1078,7 +1100,9 @@ main.is-messenger-page {
 
 /* Consecutive message grouping */
 .bubble-row.is-consecutive {
-  margin-top: 1px;
+  /* Messages from the same sender stay grouped: a tighter gap than the regular
+     row spacing, so a burst reads as one block. */
+  padding-bottom: 4px;
 }
 .bubble-row.is-consecutive:not(.is-mine) .message-bubble {
   border-bottom-left-radius: 14px;
@@ -3403,7 +3427,7 @@ main.is-messenger-page {
   }
 
   .message-virtual-list {
-    --message-gutter: 12px;
+    --message-gutter: 2px;
   }
 
   .chat-panel.is-empty .chat-empty-state {
@@ -3622,85 +3646,28 @@ main.is-messenger-page {
   color: #fff;
 }
 
-/* ── Notes security dialog ── */
-.notes-settings-dialog .notes-lock-badge-icon {
-  color: oklch(var(--primary));
+/* ── Notes key dialog (minimal) ── */
+.notes-settings-dialog {
+  gap: 12px;
 }
 
 .notes-settings-body {
-  display: grid;
-  gap: 18px;
-}
-
-.notes-settings-status {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
   gap: 10px;
-  padding: 12px;
-  border: 1px solid oklch(var(--border));
-  border-radius: 12px;
-  background: oklch(var(--muted) / 0.4);
+  align-items: stretch;
 }
 
-.notes-settings-status-icon {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: oklch(var(--muted));
-  color: oklch(var(--muted-foreground));
-}
-
-.notes-settings-status-icon.is-active {
-  background: hsl(142 70% 42% / 0.16);
-  color: hsl(142 70% 38%);
-}
-
-.notes-settings-status-title {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.notes-settings-status-sub {
-  margin-top: 2px;
-  font-size: 12px;
-  color: oklch(var(--muted-foreground));
-  line-height: 1.45;
-}
-
-.notes-key-fingerprint {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  background: oklch(var(--background));
-  border: 1px solid oklch(var(--border));
-  border-radius: 5px;
-  padding: 1px 5px;
-}
-
-.notes-settings-section-title {
-  margin-bottom: 6px;
-  font-size: 11.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: oklch(var(--muted-foreground));
-}
-
-.notes-settings-section-text {
-  margin: 0 0 10px;
+.notes-settings-text {
+  margin: 0;
   font-size: 12.5px;
-  color: oklch(var(--muted-foreground));
   line-height: 1.5;
+  color: oklch(var(--muted-foreground));
 }
 
+/* Full-width action (copy the backup key). */
 .notes-settings-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
+  padding: 9px 14px;
   border: none;
   border-radius: 8px;
   background: oklch(var(--primary));
@@ -3714,39 +3681,21 @@ main.is-messenger-page {
   filter: brightness(1.08);
 }
 
-.notes-settings-action:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.notes-settings-restored {
+  font-size: 12px;
+  color: hsl(142 60% 42%);
 }
 
-.notes-settings-action.is-done {
-  background: hsl(142 70% 38%);
-}
-
-.notes-exported-key {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: oklch(var(--muted));
-  font-size: 11px;
-  line-height: 1.5;
-  word-break: break-all;
-  user-select: all;
-}
-
+/* One row: key input + submit. */
 .notes-settings-import {
   display: flex;
   gap: 8px;
 }
 
-.notes-settings-import-icon {
-  display: none;
-}
-
 .notes-settings-import input {
   flex: 1;
   min-width: 0;
-  padding: 8px 10px;
+  padding: 9px 10px;
   border-radius: 8px;
   border: 1px solid oklch(var(--border));
   background: oklch(var(--background));
@@ -3761,11 +3710,11 @@ main.is-messenger-page {
 }
 
 .notes-settings-import button {
-  padding: 8px 12px;
+  padding: 9px 14px;
   border-radius: 8px;
-  border: 1px solid oklch(var(--border));
-  background: oklch(var(--secondary));
-  color: oklch(var(--foreground));
+  border: none;
+  background: oklch(var(--primary));
+  color: oklch(var(--primary-foreground));
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
@@ -3773,7 +3722,7 @@ main.is-messenger-page {
 }
 
 .notes-settings-import button:hover {
-  background: oklch(var(--accent));
+  filter: brightness(1.08);
 }
 
 .notes-settings-import button:disabled {
@@ -3782,7 +3731,6 @@ main.is-messenger-page {
 }
 
 .notes-settings-import-error {
-  margin-top: 6px;
   font-size: 12px;
   color: oklch(var(--destructive));
 }
@@ -3833,15 +3781,28 @@ main.is-messenger-page {
   gap: 6px;
 }
 
-/* Folder filter chips bar */
+/* Folder filter chips bar. Floats absolutely over the top of the messages
+   area (.chat-messages-area is position: relative) so it takes no layout
+   height — without this it sat in the flex column and pushed/cut the
+   messages below it. No background: the chips alone sit on whatever is
+   behind them. */
 .notes-filter-bar {
-  flex-shrink: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 6;
   display: flex;
   align-items: center;
   gap: 6px;
   overflow-x: auto;
   padding: 8px 14px 6px;
   scrollbar-width: none;
+  pointer-events: none;
+}
+
+.notes-filter-bar button {
+  pointer-events: auto;
 }
 
 .notes-filter-bar::-webkit-scrollbar {
@@ -4181,33 +4142,27 @@ main.is-messenger-page {
   color: oklch(var(--foreground));
 }
 
-/* ── Notes: mobile-friendly key import panel ── */
+/* ── Notes: mobile key panel ── */
 @media (max-width: 640px) {
-  .notes-settings-import {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
+  /* Anchor the dialog near the top instead of vertically centering it, so the
+     key field stays visible above the on-screen keyboard. top + translateY(-50%)
+     (from the shared dialog) would push it to the middle and under the keyboard. */
+  .notes-settings-dialog {
+    top: 4.5rem;
+    transform: translate(-50%, 0);
+    max-width: calc(100vw - 2rem);
   }
 
+  /* 16px avoids the iOS focus zoom, which would otherwise shove the field
+     off-screen while the keyboard is open. */
   .notes-settings-import input {
-    flex: none;
-    width: 100%;
-    padding: 12px 12px;
-    font-size: 14px; /* ≥16px would be even better for iOS; 14px keeps the key visible */
-    letter-spacing: 0.02em;
+    font-size: 16px;
+    padding: 11px 12px;
   }
 
   .notes-settings-import button {
-    width: 100%;
-    padding: 12px 12px;
+    padding: 11px 16px;
     font-size: 14px;
-  }
-
-  /* A 64-char hex key must never force horizontal scroll on small screens */
-  .notes-exported-key {
-    font-size: 11px;
-    word-break: break-all;
-    overflow-wrap: anywhere;
   }
 }
 
@@ -4293,9 +4248,12 @@ main.is-messenger-page {
 }
 
 /* ── Shared-post card (__SHARE__ token) ───────────────────────────────────
-   Rendered inside message bubbles. The layout is deterministic (clamped text
-   lines + fixed 16:9 thumbnail) so MessageList can estimate the height
-   upfront for the virtualizer. */
+   The card IS the bubble: the wrapping .message-bubble is made transparent
+   (see .message-bubble.is-share-bubble below) and this element carries the
+   bubble's own background, border and radius — so a shared post reads exactly
+   like any other message bubble, not as a panel floating inside one.
+   The layout stays deterministic (clamped text lines + fixed 16:9 thumbnail)
+   so MessageList can estimate the height upfront for the virtualizer. */
 .msg-share-card {
   display: flex;
   flex-direction: column;
@@ -4303,10 +4261,12 @@ main.is-messenger-page {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding: 10px 12px;
-  border: 1px solid oklch(var(--border) / 0.8);
-  border-radius: 12px;
-  background: oklch(var(--card) / 0.6);
+  /* Bottom padding reserves the absolutely-positioned time/status row, exactly
+     like a normal bubble's is-multiline content reserve. */
+  padding: 10px 12px 22px;
+  border: 1px solid oklch(var(--border));
+  border-radius: 14px;
+  background: oklch(var(--card));
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s ease, background-color 0.15s ease;
@@ -4314,51 +4274,44 @@ main.is-messenger-page {
 }
 .msg-share-card:hover {
   border-color: oklch(var(--primary) / 0.45);
-  background: oklch(var(--card));
+}
+/* Outgoing (own) share: same tint as an own message bubble. */
+.message-bubble.is-mine .msg-share-card {
+  border-color: oklch(var(--primary) / 0.25);
+  background: oklch(var(--primary) / 0.06);
+}
+.message-bubble.is-mine .msg-share-card:hover {
+  border-color: oklch(var(--primary) / 0.45);
 }
 .msg-share-card:disabled {
   cursor: default;
 }
 
+/* Header: avatar on the left, title + meta stacked to its right. A hairline
+   underneath separates it from the post body/image. */
 .msg-share-card-head {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 8px;
   min-width: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid oklch(var(--border) / 0.6);
 }
-.msg-share-card-icon {
+.msg-share-card-avatar-wrap {
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
   flex-shrink: 0;
-  color: oklch(var(--primary));
+  align-self: flex-start;
 }
-.msg-share-card-label {
+.msg-share-card-heading {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: oklch(var(--muted-foreground));
-}
-.msg-share-card-arrow {
-  flex-shrink: 0;
-  color: oklch(var(--muted-foreground));
-}
-
-.msg-share-card-author {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
 }
 .msg-share-card-avatar {
-  width: 18px;
-  height: 18px;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
   border-radius: 50%;
   object-fit: cover;
@@ -4367,31 +4320,34 @@ main.is-messenger-page {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: 13px;
   font-weight: 700;
   background: oklch(var(--muted));
   color: oklch(var(--muted-foreground));
 }
-.msg-share-card-username {
+.msg-share-card-meta {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-  font-weight: 600;
-  color: oklch(var(--foreground));
+  font-weight: 500;
+  color: oklch(var(--muted-foreground));
 }
 
 .msg-share-card-title {
+  display: block;
+  min-width: 0;
   font-size: 14px;
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1.25;
   color: oklch(var(--foreground));
 }
+/* Post body: full-strength foreground (not muted) so it reads like the post. */
 .msg-share-card-text {
   font-size: 12.5px;
   line-height: 1.45;
-  color: oklch(var(--muted-foreground));
+  color: oklch(var(--foreground));
   overflow-wrap: break-word;
 }
 
@@ -4409,17 +4365,14 @@ main.is-messenger-page {
   height: 100%;
   object-fit: cover;
 }
-.msg-share-card-image-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: oklch(var(--muted-foreground) / 0.7);
-}
 
 .msg-share-card-muted {
   flex-direction: row;
   align-items: center;
   gap: 8px;
   min-height: 44px;
+  /* Single-row card: drop the base's meta reserve (that is only for the full
+     card whose time/status sits in the bottom padding). */
+  padding: 10px 12px;
   cursor: default;
 }
