@@ -16,6 +16,7 @@ import type { MessageView } from "./types";
 import { isConsecutive, getDateSeparator } from "./messageListUtils";
 import { getAttachmentAspectRatio } from "./attachmentMedia";
 import { HISTORY_HEADER_HEIGHT, captureAnchor, virtualContentHeight } from "./core/scrollEngine";
+import { isScrollDebugEnabled, scrollDebugNote, startScrollDebug } from "./core/scrollDebug";
 import {
   clearScrollPosition,
   getScrollPosition,
@@ -218,6 +219,15 @@ export const MessageList = memo(
     // clears restoreAnchorRef, so the open-at-bottom effect needs its own flag.
     const hadRestoreAtMountRef = useRef(restoreAnchorRef.current !== null);
 
+    // DEV-only on-device scroll diagnostics (opt-in via localStorage, see
+    // core/scrollDebug.ts). No-op in production builds.
+    useEffect(() => {
+      if (!isScrollDebugEnabled()) return;
+      const el = scrollerRef.current;
+      if (!el) return;
+      return startScrollDebug(el);
+    }, []);
+
     // Identity key matches the store's dedup key (client_id || id), so a temp
     // message later replaced by its server twin keeps its virtual slot.
     const messageKey = useCallback((m: MessageView) => m.client_id ?? m.id, []);
@@ -329,8 +339,10 @@ export const MessageList = memo(
       ) {
         lastLoadAtRef.current = now;
         loadingMoreRef.current = true;
+        scrollDebugNote(`loadMore start st=${Math.round(el.scrollTop)}`);
         loadMoreMessages(conversationId).finally(() => {
           loadingMoreRef.current = false;
+          scrollDebugNote("loadMore done");
         });
       }
     }, [
@@ -361,6 +373,7 @@ export const MessageList = memo(
       if (!anchor || !conversationId) return;
       const index = messages.findIndex((m) => m.id === anchor.messageId);
       if (index >= 0) {
+        scrollDebugNote(`restore jump index=${index} offset=${Math.round(anchor.offset)}`);
         virtualizer.scrollToIndex(index, { align: "start" });
         restoreAnchorRef.current = null;
         isAtBottomRef.current = false;
