@@ -74,6 +74,20 @@ interface MessageListProps {
  *  - Text bubbles: one line ≈ 21px + bubble chrome; a rough char-per-line
  *    count keeps the estimate within a line or two of the measured height.
  */
+/**
+ * Estimate how many wrapped lines a message's text occupies: each explicit
+ * newline starts a new line, and each segment wraps at ~55 chars. Ignoring
+ * newlines (the old chars/55 estimate) badly under-estimated multi-line
+ * messages, and every under-estimate is a visible correction when history is
+ * prepended.
+ */
+function estimateTextLines(text: string): number {
+  if (!text) return 1;
+  return text
+    .split("\n")
+    .reduce((count, segment) => count + Math.max(1, Math.ceil(segment.length / 55)), 0);
+}
+
 function estimateMessageHeight(
   message: MessageView | undefined,
   prev: MessageView | null = null,
@@ -111,14 +125,11 @@ function estimateMessageHeight(
       // getAttachmentDisplayStyle: boxWidth = min(420, 480 * ratio).
       const boxWidth = Math.min(420, 480 * ratio);
       const boxHeight = Math.round(boxWidth / ratio);
-      const captionLines = message.content?.trim()
-        ? Math.max(1, Math.ceil(message.content.length / 55))
-        : 0;
+      const captionLines = message.content?.trim() ? estimateTextLines(message.content) : 0;
       return extra + 14 + boxHeight + captionLines * 21 + ROW_GAP_HEIGHT;
     }
   }
-  const chars = message.content?.length ?? 0;
-  const lines = chars === 0 ? 1 : Math.max(1, Math.ceil(chars / 55));
+  const lines = estimateTextLines(message.content ?? "");
   return extra + 18 + lines * 21 + ROW_GAP_HEIGHT;
 }
 
@@ -234,6 +245,22 @@ export const MessageList = memo(
       scrollMargin: HISTORY_HEADER_HEIGHT,
     });
 
+    // Apply the estimate→measured size correction for any item ABOVE the
+    // viewport, in the same frame as the measurement. Two deviations from the
+    // library default, both measured in the local browser harness (dev-only
+    // scroll probe, see docs/wiki/MESSENGER_SCROLL_KEYBOARD_REFERENCE.md):
+    //  1. the default skips corrections while scrolling backward ("items jump
+    //     while scrolling up"), but that is exactly when older history is being
+    //     prepended — skipping it left a visible jump (113px measured);
+    //  2. the default compares `item.start` to the virtualizer's cached
+    //     `scrollOffset`, which lags the DOM during a load burst and is offset
+    //     by `scrollMargin` — reading the live DOM `scrollTop` and adding the
+    //     margin removed the remaining drift (anchor drift 42px → 0px).
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
+      const offset = instance.scrollElement?.scrollTop ?? 0;
+      return item.start < offset + (instance.options.scrollMargin ?? 0);
+    };
+
     // ── Read receipts: the "read line" (Telegram-style) ────────────────
     // The UI reports exactly ONE message per pass: the newest message fully
     // visible on screen. Everything above it was read; everything below the
@@ -331,24 +358,28 @@ export const MessageList = memo(
     // hasMoreMessages). Runs before the open-at-bottom effect below.
     useLayoutEffect(() => {
       const anchor = restoreAnchorRef.current;
-      if (!anchor) return;
+      if (!anchor || !conversationId) return;
       const index = messages.findIndex((m) => m.id === anchor.messageId);
       if (index >= 0) {
         virtualizer.scrollToIndex(index, { align: "start" });
-        if (anchor.offset) virtualizer.scrollBy(anchor.offset);
         restoreAnchorRef.current = null;
         isAtBottomRef.current = false;
         setIsAtBottom(false);
         return;
       }
-      // Not loaded yet — behave like a normal open while older history loads.
-      virtualizer.scrollToEnd();
-      if (!conversationId || !hasMoreMessages || loadingMoreRef.current) {
-        // The anchor is unreachable (deleted / too deep) — fall back to the
-        // default bottom-open behavior.
+      // The anchor is not loaded yet: keep prepending older history WITHOUT
+      // moving the view. Scrolling to the end here made a returning chat flash
+      // the bottom before the jump (the "teleports to the bottom" bug).
+      if (!hasMoreMessages) {
+        // Unreachable (deleted / too deep) — give up and open at the bottom.
         restoreAnchorRef.current = null;
+        virtualizer.scrollToEnd();
         return;
       }
+      // A load is already in flight (this effect re-runs on every messages
+      // change, and dev StrictMode double-invokes it) — wait for it instead of
+      // treating it as "unreachable" and giving up.
+      if (loadingMoreRef.current) return;
       loadingMoreRef.current = true;
       loadMoreMessages(conversationId).finally(() => {
         loadingMoreRef.current = false;

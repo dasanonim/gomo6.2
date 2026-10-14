@@ -349,9 +349,8 @@ describe("MessageList virtualization", () => {
     saveScrollPosition("c1", { messageId: "b", offset: 20 });
     h.storeState.messages = [makeMessage("a"), makeMessage("b"), makeMessage("c")];
     const { container } = mountList();
-    // Jumped to "b" (index 1) and applied the sub-message offset.
+    // Jumped to "b" (index 1).
     expect(h.scrollToIndexSpy).toHaveBeenCalledWith(1, { align: "start" });
-    expect(h.scrollBySpy).toHaveBeenCalledWith(20);
     // A restore must not also open at the bottom.
     expect(h.scrollToEndSpy).not.toHaveBeenCalled();
     // Not at the bottom → the FAB is visible.
@@ -363,10 +362,11 @@ describe("MessageList virtualization", () => {
     h.storeState.messages = [makeMessage("a"), makeMessage("b"), makeMessage("c")];
     h.storeState.hasMoreMessages = true;
     const { rerender } = mountList();
-    // The anchor is not in the first batch — history must be requested, and the
-    // view behaves like a normal open meanwhile.
+    // The anchor is not in the first batch — history must be requested. The
+    // view must NOT jump to the bottom meanwhile (that was the "teleports to
+    // the bottom" bug); it stays put until the anchor arrives.
     expect(h.storeState.loadMoreMessages).toHaveBeenCalledWith("c1");
-    expect(h.scrollToEndSpy).toHaveBeenCalled();
+    expect(h.scrollToEndSpy).not.toHaveBeenCalled();
 
     // The older page arrives with the anchor prepended.
     h.storeState.messages = [makeMessage("z"), makeMessage("a"), makeMessage("b"), makeMessage("c")];
