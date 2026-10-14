@@ -665,13 +665,7 @@ main.is-messenger-page {
   background: oklch(var(--primary) / 0.08);
   border-top: 1px solid oklch(var(--primary) / 0.12);
   font-size: 12px;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
   flex-shrink: 0;
-}
-
-.pinned-message-banner:hover {
-  background: oklch(var(--primary) / 0.14);
 }
 
 .pinned-message-icon {
@@ -692,27 +686,10 @@ main.is-messenger-page {
   color: oklch(var(--foreground));
 }
 
-.pinned-message-jump {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: none;
-  background: transparent;
-  color: oklch(var(--muted-foreground));
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background-color 0.15s ease;
-}
-
-.pinned-message-jump:hover {
-  background: oklch(var(--primary) / 0.12);
-  color: oklch(var(--primary));
-}
-
-/* ── Message scroll area ── */
+/* ── Message scroll area ──
+   Plain natively-scrolling container: the list is a normal column of rows and
+   the browser owns scrolling. No virtual spacer, no absolutely-positioned
+   items, no scroll engine. */
 
 .message-scroll-wrap {
   min-width: 0;
@@ -731,27 +708,24 @@ main.is-messenger-page {
   overflow-x: clip;
   padding: 0;
   position: relative;
-  overflow-anchor: none;
   overscroll-behavior-y: contain;
   scrollbar-gutter: stable;
   -webkit-overflow-scrolling: touch;
 }
 
-/* The virtual list is a positioned spacer of the full content height; items
-   are absolutely positioned inside it (top: header + row.start). The gutter
-   lives on the item so bubbles fit the viewport width. */
-.message-virtual-list {
+.message-list {
   /* Side inset of every message row. Kept to a hairline: bubbles should reach
      the edge, with just enough so a shadow/border is not clipped. */
   --message-gutter: 2px;
-  position: relative;
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
   max-width: 100%;
+  /* Gap under the last message so a bubble never touches the composer. */
+  padding-bottom: 12px;
 }
 
-.message-virtual-item {
+.message-row {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -759,19 +733,7 @@ main.is-messenger-page {
   padding-inline: var(--message-gutter);
 }
 
-/* Bottom gap between the last message and the composer. A list element so it
-   participates in the scroll math and stays visible at the bottom — scroller
-   padding alone would sit below the fold. */
-.message-list-footer {
-  height: 12px;
-}
-
-/* Error banner + virtualized message list share one grid row. position:
-   relative anchors the scroll-to-bottom FAB and the "N new messages" pill to
-   this area, so they float above the composer at whatever height it is — when
-   the reply/edit banner or attachment preview grows the composer, the buttons
-   rise with the messages area instead of staying put and covering the
-   composer's close (X) button. */
+/* Error banner + message list share one grid row. */
 .chat-messages-area {
   position: relative;
   display: flex;
@@ -909,17 +871,6 @@ main.is-messenger-page {
   background: oklch(var(--card));
   overflow-wrap: anywhere;
   position: relative;
-}
-
-.message-bubble.is-new {
-  /* One-shot entrance for live arrivals: transform-only, so it never affects
-     layout/measurement and cannot shift the virtual list. */
-  animation: bubble-in 0.24s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes bubble-in {
-  from { opacity: 0; transform: translateY(10px) scale(0.96); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .message-bubble.is-mine {
@@ -1621,10 +1572,7 @@ main.is-messenger-page {
 .chat-panel.has-message-menu .notes-key-banner,
 .chat-panel.has-message-menu .notes-filter-bar,
 .chat-panel.has-message-menu .notes-pinned-section .notes-section-heading,
-.chat-panel.has-message-menu .msg-history-header,
-.chat-panel.has-message-menu .message-list-footer,
-.chat-panel.has-message-menu .scroll-to-bottom-btn,
-.chat-panel.has-message-menu .message-virtual-item:not(.is-menu-host),
+.chat-panel.has-message-menu .message-row:not(.is-menu-host),
 .chat-panel.has-message-menu .notes-pinned-item:not(.is-menu-host) {
   filter: blur(6px) brightness(0.85);
   opacity: 0.55;
@@ -1636,7 +1584,7 @@ main.is-messenger-page {
 
 /* The selected message's row keeps a class for the blur exclusion; the
    visible copy floats in .msg-action-lift above everything. */
-.chat-panel.has-message-menu .message-virtual-item.is-menu-host,
+.chat-panel.has-message-menu .message-row.is-menu-host,
 .chat-panel.has-message-menu .notes-pinned-item.is-menu-host {
   position: relative;
   z-index: 55;
@@ -2834,60 +2782,6 @@ main.is-messenger-page {
   background: oklch(var(--destructive) / 0.15);
 }
 
-/* ── Scroll to bottom FAB ── */
-
-.scroll-to-bottom-btn {
-  position: absolute;
-  /* Anchored to .chat-messages-area, which ends above the in-flow composer
-     (grid row auto below it) — a fixed 12px keeps it clear of the bar at any
-     composer height (banners, attachments, full mode). */
-  bottom: 12px;
-  right: 18px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: 1px solid oklch(var(--border));
-  border-radius: 50%;
-  background: oklch(var(--card));
-  color: oklch(var(--foreground));
-  cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
-  z-index: 5;
-  transition: background-color 0.15s ease;
-}
-
-.scroll-to-bottom-btn:hover {
-  background: oklch(var(--thread-hover));
-}
-
-/* Unread count badge on the FAB — replaces the centered "N новых сообщений"
-   pill, so the scroll affordance and the count live in one place
-   (Telegram-style). The button itself is absolutely positioned, so it serves
-   as the badge's containing block. */
-.scroll-to-bottom-badge {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid oklch(var(--card));
-  border-radius: 999px;
-  background: oklch(var(--destructive));
-  color: oklch(var(--destructive-foreground));
-  font-size: 10px;
-  font-weight: 700;
-  pointer-events: none;
-  user-select: none;
-  animation: fade-in-scale 0.15s ease;
-}
-
 /* ── User info panel (slide-out from right) ── */
 
 .user-info-panel-backdrop {
@@ -3296,12 +3190,9 @@ main.is-messenger-page {
     height: 32px;
   }
 
-  .message-list-footer {
-    height: 10px;
-  }
-
-  .message-virtual-list {
+  .message-list {
     --message-gutter: 2px;
+    padding-bottom: 10px;
   }
 
   .chat-panel.is-empty .chat-empty-state {
@@ -3379,50 +3270,6 @@ main.is-messenger-page {
     width: 38px;
     height: 38px;
   }
-}
-
-/* ── History header (top of the message list) ──
-   Fixed-height box in all states (loading spinner / idle spacer / end of
-   history) so the header never shifts the items below it during prepends. */
-
-.msg-history-header {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 34px;
-  min-height: 34px;
-}
-
-.msg-history-loader {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: oklch(var(--muted-foreground));
-  animation: msg-history-fade-in 0.15s ease-out;
-}
-
-.msg-history-loader-spinner {
-  width: 13px;
-  height: 13px;
-  border: 2px solid oklch(var(--border));
-  border-top-color: oklch(var(--primary));
-  border-radius: 50%;
-  animation: msg-history-spin 0.8s linear infinite;
-}
-
-.msg-history-end-label {
-  font-size: 12px;
-  color: oklch(var(--muted-foreground) / 0.8);
-}
-
-@keyframes msg-history-spin {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes msg-history-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
 }
 
 /* ── Notes (Заметки) — personal E2E-encrypted self-chat ───────────────────── */

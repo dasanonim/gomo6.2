@@ -1,7 +1,8 @@
 // ─── ES2022 API polyfills ────────────────────────────────────────────────────
 //
 // Some bundled dependencies (e.g. @tanstack/react-virtual, which powers the
-// messenger message list) call `Object.hasOwn()`. That API landed in ES2022
+// virtualized chat lists — the messenger conversation list and GomoSub
+// channels) call `Object.hasOwn()`. That API landed in ES2022
 // and is missing on older mobile browsers / WebViews (iOS Safari < 15.4,
 // older Android). Without a polyfill the messenger crashes on open with
 // "Object.hasOwn is not a function".

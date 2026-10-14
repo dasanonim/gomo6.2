@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, Folder, Lock, MessageCircle, NotebookPen, Pin, Gift, FileUp } from "lucide-react";
+import { ArrowLeft, Folder, Lock, MessageCircle, NotebookPen, Pin, Gift, FileUp } from "lucide-react";
 import { toast } from "sonner";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { UserBadge } from "@/components/UserBadge";
@@ -12,7 +12,7 @@ import { MessageBubble } from "./MessageBubble";
 import { MessageComposer } from "./MessageComposer";
 import { UserInfoPanel } from "./UserInfoPanel";
 import { parseGiftContent, GiftDetailDialog } from "./MessageContent";
-import { MessageList, type MessageListHandle } from "./MessageList";
+import { MessageList } from "./MessageList";
 import { NotesSettingsDialog } from "./NotesSettingsDialog";
 import { NotesOrganizeDialog } from "./NotesOrganizeDialog";
 import { hasNotesKey } from "@/utils/notesCrypto";
@@ -56,8 +56,6 @@ export const ChatView = memo(function ChatView({
   const deleteMessage = useMessengerStore((s) => s.deleteMessage);
   const togglePin = useMessengerStore((s) => s.togglePin);
   const toggleNotesPin = useMessengerStore((s) => s.toggleNotesPin);
-
-  const messageListRef = useRef<MessageListHandle>(null);
 
   const [draft, setDraft] = useState("");
   const [pinnedText, setPinnedText] = useState<string | null>(null);
@@ -277,9 +275,6 @@ export const ChatView = memo(function ChatView({
       setDraft("");
       setReplyToMessage(null);
       setPendingAttachments([]);
-      // Always bring the author back to the bottom so their latest album part is
-      // visible, even when they were reading history.
-      requestAnimationFrame(() => messageListRef.current?.scrollToBottom());
     } finally {
       batchSendingRef.current = false;
       setIsBatchSending(false);
@@ -313,21 +308,15 @@ export const ChatView = memo(function ChatView({
     setDraft("");
   }, [editMessage, editingContent]);
 
-  const scrollToPinned = useCallback(() => {
-    const pid = conversation?.pinned_message_id;
-    if (!pid) return;
-    messageListRef.current?.scrollToMessage(pid);
-  }, [conversation?.pinned_message_id]);
-
   const renderMessage = useCallback(
     (
       msg: MessageView,
       prev: MessageView | null,
-      extras: { dateLabel: string | null; isConsecutive: boolean; isNew: boolean },
+      extras: { dateLabel: string | null; isConsecutive: boolean },
     ) => {
       void language;
       if (!conversation || !me) return null;
-      const { dateLabel, isConsecutive: isGrouped, isNew } = extras;
+      const { dateLabel, isConsecutive: isGrouped } = extras;
       const convReceipts = receipts.get(conversation.id) ?? [];
       const peerReceipt = convReceipts.find((r) => r.message_id === msg.id && r.user_id !== me.id) ?? null;
       const quoted = msg.parent_message_id
@@ -382,7 +371,6 @@ export const ChatView = memo(function ChatView({
             isConsecutive={isGrouped}
             isPinned={conversation.pinned_message_id === msg.id}
             isGroup={conversation.is_group}
-            isNew={isNew}
             notesControls={Boolean(conversation.is_notes)}
             onNotesOrganize={conversation.is_notes ? (m) => setOrganizeMessage(m) : undefined}
             onEdit={handleStartEdit}
@@ -470,14 +458,11 @@ export const ChatView = memo(function ChatView({
 
         {/* Pinned message banner — below topbar, above messages */}
         {conversation.pinned_message_id && pinnedText && (
-          <div className="pinned-message-banner" onClick={scrollToPinned}>
+          <div className="pinned-message-banner">
             <div className="pinned-message-icon"><Pin size={12} /></div>
             <div className="pinned-message-content">
               <p className="pinned-message-text">{pinnedText}</p>
             </div>
-            <button type="button" className="pinned-message-jump" title="Перейти">
-              <ChevronDown size={14} />
-            </button>
           </div>
         )}
 
@@ -515,7 +500,6 @@ export const ChatView = memo(function ChatView({
                     {renderMessage(msg, prev, {
                       dateLabel: null,
                       isConsecutive: isConsecutive(prev, msg),
-                      isNew: false,
                     })}
                   </div>
                 );
@@ -577,7 +561,6 @@ export const ChatView = memo(function ChatView({
         ) : (
           <MessageList
             key={conversation.id}
-            ref={messageListRef}
             renderMessage={renderMessage}
             messagesOverride={visibleMessages}
           />

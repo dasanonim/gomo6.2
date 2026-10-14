@@ -30,7 +30,6 @@ vi.mock("@/stores/messengerStore", () => ({
   selectSelectedConversation: (s: any) =>
     s.conversations.find((c: any) => c.id === s.selectedConversationId) ?? null,
   queueMarkDelivered: vi.fn(),
-  queueMarkRead: vi.fn(),
 }));
 
 vi.mock("@/components/PentagramLoader", () => ({
@@ -94,7 +93,7 @@ vi.mock("./MessageList", () => ({
           {renderMessage(
             msg,
             index > 0 ? messagesOverride[index - 1] : null,
-            { dateLabel: null, isConsecutive: false, isNew: false }
+            { dateLabel: null, isConsecutive: false }
           )}
         </div>
       ))}
@@ -253,7 +252,9 @@ describe("ChatView", () => {
       render(<ChatView {...defaultProps} />);
       // "Привет" appears both in the message bubble and the pinned banner
       expect(screen.getAllByText("Привет").length).toBeGreaterThanOrEqual(2);
-      expect(screen.getByRole("button", { name: "Перейти" })).toBeInTheDocument();
+      // The banner is informational only — the "jump to the pinned message"
+      // affordance went away with the scroll system.
+      expect(screen.queryByRole("button", { name: "Перейти" })).not.toBeInTheDocument();
     });
 
     it("renders the error banner and dismisses it", () => {
