@@ -14,11 +14,15 @@
 #   - a global topic in the «Игры / ПК» раздел with a handful of posts
 #     (images + likes)
 #   - wall posts on the demo profile (own + from friends)
-#   - a demo<->alice direct conversation with a few messages
+#   - a LONG demo<->alice direct conversation (~200 messages, alternating the
+#     two users) so the messenger scroll, history paging, prepend stability and
+#     the "N new" pill can be exercised on a device
 #
 # Environment:
 #   GOMO6_BASE_URL   backend base URL        (default http://localhost:8080)
 #   SEED_PASSWORD    password for demo users  (default demo123456)
+#   SEED_MESSAGES    messages in the long conversation (default 200; keep <=220
+#                    — the messenger write limit is 120 req/min per user)
 # =============================================================================
 
 set -euo pipefail
@@ -280,23 +284,72 @@ else
     note "wall posts already seeded"
 fi
 
-# ── Direct conversation ─────────────────────────────────────────────────────
+# ── Direct conversation (demo ↔ alice) — long, for scroll/pagination ────────
+# A long thread so the messenger scroll, history paging (50/page), prepend
+# stability and the "N new" pill can actually be exercised on a device.
+# SEED_MESSAGES (default 200) is split evenly between the two users — keep it
+# ≤ 220: the messenger write limit is 120 req/min per user.
 ok "direct conversation (demo ↔ alice)"
 conv_id="$(req POST /api/v1/messenger/conversations "$DEMO_TOKEN" "$(mkjson user_id "${U_ID[1]}")" | jq_get data.conversation_id)"
 if [ -n "$conv_id" ]; then
-    have="$(req_get "/api/v1/messenger/conversations/$conv_id/messages" "$DEMO_TOKEN" | jq_get data.0.id)"
-    if [ -z "$have" ]; then
-        send_msg() { # token conversation_id content
-            req POST "/api/v1/messenger/conversations/$2/messages" "$1" \
-                "$(mkjson content "$3" client_id "$(uuid)")" >/dev/null || true
-        }
-        send_msg "$DEMO_TOKEN" "$conv_id" "Привет, Алиса! Это демо-переписка для UI мессенджера."
-        send_msg "${U_TOKEN[1]}" "$conv_id" "Привет! Отлично, тут проверим бабблы, аватары и время."
-        send_msg "$DEMO_TOKEN" "$conv_id" "Ага. И ещё длинное сообщение, чтобы проверить перенос строк и ширину пузыря на узких экранах."
-        note "3 messages"
+    target="${SEED_MESSAGES:-200}"
+    MARKER="— конец демо-переписки —"
+    # Idempotency: the end marker is the last message, so the newest page
+    # (default 50, chronological) always contains it once seeded.
+    seeded="$(req_get "/api/v1/messenger/conversations/$conv_id/messages" "$DEMO_TOKEN" | python3 -c '
+import sys, json
+try:
+    data = json.load(sys.stdin).get("data", [])
+    print("yes" if any("конец демо-переписки" in (m.get("content") or "") for m in data) else "")
+except Exception:
+    print("")
+')"
+    if [ -n "$seeded" ]; then
+        note "long conversation already seeded"
     else
-        note "conversation already has messages"
+        send_msg() { # token content
+            req POST "/api/v1/messenger/conversations/$conv_id/messages" "$1" \
+                "$(mkjson content "$2" client_id "$(uuid)")" >/dev/null || true
+        }
+        # A pool of varied lines — short, long and multi-line — so bubbles,
+        # wrapping, heights and date grouping differ across the thread.
+        LINES=(
+            "Привет! Наконец-то проверим мессенджер по-нормальному."
+            "Ага. Тут длинная переписка, чтобы проскроллить вверх и подгрузить историю."
+            $'Две строки в одном сообщении:\nвторая строка для проверки переносов.'
+            "Как тебе новый скролл? Раньше вроде дёргался."
+            "Пока норм — надо на телефоне посмотреть, там всё иначе."
+            "Отправь что-нибудь, пока я наверху — хочу увидеть пилюлю «новые сообщения»."
+            "Кстати, вот длинное сообщение, чтобы проверить ширину пузыря и перенос строк на узком экране телефона — иногда это самое проблемное место во всём интерфейсе."
+            "Ок."
+            "Ещё одно короткое."
+            "Проверяем группировку сообщений: подряд идущие от одного автора должны липнуть без имени."
+            "И реакцию списка на новые сообщения, когда я внизу."
+            $'Многострочное:\nстрока два\nстрока три — проверяем высоту и отступы.'
+            "Как думаешь, якорь при подгрузке истории держит позицию?"
+            "Должен — это и есть главный тест: листаешь вверх, история подгружается, а текст не прыгает."
+            "Давай ещё пачку сообщений, чтобы точно было больше двух страниц."
+            "Хорошо 👍"
+            "Ещё 👍"
+            "И ещё."
+            "Проверка времени: сообщения идут подряд, время одинаковое."
+            "Проверим и «Заметки» заодно, там тот же список."
+            "И закреплённое сообщение — тап должен перевести к нему."
+            "Проверка эмодзи и кириллицы: привет, мир! 🚀🔥"
+            "Последнее на сегодня."
+            "Продолжим."
+        )
+        count=0
+        for ((i = 0; i < target; i++)); do
+            who=$(( i % 2 )) # 0 = demo, 1 = alice — alternate to stay under the per-user limit
+            send_msg "${U_TOKEN[$who]}" "${LINES[$(( i % ${#LINES[@]} ))]}"
+            count=$(( count + 1 ))
+        done
+        send_msg "${U_TOKEN[0]}" "$MARKER"
+        note "$count messages + end marker"
     fi
+else
+    die "cannot open the demo↔alice conversation"
 fi
 
 # ── Done ────────────────────────────────────────────────────────────────────
