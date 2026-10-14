@@ -212,11 +212,12 @@ describe("MessageList virtualization", () => {
     // getScrollElement returns the scroller element.
     const getScrollElement = h.virtualizerOpts.getScrollElement as () => HTMLElement | null;
     expect(getScrollElement()?.classList.contains("message-scroll")).toBe(true);
-    // Chat mode (the scroll physics are the library's job now): the bottom is
-    // the stable edge, appends follow only from the bottom, and the fixed
-    // history header is the scroll margin so row offsets match the DOM.
-    expect(h.virtualizerOpts.anchorTo).toBe("end");
-    expect(h.virtualizerOpts.followOnAppend).toBe(true);
+    // The virtualizer only windows the list; scroll position is owned by the
+    // component (synchronous prepend compensation + bottom pin), so the
+    // library's own anchoring is deliberately left off. The fixed history
+    // header is the scroll margin so row offsets match the DOM.
+    expect(h.virtualizerOpts.anchorTo).toBeUndefined();
+    expect(h.virtualizerOpts.followOnAppend).toBeUndefined();
     expect(h.virtualizerOpts.scrollMargin).toBe(34);
     expect(h.virtualizerOpts.scrollEndThreshold).toBe(80);
   });

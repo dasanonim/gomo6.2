@@ -244,16 +244,16 @@ export const MessageList = memo(
     // message later replaced by its server twin keeps its virtual slot.
     const messageKey = useCallback((m: MessageView) => m.client_id ?? m.id, []);
 
-    // Chat scroll, delegated to @tanstack/react-virtual's chat mode:
-    //   anchorTo: 'end'      — the bottom is the stable edge, so prepending
-    //                          older history keeps the visible message put and
-    //                          late measurements grow the bottom, not the top;
-    //   followOnAppend: true — new messages pin to the bottom only while the
-    //                          user is already there;
-    //   scrollEndThreshold   — how close to the bottom counts as "there";
-    //   scrollMargin         — the fixed history header above the rows, so the
-    //                          virtualizer's offsets match the DOM (rows are
-    //                          positioned at `row.start`).
+    // The virtualizer only WINDOWS the list; ALL scroll position is owned by
+    // this component (one mechanism, no fighting):
+    //   - prepends are compensated synchronously in a layout effect (below);
+    //   - the bottom is pinned by this component while the user is there;
+    //   - the library's own `anchorTo: 'end'` is deliberately NOT used: its
+    //     correction runs on a later commit and, on iOS, defers while a
+    //     finger/momentum is active — together with our correction the two
+    //     fought and produced full-page jumps (measured 2909px).
+    // `scrollMargin` is the fixed history header above the rows, so the
+    // virtualizer's offsets match the DOM (rows are positioned at `row.start`).
     const virtualizer = useVirtualizer({
       count: messages.length,
       getScrollElement: () => scrollerRef.current,
@@ -261,8 +261,6 @@ export const MessageList = memo(
         estimateMessageHeight(messages[index], messages[index - 1] ?? null, isGroupConversation),
       overscan: OVERSCAN,
       getItemKey: (index) => messageKey(messages[index]),
-      anchorTo: "end",
-      followOnAppend: true,
       scrollEndThreshold: SCROLL_END_THRESHOLD,
       scrollMargin: HISTORY_HEADER_HEIGHT,
     });
@@ -302,13 +300,23 @@ export const MessageList = memo(
       // was prepended. Put the anchored message back where it was.
       if (prevFirstKey !== null && firstKey !== prevFirstKey && !isAtBottomRef.current) {
         const anchor = anchorRef.current;
-        const index = anchor ? messages.findIndex((m) => m.id === anchor.messageId) : -1;
-        if (anchor && index >= 0) {
-          const offsetInfo = virtualizer.getOffsetForIndex(index, "start");
-          if (offsetInfo) {
-            const target = offsetInfo[0] + anchor.offset;
-            if (Math.abs(el.scrollTop - target) > 1) el.scrollTop = target;
-          }
+        // Read the anchor's position from the DOM, not the virtualizer: its
+        // cached measurements lag this commit, which made the computed target
+        // equal the current scrollTop (a no-op) and the shift appear a frame
+        // later as a full-page jump (measured 2909px).
+        const anchorEl = anchor
+          ? el.querySelector<HTMLElement>(`[data-message-id="${anchor.messageId}"]`)
+          : null;
+        if (anchor && anchorEl) {
+          const itemTop =
+            anchorEl.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+          const target = itemTop - anchor.offset;
+          scrollDebugNote(
+            `prepend compensate itemTop=${Math.round(itemTop)} target=${Math.round(target)} st=${Math.round(el.scrollTop)}`,
+          );
+          if (Math.abs(el.scrollTop - target) > 1) el.scrollTop = target;
+        } else {
+          scrollDebugNote(`prepend NOT compensated anchor=${anchor?.messageId ?? "null"}`);
         }
       }
 
@@ -410,6 +418,17 @@ export const MessageList = memo(
 
     const totalSize = virtualizer.getTotalSize();
 
+    // ── Bottom pin ───────────────────────────────────────────────────────
+    // While the user is at the bottom, keep the newest message at the bottom
+    // across appends and late measurements. This is the component's job now
+    // that the library's `anchorTo: 'end'` is off.
+    useLayoutEffect(() => {
+      const el = scrollerRef.current;
+      if (!el || !isAtBottomRef.current) return;
+      const max = el.scrollHeight - el.clientHeight;
+      if (Math.abs(el.scrollTop - max) > 1) el.scrollTop = max;
+    }, [messages, totalSize, virtualizer.scrollRect?.height, scrollerRef]);
+
     // ── Report read receipts after the scroll position has settled ───────
     // handleScroll also reports on scroll events.
     useLayoutEffect(() => {
@@ -425,7 +444,9 @@ export const MessageList = memo(
       if (!anchor || !conversationId) return;
       const index = messages.findIndex((m) => m.id === anchor.messageId);
       if (index >= 0) {
-        scrollDebugNote(`restore jump index=${index} offset=${Math.round(anchor.offset)}`);
+        scrollDebugNote(
+          `restore jump index=${index} offset=${Math.round(anchor.offset)} target=${Math.round(virtualizer.getOffsetForIndex(index, "start")?.[0] ?? -1)} count=${messages.length}`,
+        );
         virtualizer.scrollToIndex(index, { align: "start" });
         restoreAnchorRef.current = null;
         isAtBottomRef.current = false;
