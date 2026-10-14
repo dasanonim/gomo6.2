@@ -55,8 +55,13 @@ function mockConv(overrides: Partial<ConversationView> = {}): ConversationView {
 }
 
 function mockMsg(overrides: Partial<MessageView> = {}): MessageView {
+  // `client_id` is the canonical message identity (client_id || id) and the
+  // backend enforces UNIQUE(conversation_id, client_id), so the fixture must
+  // mint a distinct one per message — a shared constant would make distinct
+  // messages collapse into a single row.
+  const id = overrides.id ?? "msg-1";
   return {
-    id: "msg-1",
+    id,
     conversation_id: "conv-1",
     sender_user_id: "u1",
     parent_message_id: null,
@@ -65,7 +70,7 @@ function mockMsg(overrides: Partial<MessageView> = {}): MessageView {
     is_deleted: false,
     edited_at: null,
     sent_at: "2025-06-01T12:00:00Z",
-    client_id: "c1",
+    client_id: id,
     ...overrides,
   };
 }
