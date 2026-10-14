@@ -7,7 +7,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { giftImageUrl } from "@/utils/storage";
 import { useMessengerStore, selectSelectedConversation, queueMarkDelivered } from "@/stores/messengerStore";
 import { useLanguageStore } from "@/stores/languageStore";
-import { formatPresence, getInitials, getUserColorClass } from "./utils";
+import { formatPresence, getGroupInitials, getInitials, getUserColorClass } from "./utils";
 import { MessageBubble } from "./MessageBubble";
 import { MessageComposer } from "./MessageComposer";
 import { UserInfoPanel } from "./UserInfoPanel";
@@ -432,7 +432,7 @@ export const ChatView = memo(function ChatView({
                   <span className="notes-avatar-icon"><NotebookPen size={18} /></span>
                 </div>
               ) : conversation.is_group ? (
-                <span>{conversation.group_name ? conversation.group_name.slice(0, 2).toUpperCase() : "ГР"}</span>
+                <span>{getGroupInitials(conversation.group_name)}</span>
               ) : conversation.other_avatar_url ? (
                 <UserAvatar
                   src={conversation.other_avatar_url}

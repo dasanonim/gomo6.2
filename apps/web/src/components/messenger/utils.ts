@@ -56,6 +56,10 @@ export const formatPresence = (isOnline: boolean | null, lastSeenAt: string | nu
 
 export const getInitials = (username: string): string => username.slice(0, 2).toUpperCase();
 
+/** The 2-letter avatar text for a group, with a fallback when it is unnamed. */
+export const getGroupInitials = (name: string | null | undefined): string =>
+  name ? name.slice(0, 2).toUpperCase() : "ГР";
+
 const USER_COLORS = [
   "text-red-500",
   "text-blue-500",

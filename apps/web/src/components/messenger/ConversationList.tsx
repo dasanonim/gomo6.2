@@ -6,7 +6,7 @@ import { UserBadge } from "@/components/UserBadge";
 import { UserAvatar } from "@/components/UserAvatar";
 import { useMessengerStore } from "@/stores/messengerStore";
 import { useLanguageStore } from "@/stores/languageStore";
-import { formatConversationDate, formatPresence, getInitials } from "./utils";
+import { formatConversationDate, formatPresence, getGroupInitials, getInitials } from "./utils";
 import { messengerConversationPreview } from "./messengerRichTextUtils";
 import { NewChatDialog } from "./NewChatDialog";
 import type { ConversationView } from "./types";
@@ -60,7 +60,7 @@ const ConversationCard = memo(function ConversationCard({
       <div className="avatar-wrapper">
         <div className="avatar">
           {conversation.is_group ? (
-            <span>{conversation.group_name ? conversation.group_name.slice(0, 2).toUpperCase() : "ГР"}</span>
+            <span>{getGroupInitials(conversation.group_name)}</span>
           ) : conversation.other_avatar_url ? (
             <UserAvatar
               src={conversation.other_avatar_url}
