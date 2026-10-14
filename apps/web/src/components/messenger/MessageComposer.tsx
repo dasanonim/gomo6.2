@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { SendHorizontal, X, Pencil, CornerDownRight, Paperclip, Image as ImageIcon, FileText, Mic, Smile, Maximize2, Minimize2, Camera, ChevronUp, ChevronDown } from "lucide-react";
+import { SendHorizontal, X, Pencil, CornerDownRight, Paperclip, Image as ImageIcon, FileText, Smile, Maximize2, Minimize2, Camera, ChevronUp, ChevronDown } from "lucide-react";
 import { GomoRichEditor, Toolbar, type GomoRichEditorHandle } from "@/components/GomoRichEditor";
 import { EmojiPicker } from "@/components/EmojiPicker";
 
@@ -16,6 +16,7 @@ import {
   messengerPlainPreview,
 } from "./messengerRichTextUtils";
 import type { Attachment, MessageView, UploadingFile } from "./types";
+import { formatFileSize, getAttachmentIcon } from "./core/display";
 
 const MAX_LENGTH = 4000;
 const TYPING_DEBOUNCE_MS = 1000;
@@ -60,20 +61,6 @@ interface Props {
   /** Starts uploading files; progress is reported back via `uploadingFiles`. */
   onAttachFiles?: (files: File[]) => void;
   placeholder?: string;
-}
-
-function getAttachmentIcon(type: Attachment["type"]) {
-  switch (type) {
-    case "image": return <ImageIcon size={16} />;
-    case "audio": return <Mic size={16} />;
-    default: return <FileText size={16} />;
-  }
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /**

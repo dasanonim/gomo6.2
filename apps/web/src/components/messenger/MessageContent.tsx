@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FileText, Image as ImageIcon, Mic, Video } from "lucide-react";
+import { formatFileSize, getAttachmentIcon } from "./core/display";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { storageUrl, giftImageUrl } from "@/utils/storage";
 import {
@@ -116,21 +116,6 @@ interface MessageContentProps {
   content: string;
   attachments?: Attachment[];
   hasQuotedMessage?: boolean;
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function getAttachmentIcon(type: Attachment["type"]) {
-  switch (type) {
-    case "image": return <ImageIcon size={16} />;
-    case "video": return <Video size={16} />;
-    case "audio": return <Mic size={16} />;
-    default: return <FileText size={16} />;
-  }
 }
 
 function AttachmentView({ attachment, fitToViewport = false }: { attachment: Attachment; fitToViewport?: boolean }) {
