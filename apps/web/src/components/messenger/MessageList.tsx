@@ -15,7 +15,12 @@ import { useMessengerStore, queueMarkRead } from "@/stores/messengerStore";
 import type { MessageView } from "./types";
 import { isConsecutive, getDateSeparator } from "./messageListUtils";
 import { getAttachmentAspectRatio } from "./attachmentMedia";
-import { HISTORY_HEADER_HEIGHT, captureAnchor, virtualContentHeight } from "./core/scrollEngine";
+import {
+  HISTORY_HEADER_HEIGHT,
+  captureAnchor,
+  virtualContentHeight,
+  type ScrollAnchor,
+} from "./core/scrollEngine";
 import { isScrollDebugEnabled, scrollDebugNote, startScrollDebug } from "./core/scrollDebug";
 import {
   clearScrollPosition,
@@ -28,6 +33,7 @@ import {
 // Layout geometry lives in ./core/scrollEngine; the scroll physics (bottom pin,
 // live anchor, prepend stability) live in @tanstack/react-virtual's chat mode.
 const TOP_LOAD_ZONE = 300;        // px from the top that arms the history loader
+const LOAD_MORE_COOLDOWN_MS = 800; // min gap between history loads (a load shifts scrollTop)
 const OVERSCAN = 12;              // items rendered beyond the viewport (ТЗ: 8–15)
 const NEW_MESSAGE_ANIMATION_MS = 1200; // how long an incoming message may play its entrance
 // How close to the bottom still counts as "at the bottom" for the pin and the
@@ -218,6 +224,12 @@ export const MessageList = memo(
     // Whether a restore was pending when the chat opened — the restore effect
     // clears restoreAnchorRef, so the open-at-bottom effect needs its own flag.
     const hadRestoreAtMountRef = useRef(restoreAnchorRef.current !== null);
+    // The live anchor (top-most visible message + its offset above the viewport
+    // top), kept fresh so a prepend can be compensated in the SAME commit.
+    const anchorRef = useRef<ScrollAnchor | null>(null);
+    // The first message's identity at the previous commit — a change means
+    // older history was prepended (appends keep the first message).
+    const prevFirstKeyRef = useRef<string | null>(null);
 
     // DEV-only on-device scroll diagnostics (opt-in via localStorage, see
     // core/scrollDebug.ts). No-op in production builds.
@@ -271,6 +283,41 @@ export const MessageList = memo(
       return item.start < offset + (instance.options.scrollMargin ?? 0);
     };
 
+    // ── Synchronous prepend compensation ─────────────────────────────────
+    // The library's own end-anchoring adjusts scrollTop on a later commit and,
+    // on iOS, DEFERS the write while a finger/momentum is active
+    // (`applyScrollAdjustment` → `_iosDeferredAdjustment`). On the device log a
+    // prepended page therefore shifted the content by its full height —
+    // scrollTop jumped ~2.3–2.9k a frame after the DOM update (a visible
+    // "teleport"). Compensate HERE instead: a layout effect runs in the same
+    // commit as the new messages, before paint, so the shift is never shown.
+    useLayoutEffect(() => {
+      const el = scrollerRef.current;
+      if (!el) return;
+      const firstKey = messages.length > 0 ? messageKey(messages[0]) : null;
+      const prevFirstKey = prevFirstKeyRef.current;
+      prevFirstKeyRef.current = firstKey;
+
+      // A changed first message (with the view scrolled up) means older history
+      // was prepended. Put the anchored message back where it was.
+      if (prevFirstKey !== null && firstKey !== prevFirstKey && !isAtBottomRef.current) {
+        const anchor = anchorRef.current;
+        const index = anchor ? messages.findIndex((m) => m.id === anchor.messageId) : -1;
+        if (anchor && index >= 0) {
+          const offsetInfo = virtualizer.getOffsetForIndex(index, "start");
+          if (offsetInfo) {
+            const target = offsetInfo[0] + anchor.offset;
+            if (Math.abs(el.scrollTop - target) > 1) el.scrollTop = target;
+          }
+        }
+      }
+
+      // Refresh the anchor for the NEXT commit (this commit's final position).
+      anchorRef.current = isAtBottomRef.current
+        ? null
+        : captureAnchor(virtualizer.getVirtualItems(), el.scrollTop, (index) => messages[index]?.id);
+    }, [messages, virtualizer, messageKey]);
+
     // ── Read receipts: the "read line" (Telegram-style) ────────────────
     // The UI reports exactly ONE message per pass: the newest message fully
     // visible on screen. Everything above it was read; everything below the
@@ -316,26 +363,31 @@ export const MessageList = memo(
         if (atBottom) setNewMessageCount(0);
       }
 
-      // Persist / clear the session anchor for a later return to this chat.
+      // Keep the live anchor fresh for the synchronous prepend compensation,
+      // and persist / clear the session anchor for a later return to this chat.
+      const anchor = atBottom
+        ? null
+        : captureAnchor(virtualizer.getVirtualItems(), el.scrollTop, (index) => messages[index]?.id);
+      anchorRef.current = anchor;
       if (conversationId) {
-        if (atBottom) {
-          clearScrollPosition(conversationId);
-        } else {
-          const anchor = captureAnchor(virtualizer.getVirtualItems(), el.scrollTop, (index) => messages[index]?.id);
-          if (anchor) saveScrollPosition(conversationId, anchor);
-        }
+        if (atBottom) clearScrollPosition(conversationId);
+        else if (anchor) saveScrollPosition(conversationId, anchor);
       }
 
       reportVisibleReads();
 
+      // History loader. Never fire during iOS overscroll (negative scrollTop,
+      // the log showed `loadMore start st=-52`) — that loaded a page while the
+      // user was rubber-banding at the very top and shifted the content.
       const now = Date.now();
       if (
+        el.scrollTop > 0 &&
         el.scrollTop <= TOP_LOAD_ZONE &&
         hasMoreMessages &&
         !isLoadingMore &&
         !loadingMoreRef.current &&
         conversationId &&
-        now - lastLoadAtRef.current > 500
+        now - lastLoadAtRef.current > LOAD_MORE_COOLDOWN_MS
       ) {
         lastLoadAtRef.current = now;
         loadingMoreRef.current = true;

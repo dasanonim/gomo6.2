@@ -256,7 +256,8 @@ describe("MessageList virtualization", () => {
   it("loads older history when scrolled near the top", () => {
     h.storeState.messages = [makeMessage("a"), makeMessage("b")];
     const { scroller, rerender } = mountList();
-    stubScroller(scroller, { scrollHeight: 2000, scrollTop: 0, clientHeight: 400 });
+    // scrollTop must be > 0: the loader never fires during iOS overscroll.
+    stubScroller(scroller, { scrollHeight: 2000, scrollTop: 20, clientHeight: 400 });
     h.storeState.hasMoreMessages = true;
     rerender(<MessageList renderMessage={renderMessage} />);
     scrollScroller(scroller);
@@ -280,7 +281,7 @@ describe("MessageList virtualization", () => {
       resolveLoad = resolve;
     }));
     const { scroller } = mountList();
-    stubScroller(scroller, { scrollHeight: 2000, scrollTop: 0, clientHeight: 400 });
+    stubScroller(scroller, { scrollHeight: 2000, scrollTop: 20, clientHeight: 400 });
     scrollScroller(scroller);
     scrollScroller(scroller);
     expect(h.storeState.loadMoreMessages).toHaveBeenCalledTimes(1);
