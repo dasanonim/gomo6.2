@@ -336,6 +336,29 @@ describe("MessageList virtualization", () => {
     expect(metrics.scrollTop).toBe(766 + 72 - 400);
   });
 
+  it("settles to the exact bottom when content grows after the pin pass (issue #508)", async () => {
+    const base = Array.from({ length: 10 }, (_, i) => makeMessage(`m${i}`));
+    h.storeState.messages = base;
+    const { scroller, rerender } = mountList();
+    // 34 (header) + 10*72 + 12 (gap) = 766 content; viewport 400 → bottom = 366.
+    const metrics = stubScroller(scroller, { scrollHeight: 766, scrollTop: 366, clientHeight: 400 });
+    // A message arrives while at the bottom: the pin lands exactly on the
+    // bottom and starts the bounded settle window.
+    h.storeState.messages = [...base, makeMessage("new")];
+    metrics.scrollHeight = 766 + 72;
+    rerender(<MessageList renderMessage={renderMessage} />);
+    expect(metrics.scrollTop).toBe(766 + 72 - 400);
+
+    // A late layout change (measurement correction / image decode) grows the
+    // content AFTER that pass, with no React update in between. Without the
+    // settle loop a small un-scrolled gap would remain here.
+    metrics.scrollHeight = 766 + 72 + 40;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+    expect(metrics.scrollTop).toBe(766 + 72 + 40 - 400);
+  });
+
   it("keeps the view anchored when older messages are prepended while scrolled up", () => {
     const base = Array.from({ length: 20 }, (_, i) => makeMessage(`m${i}`));
     h.storeState.messages = base;
