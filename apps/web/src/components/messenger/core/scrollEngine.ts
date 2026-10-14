@@ -17,6 +17,15 @@ export const BOTTOM_GAP_HEIGHT = 12;
 export const AT_BOTTOM_SLACK = 12;
 /** px of anchor drift considered "already aligned". */
 export const ANCHOR_REALIGN_EPSILON = 2;
+/**
+ * Issue #508: after the pass that clamps to the bottom, the virtualizer may
+ * still land a late `measureElement` correction (or an image decode) a frame
+ * or two later. While the user is at the bottom the settle loop keeps
+ * re-clamping for this bounded window, stopping as soon as the target stops
+ * moving.
+ */
+export const PIN_SETTLE_MAX_MS = 700; // upper bound on the settle window
+export const PIN_SETTLE_EPSILON = 1;  // px of drift the settle loop still corrects
 
 /** The minimal virtual-row shape (a `@tanstack/react-virtual` item satisfies it). */
 export interface VirtualRow {

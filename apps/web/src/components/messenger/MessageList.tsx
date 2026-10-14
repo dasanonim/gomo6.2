@@ -15,35 +15,15 @@ import { useMessengerStore, queueMarkRead } from "@/stores/messengerStore";
 import type { MessageView } from "./types";
 import { isConsecutive, getDateSeparator } from "./messageListUtils";
 import { getAttachmentAspectRatio } from "./attachmentMedia";
-import {
-  getScrollPosition,
-  saveScrollPosition,
-  clearScrollPosition,
-} from "./scrollPosition";
-import {
-  ANCHOR_REALIGN_EPSILON,
-  HISTORY_HEADER_HEIGHT,
-  anchorScrollTop,
-  bottomTarget,
-  captureAnchor as captureAnchorFromRows,
-  isAtBottom as isAtBottomScroll,
-  virtualContentHeight,
-  type ScrollAnchor,
-} from "./core/scrollEngine";
+import { HISTORY_HEADER_HEIGHT, virtualContentHeight } from "./core/scrollEngine";
+import { useStickToBottom } from "./core/useStickToBottom";
 
 // ── List-local constants ──────────────────────────────────────────────────
-// Layout geometry (header/footer/slack/realign) lives in ./core/scrollEngine.
+// Layout geometry (header/footer/slack/realign) lives in ./core/scrollEngine;
+// the scroll position engine lives in ./core/useStickToBottom.
 const TOP_LOAD_ZONE = 300;        // px from the top that arms the history loader
 const OVERSCAN = 12;              // items rendered beyond the viewport (ТЗ: 8–15)
 const NEW_MESSAGE_ANIMATION_MS = 1200; // how long an incoming message may play its entrance
-// Issue #508: after the content/layout pass that clamps to the bottom, the
-// virtualizer may still land a late `measureElement` correction (or an image
-// decode) a frame or two later. Without another dependency change the pin
-// would never run again and a small un-scrolled gap stayed at the bottom.
-// While the user is at the bottom we therefore keep re-clamping for this short
-// bounded window, stopping as soon as the target stops moving.
-const PIN_SETTLE_MAX_MS = 700;   // upper bound on the settle window
-const PIN_SETTLE_EPSILON = 1;    // px of drift the settle loop still corrects
 
 // Extra heights (kept in sync with messenger.css) that sit INSIDE a virtual
 // item but are invisible to a content-only estimate. Without them every
@@ -135,23 +115,6 @@ function estimateMessageHeight(
 }
 
 /**
- * The scrollTop that places `anchor` back where it was captured. Uses the
- * virtualizer's offset lookup (not the rendered rows) so an anchor that is not
- * mounted yet — e.g. while history is being hunted — still resolves.
- */
-function anchorTarget(
-  virtualizer: ReturnType<typeof useVirtualizer>,
-  messages: MessageView[],
-  anchor: ScrollAnchor,
-): number | null {
-  const index = messages.findIndex((m) => m.id === anchor.messageId);
-  if (index < 0) return null;
-  const offset = virtualizer.getOffsetForIndex(index);
-  if (!offset) return null;
-  return anchorScrollTop(offset[0], anchor.offset);
-}
-
-/**
  * Owns the virtualized message list for the open conversation (@tanstack/react-virtual).
  *
  * The list is plain top-anchored content: index 0 = oldest message at the top,
@@ -216,33 +179,17 @@ export const MessageList = memo(
     //    no visual-viewport heuristics, no platform sniffing.
     const scrollerRef = useRef<HTMLDivElement | null>(null);
 
-    const [isAtBottom, setIsAtBottom] = useState(true);
     const [newMessageCount, setNewMessageCount] = useState(0);
     const [newMessageIds, setNewMessageIds] = useState<Set<string>>(() => new Set());
 
-    const isAtBottomRef = useRef(true);
-    // True while the user's finger is down on the scroller (touch or mouse).
-    // The bottom pin must yield to an active gesture: a message arriving
-    // between pointerdown and the first scroll event would otherwise yank the
-    // view back to the bottom. Cleared on pointerup/cancel.
-    const userDraggingRef = useRef(false);
-    // The live anchor: the message at the top edge of the viewport + offset.
-    // null while the user is at the bottom (the pin owns the position then).
-    const anchorRef = useRef<ScrollAnchor | null>(null);
-    // The session-saved anchor, captured once at mount and hunted until found.
-    const restoreAnchorRef = useRef<ScrollAnchor | null>(null);
     const loadingMoreRef = useRef(false);
     const lastLoadAtRef = useRef(0);
     const prevLastIdRef = useRef<string | null>(null);
     // Handles for the pending entrance-animation clear timers, so unmount
     // cancels them (a late setState after React is gone would throw).
     const entranceTimersRef = useRef<Set<number>>(new Set());
-    // Bottom-settle rAF handle + its bounds (see PIN_SETTLE_MAX_MS above).
-    const pinSettleRafRef = useRef<number | null>(null);
-    const pinSettleDeadlineRef = useRef(0);
-    const pinSettleLastTargetRef = useRef(-1);
 
-    // Identity key matches the store's dedup key (id || client_id), so a temp
+    // Identity key matches the store's dedup key (client_id || id), so a temp
     // message later replaced by its server twin keeps its virtual slot.
     const messageKey = useCallback((m: MessageView) => m.client_id ?? m.id, []);
 
@@ -255,44 +202,25 @@ export const MessageList = memo(
       getItemKey: (index) => messageKey(messages[index]),
     });
 
-    // ── True bottom + self-healing settle (issue #508) ─────────────────
-    // Geometry lives in ./core/scrollEngine (bottomTarget/isAtBottom) — the
-    // component only supplies the DOM numbers and the virtualizer's height.
-    const bottomScrollTarget = useCallback(
-      (el: HTMLElement) => bottomTarget(el.scrollHeight, el.clientHeight, virtualizer.getTotalSize()),
-      [virtualizer],
-    );
-
-    const cancelBottomSettle = useCallback(() => {
-      if (pinSettleRafRef.current !== null) {
-        cancelAnimationFrame(pinSettleRafRef.current);
-        pinSettleRafRef.current = null;
-      }
-      pinSettleDeadlineRef.current = 0;
-      pinSettleLastTargetRef.current = -1;
-    }, []);
-
-    // Keeps re-clamping to the (moving) bottom for a short bounded window while
-    // the user is at the bottom. Yields immediately to a gesture and stops as
-    // soon as the target stops growing.
-    const settleToBottom = useCallback(() => {
-      if (pinSettleRafRef.current !== null) return;
-      pinSettleDeadlineRef.current = Date.now() + PIN_SETTLE_MAX_MS;
-      pinSettleLastTargetRef.current = -1;
-      const step = () => {
-        pinSettleRafRef.current = null;
-        const el = scrollerRef.current;
-        if (!el || !isAtBottomRef.current || userDraggingRef.current) return;
-        const target = bottomScrollTarget(el);
-        if (Math.abs(el.scrollTop - target) > PIN_SETTLE_EPSILON) el.scrollTop = target;
-        if (target === pinSettleLastTargetRef.current) return;
-        pinSettleLastTargetRef.current = target;
-        if (Date.now() < pinSettleDeadlineRef.current) {
-          pinSettleRafRef.current = requestAnimationFrame(step);
-        }
-      };
-      pinSettleRafRef.current = requestAnimationFrame(step);
-    }, [bottomScrollTarget]);
+    // Scroll position engine — the bottom pin, the live anchor, session restore
+    // and the issue-#508 settle loop all live in ./core/useStickToBottom.
+    const stick = useStickToBottom({
+      scrollerRef,
+      messages,
+      virtualizer,
+      conversationId,
+      // A return to the bottom clears the "N new messages" pill.
+      onAtBottomChange: () => setNewMessageCount(0),
+    });
+    const {
+      isAtBottom,
+      isAtBottomRef,
+      restoreAnchorRef,
+      handleScroll: handleStickScroll,
+      handlePointerDown,
+      handlePointerUp,
+      scrollToBottom,
+    } = stick;
 
     // ── Read receipts: the "read line" (Telegram-style) ────────────────
     // The UI reports exactly ONE message per pass: the newest message fully
@@ -323,55 +251,15 @@ export const MessageList = memo(
       if (readLine) queueMarkRead(conversationId, readLine.id, readLine.sent_at);
     }, [conversationId, meId, messages, virtualizer]);
 
-    // ── Scroll: at-bottom tracking + anchor capture + history loader ─────
-    const handlePointerDown = useCallback(() => {
-      // Any touch/click on the list means the user is about to take control of
-      // the position — the pin must stop clamping immediately, not after the
-      // first scroll event (a message arriving in between used to yank the
-      // view back to the bottom mid-gesture).
-      userDraggingRef.current = true;
-      cancelBottomSettle();
-    }, [cancelBottomSettle]);
-
-    const handlePointerUp = useCallback(() => {
-      userDraggingRef.current = false;
-    }, []);
-
+    // ── Scroll: the stick engine + the two list concerns that ride on it ──
+    // useStickToBottom owns the at-bottom tracking, the anchor and the settle
+    // loop; here we add the read line and the history loader.
     const handleScroll = useCallback(() => {
-      const el = scrollerRef.current;
-      if (!el) return;
-      const atBottom = isAtBottomScroll(el.scrollHeight, el.scrollTop, el.clientHeight);
-      if (atBottom !== isAtBottomRef.current) {
-        isAtBottomRef.current = atBottom;
-        setIsAtBottom(atBottom);
-        if (atBottom) setNewMessageCount(0);
-      }
-
-      if (atBottom) {
-        anchorRef.current = null;
-        if (conversationId) clearScrollPosition(conversationId);
-      } else {
-        const anchor = captureAnchorFromRows(
-          virtualizer.getVirtualItems(),
-          el.scrollTop,
-          (index) => messages[index]?.id,
-        );
-        anchorRef.current = anchor;
-        if (conversationId && anchor) saveScrollPosition(conversationId, anchor);
-      }
-
-      // A real user scroll releases the restore anchor — programmatic
-      // corrections land exactly on the target, so they never release it.
-      const restore = restoreAnchorRef.current;
-      if (restore) {
-        const target = anchorTarget(virtualizer, messages, restore);
-        if (target !== null && Math.abs(el.scrollTop - target) > 8) {
-          restoreAnchorRef.current = null;
-        }
-      }
-
+      handleStickScroll();
       reportVisibleReads();
 
+      const el = scrollerRef.current;
+      if (!el) return;
       const now = Date.now();
       if (
         el.scrollTop <= TOP_LOAD_ZONE &&
@@ -387,78 +275,17 @@ export const MessageList = memo(
           loadingMoreRef.current = false;
         });
       }
-    }, [hasMoreMessages, isLoadingMore, conversationId, loadMoreMessages, messages, virtualizer, reportVisibleReads]);
+    }, [
+      handleStickScroll,
+      reportVisibleReads,
+      scrollerRef,
+      hasMoreMessages,
+      isLoadingMore,
+      conversationId,
+      loadMoreMessages,
+    ]);
 
-    // ── Capture the saved position on (re)mount BEFORE the pin effect below —
-    // a passive effect would run after this layout effect and the anchor would
-    // never be applied on the very first messages render.
-    useLayoutEffect(() => {
-      if (restoreAnchorRef.current === null && conversationId) {
-        const saved = getScrollPosition(conversationId);
-        if (saved) restoreAnchorRef.current = { ...saved };
-      }
-    }, [conversationId]);
-
-    // ── Bottom pin / anchor stabilization ────────────────────────────────
-    // Re-runs whenever the list content or the viewport actually changes:
-    // prepends/appends (messages), measurement corrections (totalSize), and
-    // keyboard/URL-bar resizes (keyboardInset, viewportHeight). Three mutually
-    // exclusive modes:
-    //   1. session restore (jump to the saved anchor, then hand off),
-    //   2. bottom pin (at the bottom → clamp to the real bottom),
-    //   3. anchor re-align (scrolled up → keep the anchor message frozen).
     const totalSize = virtualizer.getTotalSize();
-    useLayoutEffect(() => {
-      const el = scrollerRef.current;
-      if (!el) return;
-
-      // Never fight an active scroll gesture. Writing scrollTop mid-drag or
-      // mid-momentum (while measurement corrections, prepends or appends keep
-      // changing totalSize) stutters the list — the JS correction races the
-      // browser's own scrolling every frame. virtualizer.isScrolling stays
-      // true until the gesture settles; userDraggingRef covers the window
-      // between pointerdown and the first scroll event.
-      if (virtualizer.isScrolling || userDraggingRef.current) return;
-
-      const restore = restoreAnchorRef.current;
-      if (restore) {
-        const target = anchorTarget(virtualizer, messages, restore);
-        if (target !== null) {
-          if (Math.abs(el.scrollTop - target) > 2) el.scrollTop = target;
-          // Hand off to the live anchor so subsequent measurement changes keep
-          // this exact message frozen instead of drifting.
-          anchorRef.current = { messageId: restore.messageId, offset: restore.offset };
-          restoreAnchorRef.current = null;
-          if (isAtBottomRef.current) {
-            isAtBottomRef.current = false;
-            setIsAtBottom(false);
-          }
-          return;
-        }
-        // The anchor is not loaded yet — history is being hunted in the
-        // background, so behave like a normal open (stay at the bottom) until
-        // the anchor arrives and this effect jumps to it.
-      }
-
-      if (isAtBottomRef.current) {
-        const target = bottomScrollTarget(el);
-        if (Math.abs(el.scrollTop - target) > 1) el.scrollTop = target;
-        // Late measurements land after this pass; keep re-clamping for a short
-        // bounded window so the bottom is exact (issue #508).
-        settleToBottom();
-        return;
-      }
-
-      const anchor = anchorRef.current;
-      if (!anchor) return;
-      const target = anchorTarget(virtualizer, messages, anchor);
-      if (target === null) return;
-      if (Math.abs(el.scrollTop - target) > ANCHOR_REALIGN_EPSILON) el.scrollTop = target;
-      // virtualizer.isScrolling is a dep too: a correction skipped mid-gesture
-      // (the guard above) must be applied the moment the gesture settles.
-      // scrollRect.height fires when a keyboard-resized shell shrinks/grows
-      // the scroller — the honest "the layout changed" signal for the pin.
-    }, [totalSize, messages, virtualizer, virtualizer.isScrolling, virtualizer.scrollRect?.height, bottomScrollTarget, settleToBottom]);
 
     // ── Report read receipts after the scroll position has settled ───────
     // Runs after the pin/anchor effect above so the viewport is final when the
@@ -485,7 +312,7 @@ export const MessageList = memo(
       loadMoreMessages(conversationId).finally(() => {
         loadingMoreRef.current = false;
       });
-    }, [messages, hasMoreMessages, conversationId, loadMoreMessages]);
+    }, [messages, hasMoreMessages, conversationId, loadMoreMessages, restoreAnchorRef]);
 
     // ── Realtime appends → "N new messages" pill + entrance animation ───
     // Messages that arrive while the user is at the bottom are visible, so
@@ -530,7 +357,7 @@ export const MessageList = memo(
         }
       }
       prevLastIdRef.current = lastId;
-    }, [messages]);
+    }, [messages, isAtBottomRef]);
 
     // Cancel any still-pending animation timers on unmount. Without this a
     // message arriving right before teardown leaves a timer that fires into a
@@ -541,30 +368,11 @@ export const MessageList = memo(
       return () => {
         for (const id of timers) window.clearTimeout(id);
         timers.clear();
-        cancelBottomSettle();
       };
-    }, [cancelBottomSettle]);
+    }, []);
 
     // ── Imperative API (send-scroll, pinned-message jump) ───────────────
-    const scrollToBottom = useCallback(() => {
-      // Explicitly returning to the bottom cancels any saved position.
-      restoreAnchorRef.current = null;
-      anchorRef.current = null;
-      if (conversationId) clearScrollPosition(conversationId);
-      const el = scrollerRef.current;
-      if (el) {
-        const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
-        if (typeof el.scrollTo === "function") {
-          el.scrollTo({ top: maxScrollTop, behavior: "smooth" });
-        } else {
-          el.scrollTop = maxScrollTop;
-        }
-      }
-      isAtBottomRef.current = true;
-      setIsAtBottom(true);
-      setNewMessageCount(0);
-    }, [conversationId]);
-
+    // `scrollToBottom` comes from useStickToBottom (it owns the anchor state).
     const scrollToMessage = useCallback(
       (messageId: string) => {
         const index = messages.findIndex((m) => m.id === messageId);
