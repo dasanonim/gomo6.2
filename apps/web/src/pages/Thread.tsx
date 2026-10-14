@@ -14,7 +14,7 @@ import { useTranslation } from "react-i18next";
 import { safeDate } from "@/utils/safeDate";
 import { Lightbox, type LightboxItem } from "@/components/Lightbox";
 import { UserBadge } from "@/components/UserBadge";
-import { Bell, BellOff, ChevronLeft, Edit3, MessageCircle, Share2, Trash2 } from "lucide-react";
+import { Bell, BellOff, ChevronLeft, Edit3, MessageCircle, Pin, PinOff, Share2, Trash2 } from "lucide-react";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { PostActionsMenu } from "@/components/PostActionsMenu";
 import { Poll } from "@/components/Poll";
@@ -40,6 +40,9 @@ import { ThreadCommentTree } from "@/components/thread/ThreadCommentTree";
 import { SectionIcon } from "@/components/topic/sectionIcons";
 import type { AttachmentMeta } from "@/types/forum";
 import { entityParam } from "@/utils/entityUrl";
+import {
+  useThreadPinToggle,
+} from "@/hooks/queries/useProfilePinnedThreads";
 
 interface ThreadWithExtras extends ThreadModel {
   content_json?: unknown;
@@ -134,6 +137,30 @@ const Thread = () => {
   const resolvedThreadId = thread?.id ?? "";
 
   const { data: isSubscribed = false } = useThreadSubscription(resolvedThreadId, user?.id);
+
+  // «Закрепить в профиле» (issue #518): any signed-in user can pin a thread —
+  // their own or somebody else's — into their own profile. The menu item lives
+  // here rather than in the owner block below, so it shows for every viewer.
+  const {
+    isPinned: isThreadPinned,
+    limitReached: pinnedLimitReached,
+    toggle: toggleThreadPin,
+  } = useThreadPinToggle(resolvedThreadId || undefined, user?.id);
+
+  const handleToggleThreadPin = async () => {
+    const outcome = await toggleThreadPin();
+    if (outcome.status === "ok") {
+      toast.success(
+        outcome.pinned ? t("thread.pinnedToProfile") : t("thread.unpinnedFromProfile"),
+      );
+      return;
+    }
+    // The cap is a normal, expected rejection — say why instead of the generic
+    // failure, and the hook has already refreshed the (stale) pin list.
+    toast.error(
+      outcome.status === "limit" ? t("thread.pinLimitReached") : t("thread.pinProfileError"),
+    );
+  };
 
   // Record the open in the viewer's «История» (once the id + viewer are known).
   useEffect(() => {
@@ -282,6 +309,11 @@ const Thread = () => {
       invalidateByPrefix("/api/v1/threads");
       invalidateByPrefix("/api/v1/boards");
       invalidateByPrefix("/api/v1/feed");
+      // The pin row cascades away with the thread — drop the cached pin list so
+      // a profile's «Закреплённые темы» block stops showing the deleted thread.
+      invalidateByPrefix("/api/v1/profile_pinned_threads");
+      queryClient.invalidateQueries({ queryKey: ["profile-pinned-threads"] });
+      queryClient.invalidateQueries({ queryKey: ["pinned-thread-ids"] });
       navigate(boardBasePath || "/", { replace: true });
     } catch {
       toast.error(t("thread.threadDeleteError"));
@@ -458,6 +490,27 @@ const Thread = () => {
                         Удалить запись
                       </DropdownMenuItem>
                     </>
+                  )}
+                  {user && (
+                    <DropdownMenuItem
+                      onClick={handleToggleThreadPin}
+                      disabled={pinnedLimitReached}
+                      className="cursor-pointer hover:bg-primary/15 hover:text-primary focus:bg-primary/15 focus:text-primary transition-colors px-3 py-2 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                      title={
+                        pinnedLimitReached
+                          ? t("thread.pinLimitReached")
+                          : isThreadPinned
+                            ? t("thread.unpinFromProfile")
+                            : t("thread.pinToProfile")
+                      }
+                    >
+                      {isThreadPinned ? (
+                        <PinOff className="h-4 w-4 mr-3" />
+                      ) : (
+                        <Pin className="h-4 w-4 mr-3" />
+                      )}
+                      {isThreadPinned ? t("thread.unpinFromProfile") : t("thread.pinToProfile")}
+                    </DropdownMenuItem>
                   )}
                 </PostActionsMenu>
               </div>

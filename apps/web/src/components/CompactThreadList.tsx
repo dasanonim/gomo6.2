@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { MessageCircle, ThumbsUp } from "lucide-react";
@@ -9,6 +9,7 @@ import { FavoriteButton } from "@/components/FavoriteButton";
 import { formatShortRelativeTime } from "@/utils/relativeTimeShort";
 import { toFeedThread, type ThreadApiRow } from "@/utils/threadFeedItem";
 import { entityParam } from "@/utils/entityUrl";
+import { cn } from "@/lib/utils";
 
 /** Latest reply of a thread (right column + hover preview). */
 export interface ThreadLastPost {
@@ -21,6 +22,37 @@ export interface ThreadLastPost {
 const PREVIEW_WIDTH = 340;
 const PREVIEW_DELAY_MS = 200;
 const PREVIEW_MARGIN = 12;
+/** Gap between the card and the row it is anchored to. */
+const PREVIEW_GAP = 8;
+/**
+ * Card height assumed for the very first paint, before the real card has been
+ * measured (see ThreadHoverPreview). Only ever used for one frame.
+ */
+const PREVIEW_FALLBACK_HEIGHT = 240;
+
+/**
+ * Where the floating preview goes: above the row when the card fits there,
+ * otherwise below it.
+ *
+ * `cardHeight` is the card's MEASURED height. Anchoring the decision on the real
+ * height is what lets a short card open upward even when its row sits close to
+ * the top of the viewport — a fixed estimate (the old 240px) was too pessimistic
+ * and dropped the panel down while there was clearly room above.
+ */
+const placePreview = (
+  rect: DOMRect,
+  cardHeight: number,
+): { top: number | null; bottom: number | null } => {
+  if (rect.top >= cardHeight + PREVIEW_MARGIN) {
+    // Anchor by `bottom` (not `top`) so the card stays glued just above the
+    // row's top edge whatever its height is.
+    return { top: null, bottom: window.innerHeight - rect.top + PREVIEW_GAP };
+  }
+  return {
+    top: Math.min(rect.bottom + PREVIEW_GAP, window.innerHeight - cardHeight - PREVIEW_MARGIN),
+    bottom: null,
+  };
+};
 
 const threadPath = (row: ThreadApiRow): string => {
   const slug = row.boards?.slug || "";
@@ -34,6 +66,27 @@ interface CompactThreadListProps {
   /** threadId → latest reply, when the thread has any. */
   lastPosts?: Map<string, ThreadLastPost>;
   currentUserId: string | null;
+  /**
+   * Extra per-row controls rendered as a trailing column, right of the last
+   * poster — hidden until the row is hovered/focused (always on for touch), the
+   * same affordance as the bookmark slot. Used by the profile's «Закреплённые
+   * темы» block for its «три точки» menu (issue #518).
+   */
+  renderRowActions?: (row: ThreadApiRow) => ReactNode;
+  /**
+   * Hide the trailing last-poster column (author + avatar + activity time).
+   * The profile's pinned block shows only the thread's own meta line, so the
+   * whole right column goes away.
+   */
+  hideLastPoster?: boolean;
+  /** Hide the per-row bookmark button (it lives inside the last-poster column). */
+  hideBookmark?: boolean;
+  /**
+   * Root container classes. Defaults to the section-page surface (translucent
+   * `bg-surface/40`); the profile passes its own panel classes so the rows sit
+   * on the same opaque surface as the rest of the page.
+   */
+  containerClassName?: string;
 }
 
 /**
@@ -47,6 +100,10 @@ export const CompactThreadList = ({
   likes,
   lastPosts,
   currentUserId,
+  renderRowActions,
+  hideLastPoster,
+  hideBookmark,
+  containerClassName,
 }: CompactThreadListProps) => {
   const [preview, setPreview] = useState<{
     row: ThreadApiRow;
@@ -80,7 +137,12 @@ export const CompactThreadList = ({
 
   return (
     <>
-      <div className="overflow-hidden rounded-[var(--card-radius)] border border-border/60 bg-surface/40">
+      <div
+        className={cn(
+          "overflow-hidden",
+          containerClassName ?? "rounded-[var(--card-radius)] border border-border/60 bg-surface/40",
+        )}
+      >
         {rows.map((row) => {
           const thread = toFeedThread(row);
           const like = likes?.get(thread.id);
@@ -146,38 +208,49 @@ export const CompactThreadList = ({
                 </div>
               </div>
 
-              <div className="relative z-10 hidden w-[230px] shrink-0 items-center justify-end gap-2 text-right sm:flex">
-                {/* Bookmark: a reserved slot that fades in on hover, like the
-                    feed card's corner action — no layout shift, and always on
-                    for touch devices. */}
-                {currentUserId && (
-                  <div className="pointer-events-none self-end translate-y-3 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
-                    <FavoriteButton itemType="thread" itemId={thread.id} />
+              {!hideLastPoster && (
+                <div className="relative z-10 hidden w-[230px] shrink-0 items-center justify-end gap-2 text-right sm:flex">
+                  {/* Bookmark: a reserved slot that fades in on hover, like the
+                      feed card's corner action — no layout shift, and always on
+                      for touch devices. */}
+                  {currentUserId && !hideBookmark && (
+                    <div className="pointer-events-none self-end translate-y-3 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
+                      <FavoriteButton itemType="thread" itemId={thread.id} />
+                    </div>
+                  )}
+                  <div className="pointer-events-none min-w-0">
+                    <UserBadge
+                      userId={lastUserId}
+                      username={lastUsername}
+                      displayName={last ? undefined : thread.profiles?.display_name}
+                      emojiId={last ? undefined : thread.profiles?.nickname_emoji_id}
+                      isAnonymous={last ? false : thread.profiles?.is_anonymous}
+                      className="pointer-events-auto block max-w-full overflow-hidden text-foreground"
+                    />
+                    <time
+                      dateTime={lastAt}
+                      className="block text-[12px] text-muted-foreground"
+                    >
+                      {formatShortRelativeTime(lastAt)}
+                    </time>
                   </div>
-                )}
-                <div className="pointer-events-none min-w-0">
-                  <UserBadge
-                    userId={lastUserId}
-                    username={lastUsername}
-                    displayName={last ? undefined : thread.profiles?.display_name}
-                    emojiId={last ? undefined : thread.profiles?.nickname_emoji_id}
-                    isAnonymous={last ? false : thread.profiles?.is_anonymous}
-                    className="pointer-events-auto block max-w-full overflow-hidden text-foreground"
+                  <UserAvatar
+                    src={lastAvatar}
+                    userId={last ? undefined : thread.user_id}
+                    className="h-8 w-8 shrink-0"
+                    alt={lastUsername}
                   />
-                  <time
-                    dateTime={lastAt}
-                    className="block text-[12px] text-muted-foreground"
-                  >
-                    {formatShortRelativeTime(lastAt)}
-                  </time>
                 </div>
-                <UserAvatar
-                  src={lastAvatar}
-                  userId={last ? undefined : thread.user_id}
-                  className="h-8 w-8 shrink-0"
-                  alt={lastUsername}
-                />
-              </div>
+              )}
+
+              {/* Trailing per-row controls (e.g. the pinned-thread menu). Kept
+                  as its own column so it sits at the far right on every
+                  viewport — the last-poster column above is sm+ only. */}
+              {renderRowActions && (
+                <div className="pointer-events-none relative z-20 flex shrink-0 items-center self-center opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
+                  {renderRowActions(row)}
+                </div>
+              )}
             </div>
           );
         })}
@@ -201,23 +274,22 @@ const ThreadHoverPreview = ({
 }) => {
   const thread = toFeedThread(row);
   const content = (thread.content || "").trim();
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [placement, setPlacement] = useState(() => placePreview(rect, PREVIEW_FALLBACK_HEIGHT));
 
-  // Open upward, above the row itself. Anchoring by `bottom` (instead of `top`)
-  // keeps the card glued just over the row's top edge whatever its height is;
-  // when there is no room above, it drops below instead.
-  const gap = 8;
-  const estimatedHeight = 240;
+  // Measure the real card and re-place it before the browser paints: the
+  // fallback estimate above is deliberately pessimistic and would otherwise
+  // push a short preview below a row that has plenty of room above it.
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    setPlacement(placePreview(rect, card.getBoundingClientRect().height));
+  }, [rect, row]);
+
   const left = Math.min(
     Math.max(PREVIEW_MARGIN, rect.left),
     Math.max(PREVIEW_MARGIN, window.innerWidth - PREVIEW_WIDTH - PREVIEW_MARGIN),
   );
-  let top: number | null = null;
-  let bottom: number | null = null;
-  if (rect.top >= estimatedHeight + PREVIEW_MARGIN) {
-    bottom = window.innerHeight - rect.top + gap;
-  } else {
-    top = Math.min(rect.bottom + gap, window.innerHeight - estimatedHeight - PREVIEW_MARGIN);
-  }
 
   return createPortal(
     <div
@@ -225,11 +297,11 @@ const ThreadHoverPreview = ({
       style={{
         left,
         width: PREVIEW_WIDTH,
-        ...(top != null ? { top } : { bottom: bottom ?? 0 }),
+        ...(placement.top != null ? { top: placement.top } : { bottom: placement.bottom ?? 0 }),
       }}
       className="pointer-events-none fixed z-50 animate-in fade-in-0 zoom-in-95 duration-150 motion-reduce:animate-none"
     >
-      <div className="rounded-[var(--card-radius)] border border-border/70 bg-card p-3.5 shadow-xl shadow-black/20">
+      <div ref={cardRef} className="rounded-[var(--card-radius)] border border-border/70 bg-card p-3.5 shadow-xl shadow-black/20">
         <div className="flex items-start gap-3">
           <UserAvatar
             src={thread.profiles?.avatar_url}

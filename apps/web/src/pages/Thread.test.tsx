@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
@@ -10,7 +10,51 @@ const mockAuth = { getSession: vi.fn(), getUser: vi.fn(), onAuthStateChange: vi.
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-vi.mock("@/integrations/api/compat", () => ({ api: { from: vi.fn(), rpc: vi.fn(), auth: mockAuth } }));
+// «Закрепить в профиле» (issue #518): the pin-id list read + the pin/unpin writes.
+const mockFrom = vi.fn();
+const mockPinInsert = vi.fn();
+const mockPinDelete = vi.fn();
+let pinnedIds: string[] = [];
+
+const awaitable = (data: unknown) => ({
+  then: (onFulfilled: (value: { data: unknown; error: null }) => unknown, onRejected?: (reason: unknown) => unknown) =>
+    Promise.resolve({ data, error: null }).then(onFulfilled, onRejected),
+});
+
+const selectChain = (data: unknown) => {
+  const chain: Record<string, unknown> = {};
+  for (const method of ["select", "eq", "order", "in", "limit", "range"]) {
+    chain[method] = vi.fn(() => chain);
+  }
+  Object.assign(chain, awaitable(data));
+  return chain;
+};
+
+const installPinApi = () => {
+  mockFrom.mockImplementation((table: string) => {
+    if (table === "profile_pinned_threads") {
+      return {
+        select: () => selectChain(pinnedIds.map((id, i) => ({ thread_id: id, position: i + 1 }))),
+        insert: (...args: unknown[]) => mockPinInsert(...args),
+        delete: () => ({ eq: (...args: unknown[]) => mockPinDelete(...args) }),
+      };
+    }
+    return undefined;
+  });
+};
+
+vi.mock("@/integrations/api/compat", () => ({
+  api: { from: (...args: unknown[]) => mockFrom(...args), rpc: vi.fn(), auth: mockAuth },
+}));
+
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+vi.mock("sonner", () => ({
+  toast: {
+    success: (...args: unknown[]) => toastSuccess(...args),
+    error: (...args: unknown[]) => toastError(...args),
+  },
+}));
 vi.mock("@/hooks/queries", () => ({
   useThread: vi.fn(),
   useThreadSubscription: vi.fn(),
@@ -34,7 +78,24 @@ vi.mock("@/components/UserBadge", () => ({ UserBadge: () => <span data-testid="u
 vi.mock("@/components/LikeButton", () => ({ LikeButton: () => null }));
 vi.mock("@/components/Lightbox", () => ({ Lightbox: () => null }));
 vi.mock("@/components/Poll", () => ({ Poll: () => null }));
-vi.mock("@/components/PostActionsMenu", () => ({ PostActionsMenu: () => <div data-testid="post-actions-menu" /> }));
+// The menu itself is Radix (needs a portal + menu context); render its children
+// inline so the owner and pin items are reachable in jsdom.
+vi.mock("@/components/PostActionsMenu", () => ({
+  PostActionsMenu: ({ children }: { children?: React.ReactNode }) => (
+    <div data-testid="post-actions-menu">{children}</div>
+  ),
+}));
+vi.mock("@/components/ui/dropdown-menu", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/ui/dropdown-menu")>();
+  return {
+    ...actual,
+    DropdownMenuItem: ({ children, onClick, disabled, title }: any) => (
+      <button type="button" onClick={onClick} disabled={disabled} title={title}>
+        {children}
+      </button>
+    ),
+  };
+});
 vi.mock("@/components/GomoRichEditor", () => ({
   GomoRichEditor: ({ legacyContent, onChange }: any) => (
     <textarea
@@ -98,6 +159,19 @@ function renderWithProviders(ui: React.ReactElement) {
   );
 }
 
+/**
+ * Click an element and let the async chain it starts settle inside ONE `act`
+ * scope. `userEvent.click` only wraps its own interaction — the mutation's
+ * promise continuations (pending → settled, then the invalidation refetch) run
+ * after it returns, and without the outer scope React logs "not wrapped in act".
+ */
+const clickAndSettle = async (element: HTMLElement) => {
+  await act(async () => {
+    await userEvent.click(element);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+};
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("Thread", () => {
@@ -117,6 +191,19 @@ describe("Thread", () => {
     mockAuth.getUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
     mockAuth.onAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } }, error: null });
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ data: [] }) });
+
+    pinnedIds = [];
+    // The mock mirrors the server: a write changes the list the next read returns,
+    // so a test can assert on the settled UI instead of racing the refetch.
+    mockPinInsert.mockImplementation((row: { thread_id: string }) => {
+      pinnedIds = [...pinnedIds, row.thread_id];
+      return Promise.resolve({ data: [row], error: null });
+    });
+    mockPinDelete.mockImplementation((_column: string, value: string) => {
+      pinnedIds = pinnedIds.filter((id) => id !== value);
+      return Promise.resolve({ data: [], error: null });
+    });
+    installPinApi();
   });
 
   it("shows pentagram loader when thread is still loading", async () => {
@@ -178,7 +265,7 @@ describe("Thread", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /назад/i })).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByRole("button", { name: /назад/i }));
+    await clickAndSettle(screen.getByRole("button", { name: /назад/i }));
     expect(mockNavigate).toHaveBeenCalledWith(-1);
   });
 
@@ -191,7 +278,7 @@ describe("Thread", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /назад/i })).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByRole("button", { name: /назад/i }));
+    await clickAndSettle(screen.getByRole("button", { name: /назад/i }));
     expect(mockNavigate).toHaveBeenCalledWith("/test-board", { replace: true });
   });
 
@@ -251,5 +338,109 @@ describe("Thread", () => {
     });
     // The edit handler lives behind PostActionsMenu (mocked) — the card itself renders.
     expect(screen.getByText("Test Thread")).toBeInTheDocument();
+  });
+
+  // ─── «Закрепить в профиле» (issue #518) ────────────────────────────────────
+
+  it("offers «Закрепить в профиле» to any signed-in user and pins on click", async () => {
+    useThread.mockReturnValue({ data: mockThread(), isLoading: false } as any);
+    useThreadSubscription.mockReturnValue({ data: false } as any);
+
+    renderWithProviders(<ThreadComponent />);
+
+    const item = await screen.findByRole("button", { name: "Закрепить в профиле" });
+    await clickAndSettle(item);
+
+    // The write lands, the list refetches and the item flips to «Открепить» —
+    // waiting for that settled state is what proves the whole round trip.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Открепить из профиля" })).toBeInTheDocument(),
+    );
+    expect(mockPinInsert).toHaveBeenCalledWith({ thread_id: "thread-1" });
+    expect(toastSuccess).toHaveBeenCalledWith("Тема закреплена в профиле");
+  });
+
+  it("switches to «Открепить из профиля» for a thread the user already pinned", async () => {
+    pinnedIds = ["thread-1"];
+    useThread.mockReturnValue({ data: mockThread(), isLoading: false } as any);
+    useThreadSubscription.mockReturnValue({ data: false } as any);
+
+    renderWithProviders(<ThreadComponent />);
+
+    const item = await screen.findByRole("button", { name: "Открепить из профиля" });
+    await clickAndSettle(item);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Закрепить в профиле" })).toBeInTheDocument(),
+    );
+    expect(mockPinDelete).toHaveBeenCalledWith("thread_id", "thread-1");
+    expect(toastSuccess).toHaveBeenCalledWith("Тема откреплена из профиля");
+  });
+
+  it("disables the pin item once three threads are already pinned", async () => {
+    pinnedIds = ["a", "b", "c"];
+    useThread.mockReturnValue({ data: mockThread(), isLoading: false } as any);
+    useThreadSubscription.mockReturnValue({ data: false } as any);
+
+    renderWithProviders(<ThreadComponent />);
+
+    const item = await screen.findByRole("button", { name: "Закрепить в профиле" });
+    // The item renders as soon as the viewer is known, but the cap can only be
+    // derived once the pin list has loaded — wait for the settled state.
+    await waitFor(() => expect(item).toBeDisabled());
+    expect(item).toHaveAttribute("title", "В профиле уже 3 закреплённые темы");
+  });
+
+  it("explains the cap when the server rejects a fourth pin, and self-heals", async () => {
+    // The client's cached list is stale (it shows nothing pinned), so the item is
+    // offered — the click is what discovers the truth from the server.
+    pinnedIds = [];
+    mockPinInsert.mockImplementation(() => {
+      pinnedIds = ["a", "b", "c"];
+      return Promise.reject(Object.assign(new Error("Pinned threads limit reached"), { status: 409 }));
+    });
+    useThread.mockReturnValue({ data: mockThread(), isLoading: false } as any);
+    useThreadSubscription.mockReturnValue({ data: false } as any);
+
+    renderWithProviders(<ThreadComponent />);
+
+    const item = await screen.findByRole("button", { name: "Закрепить в профиле" });
+    await clickAndSettle(item);
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("В профиле уже 3 закреплённые темы"));
+    // …and the rejected pin refreshes the list, so the item corrects itself.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Закрепить в профиле" })).toBeDisabled(),
+    );
+  });
+
+  it("reports a generic failure for any other pin error", async () => {
+    mockPinInsert.mockImplementation(() =>
+      Promise.reject(Object.assign(new Error("boom"), { status: 500 })),
+    );
+    useThread.mockReturnValue({ data: mockThread(), isLoading: false } as any);
+    useThreadSubscription.mockReturnValue({ data: false } as any);
+
+    renderWithProviders(<ThreadComponent />);
+
+    const item = await screen.findByRole("button", { name: "Закрепить в профиле" });
+    await clickAndSettle(item);
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Не удалось изменить закрепление"));
+  });
+
+  it("hides the pin item from guests", async () => {
+    mockAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    useThread.mockReturnValue({ data: mockThread(), isLoading: false } as any);
+    useThreadSubscription.mockReturnValue({ data: false } as any);
+
+    renderWithProviders(<ThreadComponent />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("thread-comment-tree")).toHaveAttribute("data-can-post", "false");
+    });
+    expect(
+      screen.queryByRole("button", { name: /Закрепить в профиле|Открепить из профиля/ }),
+    ).not.toBeInTheDocument();
   });
 });

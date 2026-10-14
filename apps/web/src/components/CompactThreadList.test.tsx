@@ -36,6 +36,7 @@ describe("CompactThreadList", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("renders a dense row with replies, likes and the last poster", () => {
@@ -78,6 +79,50 @@ describe("CompactThreadList", () => {
     expect(screen.getByRole("button", { name: "В избранное" })).toBeInTheDocument();
   });
 
+  it("drops the whole last-poster column (and its bookmark) when asked", () => {
+    renderList(
+      <CompactThreadList
+        rows={[row]}
+        lastPosts={
+          new Map<string, ThreadLastPost>([
+            ["t1", { user_id: "u2", username: "alice", avatar_url: null, created_at: "2026-01-02T10:00:00Z" }],
+          ])
+        }
+        currentUserId="me"
+        hideLastPoster
+        hideBookmark
+      />,
+    );
+
+    expect(screen.queryByText("alice")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "В избранное" })).not.toBeInTheDocument();
+    // The meta line keeps the thread author, so the row still identifies it.
+    expect(screen.getByText("bob")).toBeInTheDocument();
+  });
+
+  it("can hide only the bookmark and keep the last-poster column", () => {
+    renderList(<CompactThreadList rows={[row]} currentUserId="me" hideBookmark />);
+
+    expect(screen.queryByRole("button", { name: "В избранное" })).not.toBeInTheDocument();
+    // Author shows twice: the meta line and the last-poster column.
+    expect(screen.getAllByText("bob").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("lets the caller replace the container surface", () => {
+    const { container } = renderList(
+      <CompactThreadList
+        rows={[row]}
+        currentUserId="me"
+        containerClassName="surface-panel rounded-xl border border-border/60 shadow-sm"
+      />,
+    );
+
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("surface-panel");
+    expect(root.className).toContain("rounded-xl");
+    expect(root.className).not.toContain("bg-surface/40");
+  });
+
   it("shows the mini preview on hover after the delay, and hides on leave", () => {
     renderList(<CompactThreadList rows={[row]} currentUserId="me" />);
 
@@ -93,5 +138,69 @@ describe("CompactThreadList", () => {
 
     fireEvent.mouseOut(link);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("opens the preview upward when the measured card fits above the row", () => {
+    // jsdom has no layout engine, so stub the rects: a row near the top of the
+    // viewport (top=150) with a short card (100px). The old fixed 240px estimate
+    // would have refused to open upward and dropped the panel down instead.
+    const rect = (top: number, height: number) =>
+      ({
+        top,
+        bottom: top + height,
+        left: 0,
+        right: 300,
+        width: 300,
+        height,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this.closest('[role="tooltip"]') ? rect(0, 100) : rect(150, 40);
+    });
+
+    renderList(<CompactThreadList rows={[row]} currentUserId="me" />);
+
+    fireEvent.mouseOver(screen.getByRole("link"));
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    // Anchored by `bottom` → it opened above the row.
+    expect(tooltip.style.bottom).not.toBe("");
+    expect(tooltip.style.top).toBe("");
+  });
+
+  it("still drops the preview below when the card does not fit above", () => {
+    const rect = (top: number, height: number) =>
+      ({
+        top,
+        bottom: top + height,
+        left: 0,
+        right: 300,
+        width: 300,
+        height,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this.closest('[role="tooltip"]') ? rect(0, 400) : rect(150, 40);
+    });
+
+    renderList(<CompactThreadList rows={[row]} currentUserId="me" />);
+
+    fireEvent.mouseOver(screen.getByRole("link"));
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.style.top).not.toBe("");
+    expect(tooltip.style.bottom).toBe("");
   });
 });

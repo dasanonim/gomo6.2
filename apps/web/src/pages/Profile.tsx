@@ -23,6 +23,7 @@ import { ProfileHeader } from "./profile/ProfileHeader";
 import { ProfileStats } from "./profile/ProfileStats";
 import { ProfileEditPanel } from "./profile/ProfileEditPanel";
 import { ProfileTabs, type ProfileTab } from "./profile/ProfileTabs";
+import { ProfilePinnedThreads } from "./profile/ProfilePinnedThreads";
 import { UsernameDialog, AvatarGalleryDialog } from "./profile/ProfileDialogs";
 import type { Profile, ProfilePrivacyData } from "./profile/types";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -698,6 +699,14 @@ const Profile = () => {
                 <SpotifyNowPlaying userId={resolvedUserId} />
               )}
 
+              {/* «Закреплённые темы» — up to 3 curated threads, between the
+                  identity panel and the tabs (issue #518). */}
+              <ProfilePinnedThreads
+                userId={resolvedUserId}
+                isOwner={isOwnProfile}
+                currentUserId={currentUser?.id ?? null}
+              />
+
               {/* Tabs — the bar is always its own panel; the body gets a panel
                   for every tab except the wall, where each post is a panel. */}
               {profileTabsElement}
@@ -798,6 +807,15 @@ const Profile = () => {
               {!isNonFriendOnPrivate && (
                 <SpotifyNowPlaying userId={resolvedUserId} />
               )}
+
+              {/* «Закреплённые темы» — up to 3 curated threads, between the
+                  identity panel and the tabs (issue #518). Hidden while
+                  editing, together with the tabs it precedes. */}
+              <ProfilePinnedThreads
+                userId={resolvedUserId}
+                isOwner={isOwnProfile}
+                currentUserId={currentUser?.id ?? null}
+              />
 
               {/* Profile Tabs — visibility follows the owner's privacy settings.
                   For non-friends on a private profile the wall tab always stays
