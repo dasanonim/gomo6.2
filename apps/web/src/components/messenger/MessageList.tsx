@@ -32,8 +32,13 @@ const AT_BOTTOM_THRESHOLD = 100;       // px from the bottom that counts as "at 
 const DEFAULT_ITEM_HEIGHT = 96;
 // Render this far outside the viewport. Critical on mobile: the compositor
 // thread scrolls while the main thread is busy, and without a buffer a fast
-// swipe shows blank space.
-const INCREASE_VIEWPORT_BY = { top: 600, bottom: 400 };
+// swipe shows blank space. It also gets items MEASURED before they reach the
+// viewport, so the momentum deceleration has no pending size correction left to
+// apply when it stops (the iOS "teleport").
+const INCREASE_VIEWPORT_BY = { top: 1200, bottom: 900 };
+// Start loading the next page this many messages before the top, so the older
+// history is already there by the time the user scrolls up to it — no seam.
+const PRELOAD_ITEMS = 25;
 
 export interface MessageRenderExtras {
   dateLabel: string | null;
@@ -151,7 +156,7 @@ export const MessageList = memo(
     }, []);
 
     // ── History loader ───────────────────────────────────────────────────
-    const handleStartReached = useCallback(() => {
+    const maybeLoadMore = useCallback(() => {
       if (!conversationId || !hasMoreMessages || loadingMoreRef.current) return;
       const now = Date.now();
       if (now - lastLoadAtRef.current < START_REACHED_COOLDOWN_MS) return;
@@ -170,6 +175,9 @@ export const MessageList = memo(
         if (conversationId && start >= 0 && start < messages.length) {
           saveScrollPosition(conversationId, { messageId: messages[start].id, offset: 0 });
         }
+        // Preload older history before the user actually reaches the top, so
+        // the page is already rendered when they get there (seamless).
+        if (start <= PRELOAD_ITEMS) maybeLoadMore();
         if (!conversationId || !meId) return;
         // The read line is the newest incoming message at or before the last
         // visible row; the store batches and the backend marks the whole prefix.
@@ -180,7 +188,7 @@ export const MessageList = memo(
           break;
         }
       },
-      [conversationId, firstItemIndex, meId, messages],
+      [conversationId, firstItemIndex, meId, messages, maybeLoadMore],
     );
 
     const handleAtBottom = useCallback((atBottom: boolean) => {
@@ -306,7 +314,7 @@ export const MessageList = memo(
             // (petyosi/react-virtuoso#1083, #1049). Benign console errors are
             // possible if an item resizes while being measured.
             skipAnimationFrameInResizeObserver
-            startReached={handleStartReached}
+            startReached={maybeLoadMore}
             atBottomStateChange={handleAtBottom}
             atBottomThreshold={AT_BOTTOM_THRESHOLD}
             followOutput={followOutput}
