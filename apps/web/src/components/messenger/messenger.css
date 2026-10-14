@@ -799,7 +799,10 @@ main.is-messenger-page {
 
 .date-separator {
   text-align: center;
-  margin: 12px 0 6px;
+  /* padding, NOT margin: react-virtuoso measures the item with
+     getBoundingClientRect and a child's collapsed margin is excluded — that
+     under-measured every first-of-day item. */
+  padding: 12px 0 6px;
   position: relative;
 }
 

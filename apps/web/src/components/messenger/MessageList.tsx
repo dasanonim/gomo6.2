@@ -300,6 +300,12 @@ export const MessageList = memo(
             computeItemKey={(index, message) => message.client_id ?? message.id}
             defaultItemHeight={DEFAULT_ITEM_HEIGHT}
             increaseViewportBy={INCREASE_VIEWPORT_BY}
+            // Undocumented but recommended for chat lists with dynamic heights:
+            // reports item size changes synchronously instead of via rAF,
+            // which is what makes reverse scrolling flicker/jump on iOS
+            // (petyosi/react-virtuoso#1083, #1049). Benign console errors are
+            // possible if an item resizes while being measured.
+            skipAnimationFrameInResizeObserver
             startReached={handleStartReached}
             atBottomStateChange={handleAtBottom}
             atBottomThreshold={AT_BOTTOM_THRESHOLD}

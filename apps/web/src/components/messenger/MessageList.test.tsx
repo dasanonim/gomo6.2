@@ -104,6 +104,8 @@ describe("MessageList (react-virtuoso)", () => {
     expect(h.virtuosoOpts.firstItemIndex).toBe(99950);
     expect(h.virtuosoOpts.alignToBottom).toBe(true);
     expect(h.virtuosoOpts.defaultItemHeight).toBe(96);
+    // Fixes the reverse-scroll flicker on iOS (petyosi/react-virtuoso#1083).
+    expect(h.virtuosoOpts.skipAnimationFrameInResizeObserver).toBe(true);
     expect(h.virtuosoOpts.atBottomThreshold).toBe(100);
     expect(h.virtuosoOpts.increaseViewportBy).toEqual({ top: 600, bottom: 400 });
     expect(h.virtuosoOpts.initialTopMostItemIndex).toBe(2); // opens at the last message
