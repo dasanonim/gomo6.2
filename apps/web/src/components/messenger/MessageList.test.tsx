@@ -103,7 +103,7 @@ describe("MessageList (react-virtuoso)", () => {
     mountList();
     expect(h.virtuosoOpts.firstItemIndex).toBe(99950);
     expect(h.virtuosoOpts.alignToBottom).toBe(true);
-    expect(h.virtuosoOpts.defaultItemHeight).toBe(56);
+    expect(h.virtuosoOpts.defaultItemHeight).toBe(96);
     expect(h.virtuosoOpts.atBottomThreshold).toBe(100);
     expect(h.virtuosoOpts.increaseViewportBy).toEqual({ top: 600, bottom: 400 });
     expect(h.virtuosoOpts.initialTopMostItemIndex).toBe(2); // opens at the last message

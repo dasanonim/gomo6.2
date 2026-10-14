@@ -25,7 +25,11 @@ import { isScrollDebugEnabled, startScrollDebug } from "./core/scrollDebug";
 const NEW_MESSAGE_ANIMATION_MS = 1200; // how long an incoming message may play its entrance
 const START_REACHED_COOLDOWN_MS = 800; // min gap between history loads
 const AT_BOTTOM_THRESHOLD = 100;       // px from the bottom that counts as "at the bottom"
-const DEFAULT_ITEM_HEIGHT = 56;        // pre-measure guess (a text bubble)
+// Pre-measure guess for a text bubble. Real bubble heights measured in the
+// harness are ~75–150px (median ~95); a too-low value makes the layout lag as
+// items mount (each mount then corrects the total height — the iOS momentum
+// "snap"), so this is deliberately near the real average.
+const DEFAULT_ITEM_HEIGHT = 96;
 // Render this far outside the viewport. Critical on mobile: the compositor
 // thread scrolls while the main thread is busy, and without a buffer a fast
 // swipe shows blank space.
