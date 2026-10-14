@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { DropsBalance } from "@/components/DropsBalance";
 import { NicknameEmoji } from "@/components/NicknameEmoji";
 import { storageUrl, giftImageUrl } from "@/utils/storage";
-import { formatPresence, getInitials } from "./utils";
+import { formatPresence, getGroupInitials, getInitials } from "./utils";
 import type { GiftCatalogItem } from "@/components/GiftCard";
 import { formatDropsLabel } from "@/utils/formatDropsLabel";
 import { useLanguageStore } from "@/stores/languageStore";
@@ -184,7 +184,7 @@ export function UserInfoPanel({
                 {groupAvatarUrl ? (
                   <img src={storageUrl("post-images", groupAvatarUrl) || undefined} alt={groupName || ""} />
                 ) : (
-                  <span>{groupName ? groupName.slice(0, 2).toUpperCase() : "ГР"}</span>
+                  <span>{getGroupInitials(groupName)}</span>
                 )}
               </div>
 

@@ -4,6 +4,7 @@ import {
   formatConversationDate,
   formatPresence,
   formatReadAt,
+  getGroupInitials,
   getInitials,
 } from "./utils";
 
@@ -108,6 +109,18 @@ describe("utils", () => {
 
     it("handles cyrillic", () => {
       expect(getInitials("привет")).toBe("ПР");
+    });
+  });
+
+  describe("getGroupInitials", () => {
+    it("returns the first 2 characters uppercase", () => {
+      expect(getGroupInitials("Разработка")).toBe("РА");
+    });
+
+    it("falls back to «ГР» for an unnamed group", () => {
+      expect(getGroupInitials(null)).toBe("ГР");
+      expect(getGroupInitials(undefined)).toBe("ГР");
+      expect(getGroupInitials("")).toBe("ГР");
     });
   });
 });
