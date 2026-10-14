@@ -735,6 +735,8 @@ main.is-messenger-page {
   overscroll-behavior-y: contain;
   scrollbar-gutter: stable;
   -webkit-overflow-scrolling: touch;
+  /* Side inset of every message row (react-virtuoso renders items in flow). */
+  --message-gutter: 2px;
 }
 
 /* The virtual list is a positioned spacer of the full content height; items
