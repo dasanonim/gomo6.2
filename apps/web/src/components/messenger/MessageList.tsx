@@ -444,10 +444,22 @@ export const MessageList = memo(
       if (!anchor || !conversationId) return;
       const index = messages.findIndex((m) => m.id === anchor.messageId);
       if (index >= 0) {
-        scrollDebugNote(
-          `restore jump index=${index} offset=${Math.round(anchor.offset)} target=${Math.round(virtualizer.getOffsetForIndex(index, "start")?.[0] ?? -1)} count=${messages.length}`,
-        );
+        // Jump to the saved message. Re-apply over the next two frames: the
+        // first pass can land while the spacer is still short (the virtualizer
+        // has not laid the rows out yet), so scrollTop clamps to 0 and the
+        // jump is lost.
+        const applyRestore = () => {
+          const el = scrollerRef.current;
+          if (!el) return;
+          const info = virtualizer.getOffsetForIndex(index, "start");
+          if (info && Math.abs(el.scrollTop - info[0]) > 2) el.scrollTop = info[0];
+        };
+        scrollDebugNote(`restore jump index=${index} offset=${Math.round(anchor.offset)}`);
         virtualizer.scrollToIndex(index, { align: "start" });
+        requestAnimationFrame(() => {
+          applyRestore();
+          requestAnimationFrame(applyRestore);
+        });
         restoreAnchorRef.current = null;
         isAtBottomRef.current = false;
         setIsAtBottom(false);
