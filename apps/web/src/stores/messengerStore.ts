@@ -6,6 +6,7 @@ import { loadCachedMessages, saveCachedMessages } from "@/utils/messengerCache";
 import { decryptNote, decryptNotesMeta, encryptNote, encryptNotesMeta, NOTES_LOCKED } from "@/utils/notesCrypto";
 import type { NotesMeta } from "@/utils/notesCrypto";
 import { messengerPlainPreview, messengerTextToPlain, stripDanglingTagFragment } from "@/components/messenger/messengerRichTextUtils";
+import { appendMessages, mergeMessages, prependOlder } from "@/components/messenger/core/messageModel";
 
 let messageLoadGeneration = 0;
 let loadMoreRequestGeneration = 0;
@@ -549,11 +550,7 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
       if (get().selectedConversationId !== conversationId || get().me?.id !== ownerId) return;
       if (delta.length === 0) return;
       set((s) => {
-        const byIdentity = new Map(s.messages.map((message) => [message.id || message.client_id, message]));
-        for (const message of delta) byIdentity.set(message.id || message.client_id, message);
-        const messages = [...byIdentity.values()].sort((a, b) =>
-          new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime(),
-        );
+        const messages = mergeMessages(s.messages, delta);
         rememberLatestEventId(conversationId, delta);
         cacheCurrentMessages(ownerId, conversationId, messages);
         return { messages };
@@ -589,21 +586,10 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
       set((s) => {
         // Merge older history without duplicates. Pagination is keyed on the
         // oldest message's sent_at (strictly exclusive server-side), but a
-        // message that arrived mid-request can still land on both pages — a
-        // duplicated key would shift the virtualized item windows and jump
-        // the layout while the user scrolls through history.
-        const byIdentity = new Map<string, MessageView>();
-        for (const message of older) byIdentity.set(message.id || message.client_id, message);
-        for (const message of s.messages) {
-          const key = message.id || message.client_id;
-          if (!byIdentity.has(key)) byIdentity.set(key, message);
-        }
-        // Stable sort (ES2019+): messages sharing a sent_at keep the insertion
-        // order above (older first, then existing) — identical to the plain
-        // concatenation order, so no message ever "moves" on a tie.
-        const messages = [...byIdentity.values()].sort(
-          (a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime(),
-        );
+        // message that arrived mid-request can still land on both pages — the
+        // model dedupes by identity and keeps the copy already on screen (it
+        // may carry a local edit/status the re-fetched page lacks).
+        const messages = prependOlder(s.messages, older);
         rememberLatestEventId(conversationId, messages);
         cacheCurrentMessages(ownerId, conversationId, messages);
         return {
@@ -1044,9 +1030,9 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
         // Events for another conversation update its preview, but must never
         // leak into the currently visible message list.
         if (s.selectedConversationId && s.selectedConversationId !== message.conversation_id) return s;
-        const messages = [...s.messages, finalMessage].sort(
-          (a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime(),
-        );
+        // Fast in-order append (no full re-sort); falls back to a merge on
+        // clock skew.
+        const messages = appendMessages(s.messages, [finalMessage]);
         rememberLatestEventId(message.conversation_id, messages);
         cacheCurrentMessages(s.me?.id ?? null, message.conversation_id, messages);
         return { messages };

@@ -23,6 +23,7 @@ import { useFileDrop } from "@/hooks/useFileDrop";
 import type { GomoRichEditorHandle } from "@/components/GomoRichEditor";
 import { isMessengerTextEmpty, messengerPlainPreview, messengerTextToCopy } from "./messengerRichTextUtils";
 import type { Attachment, MessageView, UploadingFile } from "./types";
+import { indexById } from "./core/messageModel";
 
 interface Props {
   onBack: () => void;
@@ -40,6 +41,9 @@ export const ChatView = memo(function ChatView({
   const language = useLanguageStore((state) => state.language);
   const conversation = useMessengerStore(selectSelectedConversation);
   const messages = useMessengerStore((s) => s.messages);
+  // O(1) lookups by server id for quoted replies and the pinned message —
+  // renderMessage used to scan the whole array per quoted bubble.
+  const messageById = useMemo(() => indexById(messages), [messages]);
   const isLoading = useMessengerStore((s) => s.isMessagesLoading);
   const isSending = useMessengerStore((s) => s.isSending);
   const me = useMessengerStore((s) => s.me);
@@ -124,13 +128,13 @@ export const ChatView = memo(function ChatView({
   useEffect(() => {
     const pid = conversation?.pinned_message_id;
     if (!pid) { setPinnedText(null); return; }
-    const found = messages.find((m) => m.id === pid);
+    const found = messageById.get(pid);
     if (found) {
       setPinnedText(found.is_deleted ? "[Удалено]" : messengerPlainPreview(found.content));
     } else {
       setPinnedText("[Нажмите чтобы открыть]");
     }
-  }, [conversation?.pinned_message_id, messages]);
+  }, [conversation?.pinned_message_id, messageById]);
 
   // Escape key to go back to conversation list
   useEffect(() => {
@@ -327,7 +331,7 @@ export const ChatView = memo(function ChatView({
       const convReceipts = receipts.get(conversation.id) ?? [];
       const peerReceipt = convReceipts.find((r) => r.message_id === msg.id && r.user_id !== me.id) ?? null;
       const quoted = msg.parent_message_id
-        ? (messages.find((m) => m.id === msg.parent_message_id) ?? null)
+        ? (messageById.get(msg.parent_message_id) ?? null)
         : null;
       const giftData = parseGiftContent(msg.content);
 
@@ -394,7 +398,7 @@ export const ChatView = memo(function ChatView({
         </div>
       );
     },
-    [conversation, me, messages, receipts, language, handleStartEdit, deleteMessage, togglePin, toggleNotesPin, sendMessage, handleReply, handleCopy],
+    [conversation, me, messageById, receipts, language, handleStartEdit, deleteMessage, togglePin, toggleNotesPin, sendMessage, handleReply, handleCopy],
   );
 
   if (!conversation || !me) {

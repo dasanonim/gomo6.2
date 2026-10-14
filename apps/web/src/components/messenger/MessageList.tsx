@@ -20,20 +20,22 @@ import {
   saveScrollPosition,
   clearScrollPosition,
 } from "./scrollPosition";
+import {
+  ANCHOR_REALIGN_EPSILON,
+  HISTORY_HEADER_HEIGHT,
+  anchorScrollTop,
+  bottomTarget,
+  captureAnchor as captureAnchorFromRows,
+  isAtBottom as isAtBottomScroll,
+  virtualContentHeight,
+  type ScrollAnchor,
+} from "./core/scrollEngine";
 
-// ── Layout constants (kept in sync with messenger.css) ────────────────────
-const HISTORY_HEADER_HEIGHT = 34; // .msg-history-header — fixed in every state
-const BOTTOM_GAP_HEIGHT = 12;     // .message-list-footer — gap under the last message
-// Distance from the real bottom that still counts as "at the bottom". Used to
-// be 80px, which made the pin snap the scroller to the very bottom whenever
-// the user got anywhere near it (any layout change re-clamped) — felt like the
-// list was pulling the view down. 12px keeps the sticky-bottom UX without the
-// aggressive nudge.
-const AT_BOTTOM_SLACK = 12;       // px of trailing space still treated as "at the bottom"
+// ── List-local constants ──────────────────────────────────────────────────
+// Layout geometry (header/footer/slack/realign) lives in ./core/scrollEngine.
 const TOP_LOAD_ZONE = 300;        // px from the top that arms the history loader
 const OVERSCAN = 12;              // items rendered beyond the viewport (ТЗ: 8–15)
 const NEW_MESSAGE_ANIMATION_MS = 1200; // how long an incoming message may play its entrance
-const ANCHOR_REALIGN_EPSILON = 2; // px of drift considered "already aligned"
 // Issue #508: after the content/layout pass that clamps to the bottom, the
 // virtualizer may still land a late `measureElement` correction (or an image
 // decode) a frame or two later. Without another dependency change the pin
@@ -72,12 +74,8 @@ interface MessageListProps {
   messagesOverride?: MessageView[];
 }
 
-/** The anchor for a given scroll position: the top-most visible message and
- *  how far its top has been scrolled past the viewport top (positive = above). */
-interface ScrollAnchor {
-  messageId: string;
-  offset: number;
-}
+/** The scroll anchor shape (top-most visible message + its offset above the
+ *  viewport top) lives in ./core/scrollEngine and is re-used here. */
 
 /**
  * Estimate the rendered height of a message BEFORE it is measured, so virtual
@@ -137,32 +135,10 @@ function estimateMessageHeight(
 }
 
 /**
- * Capture the top-most visible message and how far its top is above the
- * viewport top. Derived from the virtualizer's measured/estimated offsets, not
- * DOM rects — this is exact for both rendered and not-yet-rendered items and
- * keeps the logic testable in jsdom (no layout engine needed).
+ * The scrollTop that places `anchor` back where it was captured. Uses the
+ * virtualizer's offset lookup (not the rendered rows) so an anchor that is not
+ * mounted yet — e.g. while history is being hunted — still resolves.
  */
-function captureAnchor(
-  virtualizer: ReturnType<typeof useVirtualizer>,
-  messages: MessageView[],
-  scrollTop: number,
-  clientHeight: number,
-): ScrollAnchor | null {
-  const items = virtualizer.getVirtualItems();
-  for (const item of items) {
-    const itemTop = HISTORY_HEADER_HEIGHT + item.start;
-    const itemBottom = HISTORY_HEADER_HEIGHT + item.end;
-    // Items above the viewport are skipped; the first item whose bottom is at
-    // or below the top edge is the top-most visible one.
-    if (itemBottom <= scrollTop) continue;
-    const message = messages[item.index];
-    if (!message) continue;
-    return { messageId: message.id, offset: scrollTop - itemTop };
-  }
-  return null;
-}
-
-/** The scrollTop that places `anchor` back where it was captured. */
 function anchorTarget(
   virtualizer: ReturnType<typeof useVirtualizer>,
   messages: MessageView[],
@@ -172,7 +148,7 @@ function anchorTarget(
   if (index < 0) return null;
   const offset = virtualizer.getOffsetForIndex(index);
   if (!offset) return null;
-  return HISTORY_HEADER_HEIGHT + offset[0] + anchor.offset;
+  return anchorScrollTop(offset[0], anchor.offset);
 }
 
 /**
@@ -280,26 +256,10 @@ export const MessageList = memo(
     });
 
     // ── True bottom + self-healing settle (issue #508) ─────────────────
-    // Two sources of truth, whichever is larger: the laid-out DOM
-    // (`el.scrollHeight` — catches an image growing past its reserved box) and
-    // the virtualizer's own content height (catches a `measureElement`
-    // correction that has not reached the DOM yet). Reading only one of them
-    // used to leave a small un-scrolled gap at the bottom.
+    // Geometry lives in ./core/scrollEngine (bottomTarget/isAtBottom) — the
+    // component only supplies the DOM numbers and the virtualizer's height.
     const bottomScrollTarget = useCallback(
-      (el: HTMLElement) => {
-        // A zero-height viewport (not laid out yet) has no meaningful bottom —
-        // writing scrollTop then would be a no-op at best and can fire a
-        // spurious scroll event. The virtualizer's ResizeObserver re-runs the
-        // pin once the scroller has a real height.
-        if (el.clientHeight <= 0) return 0;
-        return Math.max(
-          0,
-          Math.max(
-            el.scrollHeight,
-            HISTORY_HEADER_HEIGHT + virtualizer.getTotalSize() + BOTTOM_GAP_HEIGHT,
-          ) - el.clientHeight,
-        );
-      },
+      (el: HTMLElement) => bottomTarget(el.scrollHeight, el.clientHeight, virtualizer.getTotalSize()),
       [virtualizer],
     );
 
@@ -380,7 +340,7 @@ export const MessageList = memo(
     const handleScroll = useCallback(() => {
       const el = scrollerRef.current;
       if (!el) return;
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_SLACK;
+      const atBottom = isAtBottomScroll(el.scrollHeight, el.scrollTop, el.clientHeight);
       if (atBottom !== isAtBottomRef.current) {
         isAtBottomRef.current = atBottom;
         setIsAtBottom(atBottom);
@@ -391,7 +351,11 @@ export const MessageList = memo(
         anchorRef.current = null;
         if (conversationId) clearScrollPosition(conversationId);
       } else {
-        const anchor = captureAnchor(virtualizer, messages, el.scrollTop, el.clientHeight);
+        const anchor = captureAnchorFromRows(
+          virtualizer.getVirtualItems(),
+          el.scrollTop,
+          (index) => messages[index]?.id,
+        );
         anchorRef.current = anchor;
         if (conversationId && anchor) saveScrollPosition(conversationId, anchor);
       }
@@ -615,7 +579,7 @@ export const MessageList = memo(
     if (messages.length === 0) return null;
 
     const virtualItems = virtualizer.getVirtualItems();
-    const contentHeight = HISTORY_HEADER_HEIGHT + totalSize + BOTTOM_GAP_HEIGHT;
+    const contentHeight = virtualContentHeight(totalSize);
 
     return (
       <>
