@@ -34,6 +34,14 @@ const TOP_LOAD_ZONE = 300;        // px from the top that arms the history loade
 const OVERSCAN = 12;              // items rendered beyond the viewport (ТЗ: 8–15)
 const NEW_MESSAGE_ANIMATION_MS = 1200; // how long an incoming message may play its entrance
 const ANCHOR_REALIGN_EPSILON = 2; // px of drift considered "already aligned"
+// Issue #508: after the content/layout pass that clamps to the bottom, the
+// virtualizer may still land a late `measureElement` correction (or an image
+// decode) a frame or two later. Without another dependency change the pin
+// would never run again and a small un-scrolled gap stayed at the bottom.
+// While the user is at the bottom we therefore keep re-clamping for this short
+// bounded window, stopping as soon as the target stops moving.
+const PIN_SETTLE_MAX_MS = 700;   // upper bound on the settle window
+const PIN_SETTLE_EPSILON = 1;    // px of drift the settle loop still corrects
 
 // Extra heights (kept in sync with messenger.css) that sit INSIDE a virtual
 // item but are invisible to a content-only estimate. Without them every
@@ -253,6 +261,10 @@ export const MessageList = memo(
     // Handles for the pending entrance-animation clear timers, so unmount
     // cancels them (a late setState after React is gone would throw).
     const entranceTimersRef = useRef<Set<number>>(new Set());
+    // Bottom-settle rAF handle + its bounds (see PIN_SETTLE_MAX_MS above).
+    const pinSettleRafRef = useRef<number | null>(null);
+    const pinSettleDeadlineRef = useRef(0);
+    const pinSettleLastTargetRef = useRef(-1);
 
     // Identity key matches the store's dedup key (id || client_id), so a temp
     // message later replaced by its server twin keeps its virtual slot.
@@ -266,6 +278,61 @@ export const MessageList = memo(
       overscan: OVERSCAN,
       getItemKey: (index) => messageKey(messages[index]),
     });
+
+    // ── True bottom + self-healing settle (issue #508) ─────────────────
+    // Two sources of truth, whichever is larger: the laid-out DOM
+    // (`el.scrollHeight` — catches an image growing past its reserved box) and
+    // the virtualizer's own content height (catches a `measureElement`
+    // correction that has not reached the DOM yet). Reading only one of them
+    // used to leave a small un-scrolled gap at the bottom.
+    const bottomScrollTarget = useCallback(
+      (el: HTMLElement) => {
+        // A zero-height viewport (not laid out yet) has no meaningful bottom —
+        // writing scrollTop then would be a no-op at best and can fire a
+        // spurious scroll event. The virtualizer's ResizeObserver re-runs the
+        // pin once the scroller has a real height.
+        if (el.clientHeight <= 0) return 0;
+        return Math.max(
+          0,
+          Math.max(
+            el.scrollHeight,
+            HISTORY_HEADER_HEIGHT + virtualizer.getTotalSize() + BOTTOM_GAP_HEIGHT,
+          ) - el.clientHeight,
+        );
+      },
+      [virtualizer],
+    );
+
+    const cancelBottomSettle = useCallback(() => {
+      if (pinSettleRafRef.current !== null) {
+        cancelAnimationFrame(pinSettleRafRef.current);
+        pinSettleRafRef.current = null;
+      }
+      pinSettleDeadlineRef.current = 0;
+      pinSettleLastTargetRef.current = -1;
+    }, []);
+
+    // Keeps re-clamping to the (moving) bottom for a short bounded window while
+    // the user is at the bottom. Yields immediately to a gesture and stops as
+    // soon as the target stops growing.
+    const settleToBottom = useCallback(() => {
+      if (pinSettleRafRef.current !== null) return;
+      pinSettleDeadlineRef.current = Date.now() + PIN_SETTLE_MAX_MS;
+      pinSettleLastTargetRef.current = -1;
+      const step = () => {
+        pinSettleRafRef.current = null;
+        const el = scrollerRef.current;
+        if (!el || !isAtBottomRef.current || userDraggingRef.current) return;
+        const target = bottomScrollTarget(el);
+        if (Math.abs(el.scrollTop - target) > PIN_SETTLE_EPSILON) el.scrollTop = target;
+        if (target === pinSettleLastTargetRef.current) return;
+        pinSettleLastTargetRef.current = target;
+        if (Date.now() < pinSettleDeadlineRef.current) {
+          pinSettleRafRef.current = requestAnimationFrame(step);
+        }
+      };
+      pinSettleRafRef.current = requestAnimationFrame(step);
+    }, [bottomScrollTarget]);
 
     // ── Read receipts: the "read line" (Telegram-style) ────────────────
     // The UI reports exactly ONE message per pass: the newest message fully
@@ -303,7 +370,8 @@ export const MessageList = memo(
       // first scroll event (a message arriving in between used to yank the
       // view back to the bottom mid-gesture).
       userDraggingRef.current = true;
-    }, []);
+      cancelBottomSettle();
+    }, [cancelBottomSettle]);
 
     const handlePointerUp = useCallback(() => {
       userDraggingRef.current = false;
@@ -409,8 +477,11 @@ export const MessageList = memo(
       }
 
       if (isAtBottomRef.current) {
-        const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
-        if (Math.abs(el.scrollTop - maxScrollTop) > 1) el.scrollTop = maxScrollTop;
+        const target = bottomScrollTarget(el);
+        if (Math.abs(el.scrollTop - target) > 1) el.scrollTop = target;
+        // Late measurements land after this pass; keep re-clamping for a short
+        // bounded window so the bottom is exact (issue #508).
+        settleToBottom();
         return;
       }
 
@@ -423,7 +494,7 @@ export const MessageList = memo(
       // (the guard above) must be applied the moment the gesture settles.
       // scrollRect.height fires when a keyboard-resized shell shrinks/grows
       // the scroller — the honest "the layout changed" signal for the pin.
-    }, [totalSize, messages, virtualizer, virtualizer.isScrolling, virtualizer.scrollRect?.height]);
+    }, [totalSize, messages, virtualizer, virtualizer.isScrolling, virtualizer.scrollRect?.height, bottomScrollTarget, settleToBottom]);
 
     // ── Report read receipts after the scroll position has settled ───────
     // Runs after the pin/anchor effect above so the viewport is final when the
@@ -506,8 +577,9 @@ export const MessageList = memo(
       return () => {
         for (const id of timers) window.clearTimeout(id);
         timers.clear();
+        cancelBottomSettle();
       };
-    }, []);
+    }, [cancelBottomSettle]);
 
     // ── Imperative API (send-scroll, pinned-message jump) ───────────────
     const scrollToBottom = useCallback(() => {
