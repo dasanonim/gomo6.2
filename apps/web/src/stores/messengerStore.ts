@@ -14,6 +14,16 @@ let conversationLoadGeneration = 0;
 let initInFlight: Promise<void> | null = null;
 const latestEventIds = new Map<string, string>();
 
+// ── Buffered older pages ─────────────────────────────────────────────────────
+// Older pages are fetched ahead of the reader but are only written into
+// `messages` at a quiet moment (see flushPendingOlderMessages). Inserting a
+// page above the viewport shifts the content under the reader; on iOS the
+// scroll compensation for that shift is deferred until the momentum ends, so
+// the shift is visible for as long as the coast lasts.
+const pendingOlderPages = new Map<string, MessageView[]>();
+/** Cap on the buffered runway (~two pages). */
+const MAX_PENDING_OLDER_MESSAGES = 100;
+
 function maxEventId(a: string, b: string): string {
   const left = a.replace(/^0+(?=\d)/, "");
   const right = b.replace(/^0+(?=\d)/, "");
@@ -215,6 +225,7 @@ export function  destroyMessenger(): void {
   typingTimers.clear();
   latestEventIds.clear();
   localReadThrough.clear();
+  pendingOlderPages.clear();
 }
 
 export function queueMarkDelivered(conversationId: string, messageId: string, sentAt?: string): void {
@@ -333,7 +344,11 @@ type MessengerStore = {
   ensureConversation: (conversationId: string) => Promise<void>;
   loadMessages: (conversationId: string) => Promise<void>;
   syncMessages: (conversationId: string) => Promise<void>;
-  loadMoreMessages: (conversationId: string) => Promise<void>;
+  /** Fetches the previous page. With `{ postpone: true }` the page is buffered
+   *  instead of inserted — the caller decides when it is safe to show it. */
+  loadMoreMessages: (conversationId: string, options?: { postpone?: boolean }) => Promise<void>;
+  /** Inserts a buffered page. Call only while the scroller is at rest. */
+  flushPendingOlderMessages: (conversationId: string) => boolean;
   /** Sends a message. When `conversationId` is omitted the currently open
    *  conversation is used; the explicit override lets the share sheet send
    *  into a chat without opening the messenger. */
@@ -480,6 +495,8 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
   // ── Load messages ─────────────────────────────────────────────────────
   loadMessages: async (conversationId: string) => {
     const generation = ++messageLoadGeneration;
+    // A full (re)load supersedes any page that was waiting to be shown.
+    pendingOlderPages.delete(conversationId);
     let hasCachedMessages = false;
     const ownerId = get().me?.id ?? null;
     set({ isMessagesLoading: true, error: null });
@@ -561,14 +578,23 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
   },
 
   // ── Load older messages (pagination) ──────────────────────────────────
-  loadMoreMessages: async (conversationId: string) => {
+  // `postpone` fetches the page but leaves it in the buffer instead of writing
+  // it into `messages` (see flushPendingOlderMessages). The list uses that so a
+  // page can be *requested* early — while the reader is still far from the top
+  // — without *inserting* it while they are coasting.
+  loadMoreMessages: async (conversationId: string, options?: { postpone?: boolean }) => {
+    const postpone = options?.postpone === true;
     const { messages, isLoadingMore } = get();
     if (isLoadingMore || messages.length === 0) return;
+    const buffered = postpone ? pendingOlderPages.get(conversationId) : undefined;
+    if (postpone && (buffered?.length ?? 0) >= MAX_PENDING_OLDER_MESSAGES) return;
     const generation = messageLoadGeneration;
     const requestGeneration = ++loadMoreRequestGeneration;
     const ownerId = get().me?.id ?? null;
 
-    const oldest = messages[0];
+    // With a buffered page already fetched, the cursor is that page's oldest
+    // message — `messages` has not moved yet.
+    const oldest = buffered?.[0] ?? messages[0];
     set({ isLoadingMore: true });
     try {
       const raw = await messengerApi.getMessages(conversationId, oldest.id);
@@ -581,6 +607,11 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
       }
       if (older.length === 0) {
         set({ hasMoreMessages: false, isLoadingMore: false });
+        return;
+      }
+      if (postpone) {
+        set({ hasMoreMessages: older.length >= 50, isLoadingMore: false });
+        pendingOlderPages.set(conversationId, prependOlder(buffered ?? [], older));
         return;
       }
       set((s) => {
@@ -603,6 +634,27 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
         set({ isLoadingMore: false });
       }
     }
+  },
+
+  // ── Insert a buffered page ────────────────────────────────────────────
+  // Returns true when a page was inserted. The caller is the list, and it only
+  // calls this at a moment when the scroller is at rest: inserting a page above
+  // the viewport shifts the content the reader is looking at, and on iOS the
+  // scroll compensation for that shift is deferred until the momentum ends —
+  // which is exactly the "thrown thousands of pixels" behaviour.
+  flushPendingOlderMessages: (conversationId: string) => {
+    const page = pendingOlderPages.get(conversationId);
+    if (!page || page.length === 0) return false;
+    pendingOlderPages.delete(conversationId);
+    if (get().selectedConversationId !== conversationId) return false;
+    const ownerId = get().me?.id ?? null;
+    set((s) => {
+      const messages = prependOlder(s.messages, page);
+      rememberLatestEventId(conversationId, messages);
+      cacheCurrentMessages(ownerId, conversationId, messages);
+      return { messages };
+    });
+    return true;
   },
 
   // ── Send message ──────────────────────────────────────────────────────

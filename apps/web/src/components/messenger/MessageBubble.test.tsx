@@ -485,8 +485,8 @@ describe("MessageBubble", () => {
     return render(
       <div className="chat-panel">
         <div className="message-scroll">
-          <div className="message-virtual-list">
-            <div className="message-virtual-item">{ui}</div>
+          <div className="message-list">
+            <div className="message-row">{ui}</div>
           </div>
         </div>
       </div>,
@@ -511,7 +511,7 @@ describe("MessageBubble", () => {
 
     // The chat blurs (per-surface), and only this message's row is excluded.
     expect(container.querySelector(".chat-panel")?.className).toContain("has-message-menu");
-    const host = container.querySelector(".message-virtual-item");
+    const host = container.querySelector(".message-row");
     expect(host?.className).toContain("is-menu-host");
   });
 
@@ -543,7 +543,7 @@ describe("MessageBubble", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(container.querySelector(".chat-panel")?.className).not.toContain("has-message-menu");
-    expect(container.querySelector(".message-virtual-item")?.className).not.toContain("is-menu-host");
+    expect(container.querySelector(".message-row")?.className).not.toContain("is-menu-host");
   });
 
   it("floats exactly ONE copy of the message even under StrictMode double effects", async () => {

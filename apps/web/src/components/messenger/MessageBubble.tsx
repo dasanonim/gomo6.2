@@ -36,7 +36,6 @@ interface Props {
   isConsecutive: boolean;
   isPinned: boolean;
   isGroup?: boolean;
-  isNew?: boolean;
   /** Notes self-chat: show quick pin button + folder/tag chips. */
   notesControls?: boolean;
   /** Notes self-chat: open the organize dialog for this note. */
@@ -62,7 +61,6 @@ export const MessageBubble = memo(function MessageBubble({
   isConsecutive,
   isPinned,
   isGroup,
-  isNew,
   notesControls,
   onNotesOrganize,
   senderName,
@@ -327,7 +325,7 @@ export const MessageBubble = memo(function MessageBubble({
     if (!menuOpen) return;
     const rowEl = rowInnerRef.current;
     const chatEl = rowEl?.closest(".chat-panel");
-    const hostEl = rowEl?.closest(".message-virtual-item") ?? rowEl?.closest(".notes-pinned-item") ?? null;
+    const hostEl = rowEl?.closest(".message-row") ?? rowEl?.closest(".notes-pinned-item") ?? null;
     const scroller = rowEl?.closest(".message-scroll");
     chatEl?.classList.add("has-message-menu");
     hostEl?.classList.add("is-menu-host");
@@ -509,7 +507,7 @@ export const MessageBubble = memo(function MessageBubble({
             in the overlay below. */}
         <div
           ref={messageBubbleRef}
-          className={`message-bubble${isMine ? " is-mine" : ""}${isPinned ? " is-pinned" : ""}${message.localStatus === "failed" ? " is-stuck" : ""}${isNew ? " is-new" : ""}${isMediaBubble ? " is-media-bubble" : ""}${isMediaBubble && message.content.trim() ? " has-caption" : ""}${isShareMessage ? " is-share-bubble" : ""}${isCompact ? " is-compact" : ""}${hasMeasuredLines && !isCompact && !isMediaBubble ? " is-multiline" : ""}${menuOpen ? " is-menu-hidden" : ""}`}
+          className={`message-bubble${isMine ? " is-mine" : ""}${isPinned ? " is-pinned" : ""}${message.localStatus === "failed" ? " is-stuck" : ""}${isMediaBubble ? " is-media-bubble" : ""}${isMediaBubble && message.content.trim() ? " has-caption" : ""}${isShareMessage ? " is-share-bubble" : ""}${isCompact ? " is-compact" : ""}${hasMeasuredLines && !isCompact && !isMediaBubble ? " is-multiline" : ""}${menuOpen ? " is-menu-hidden" : ""}`}
           data-message-id={message.id}
           onContextMenu={(e) => { e.preventDefault(); openMenu(); }}
         >
