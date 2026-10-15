@@ -96,6 +96,8 @@ describe("messengerStore", () => {
       onlineUsers: new Set(),
       isInitialLoading: true,
       isMessagesLoading: false,
+      isLoadingMore: false,
+      hasMoreMessages: true,
       isSending: false,
       error: null,
     });
@@ -221,6 +223,73 @@ describe("messengerStore", () => {
       await useMessengerStore.getState().loadMoreMessages("conv-1");
 
       expect(messengerApi.getMessages).not.toHaveBeenCalled();
+    });
+
+    it("buffers a postponed page instead of inserting it", async () => {
+      useMessengerStore.setState({
+        me: { id: "u1", username: "test" },
+        selectedConversationId: "conv-1",
+        messages: [mockMsg({ id: "m3", sent_at: "2025-06-01T13:00:00Z" })],
+      });
+      vi.mocked(messengerApi.getMessages).mockResolvedValue([
+        mockMsg({ id: "m1", sent_at: "2025-06-01T11:00:00Z" }),
+        mockMsg({ id: "m2", sent_at: "2025-06-01T12:00:00Z" }),
+      ]);
+
+      await useMessengerStore.getState().loadMoreMessages("conv-1", { postpone: true });
+
+      // Nothing was inserted: a page that lands above the viewport moves the
+      // content under the reader, and on iOS the compensation for that shift is
+      // deferred until the momentum ends.
+      expect(useMessengerStore.getState().messages.map((m) => m.id)).toEqual(["m3"]);
+      expect(useMessengerStore.getState().isLoadingMore).toBe(false);
+
+      // ...and the list inserts it at the moment it chooses.
+      expect(useMessengerStore.getState().flushPendingOlderMessages("conv-1")).toBe(true);
+      expect(useMessengerStore.getState().messages.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
+
+      // The buffer is emptied, so a second flush is a no-op.
+      expect(useMessengerStore.getState().flushPendingOlderMessages("conv-1")).toBe(false);
+    });
+
+    it("uses the buffered page as the cursor for the next request", async () => {
+      useMessengerStore.setState({
+        me: { id: "u1", username: "test" },
+        selectedConversationId: "conv-1",
+        messages: [mockMsg({ id: "m3", sent_at: "2025-06-01T13:00:00Z" })],
+      });
+      vi.mocked(messengerApi.getMessages).mockResolvedValue([
+        mockMsg({ id: "m1", sent_at: "2025-06-01T11:00:00Z" }),
+      ]);
+
+      await useMessengerStore.getState().loadMoreMessages("conv-1", { postpone: true });
+      await useMessengerStore.getState().loadMoreMessages("conv-1", { postpone: true });
+
+      // The second page is fetched *older* than the buffered one — asking for
+      // the same cursor twice would return the same page forever.
+      expect(messengerApi.getMessages).toHaveBeenNthCalledWith(1, "conv-1", "m3");
+      expect(messengerApi.getMessages).toHaveBeenNthCalledWith(2, "conv-1", "m1");
+    });
+
+    it("drops a buffered page when the conversation moves on", async () => {
+      useMessengerStore.setState({
+        me: { id: "u1", username: "test" },
+        selectedConversationId: "conv-1",
+        messages: [mockMsg({ id: "m3", sent_at: "2025-06-01T13:00:00Z" })],
+      });
+      vi.mocked(messengerApi.getMessages).mockResolvedValue([
+        mockMsg({ id: "m1", sent_at: "2025-06-01T11:00:00Z" }),
+      ]);
+      await useMessengerStore.getState().loadMoreMessages("conv-1", { postpone: true });
+
+      // The reader switched chats: the page belongs to the old one and must not
+      // be prepended into the new conversation's list.
+      useMessengerStore.setState({
+        selectedConversationId: "conv-2",
+        messages: [mockMsg({ id: "n1", sent_at: "2025-06-01T13:00:00Z" })],
+      });
+      expect(useMessengerStore.getState().flushPendingOlderMessages("conv-1")).toBe(false);
+      expect(useMessengerStore.getState().messages.map((m) => m.id)).toEqual(["n1"]);
     });
   });
 

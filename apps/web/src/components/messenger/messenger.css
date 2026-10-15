@@ -666,6 +666,22 @@ main.is-messenger-page {
   border-top: 1px solid oklch(var(--primary) / 0.12);
   font-size: 12px;
   flex-shrink: 0;
+  /* An interactive banner: strip the button chrome so it reads as a strip and
+     keeps the previous layout exactly. */
+  width: 100%;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  box-sizing: border-box;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.pinned-message-banner:hover {
+  background: oklch(var(--primary) / 0.14);
 }
 
 .pinned-message-icon {
@@ -687,14 +703,17 @@ main.is-messenger-page {
 }
 
 /* ── Message scroll area ──
-   Plain natively-scrolling container: the list is a normal column of rows and
-   the browser owns scrolling. No virtual spacer, no absolutely-positioned
-   items, no scroll engine. */
+   The virtualizer owns the scroll contract: a plain `overflow-y: auto` scroller
+   holds a positioned spacer of the full content height, and only the visible
+   rows are mounted inside it. */
 
 .message-scroll-wrap {
   min-width: 0;
   max-width: 100%;
   overflow: visible;
+  /* Anchors the floating "scroll to bottom" button and the history loader to
+     the message area, so they stay clear of the composer at any height. */
+  position: relative;
 }
 
 .message-scroll {
@@ -708,21 +727,25 @@ main.is-messenger-page {
   overflow-x: clip;
   padding: 0;
   position: relative;
+  /* The virtualizer places rows from measurements it owns; the browser's own
+     scroll anchoring would second-guess those writes. */
+  overflow-anchor: none;
   overscroll-behavior-y: contain;
   scrollbar-gutter: stable;
   -webkit-overflow-scrolling: touch;
 }
 
-.message-list {
+/* Positioned spacer of the full content height. Rows are absolutely placed
+   inside it from `virtualItem.start`. */
+.message-virtual-list {
   /* Side inset of every message row. Kept to a hairline: bubbles should reach
      the edge, with just enough so a shadow/border is not clipped. */
   --message-gutter: 2px;
+  position: relative;
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  /* Gap under the last message so a bubble never touches the composer. */
-  padding-bottom: 12px;
 }
 
 .message-row {
@@ -731,6 +754,17 @@ main.is-messenger-page {
   min-width: 0;
   max-width: 100%;
   padding-inline: var(--message-gutter);
+}
+
+/* `scrollToMessage` briefly rings the message it jumped to. Transform/outline
+   only — never layout — so it cannot disturb the virtual measurements. */
+.message-row.is-flash .message-bubble {
+  animation: message-flash 1.4s ease-out;
+}
+
+@keyframes message-flash {
+  0%, 30% { box-shadow: 0 0 0 2px oklch(var(--primary) / 0.55); }
+  100% { box-shadow: 0 0 0 2px oklch(var(--primary) / 0); }
 }
 
 /* Error banner + message list share one grid row. */
@@ -1572,6 +1606,8 @@ main.is-messenger-page {
 .chat-panel.has-message-menu .notes-key-banner,
 .chat-panel.has-message-menu .notes-filter-bar,
 .chat-panel.has-message-menu .notes-pinned-section .notes-section-heading,
+.chat-panel.has-message-menu .scroll-to-bottom-btn,
+.chat-panel.has-message-menu .msg-history-loader,
 .chat-panel.has-message-menu .message-row:not(.is-menu-host),
 .chat-panel.has-message-menu .notes-pinned-item:not(.is-menu-host) {
   filter: blur(6px) brightness(0.85);
@@ -2782,6 +2818,97 @@ main.is-messenger-page {
   background: oklch(var(--destructive) / 0.15);
 }
 
+/* ── Scroll to bottom FAB ──
+   Only rendered while the user is away from the newest message. When unread
+   arrivals are pending it carries the count instead of a separate pill. */
+
+.scroll-to-bottom-btn {
+  position: absolute;
+  bottom: 12px;
+  right: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid oklch(var(--border));
+  border-radius: 50%;
+  background: oklch(var(--card));
+  color: oklch(var(--foreground));
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  z-index: 5;
+  transition: background-color 0.15s ease;
+}
+
+.scroll-to-bottom-btn:hover {
+  background: oklch(var(--thread-hover));
+}
+
+.scroll-to-bottom-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid oklch(var(--card));
+  border-radius: 999px;
+  background: oklch(var(--destructive));
+  color: oklch(var(--destructive-foreground));
+  font-size: 10px;
+  font-weight: 700;
+  pointer-events: none;
+  user-select: none;
+  animation: fade-in-scale 0.15s ease;
+}
+
+/* ── History loader ──
+   Floats at the top of the message area. It is deliberately NOT part of the
+   scroll math: a in-flow loader would shift the very content it is loading. */
+
+.msg-history-loader {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: oklch(var(--card) / 0.92);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+  z-index: 5;
+  pointer-events: none;
+  animation: msg-history-fade-in 0.15s ease-out;
+}
+
+.msg-history-loader-spinner {
+  width: 13px;
+  height: 13px;
+  box-sizing: border-box;
+  border: 2px solid oklch(var(--border));
+  border-top-color: oklch(var(--primary));
+  border-radius: 50%;
+  animation: msg-history-spin 0.8s linear infinite;
+}
+
+@keyframes msg-history-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes msg-history-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* ── User info panel (slide-out from right) ── */
 
 .user-info-panel-backdrop {
@@ -3190,9 +3317,8 @@ main.is-messenger-page {
     height: 32px;
   }
 
-  .message-list {
+  .message-virtual-list {
     --message-gutter: 2px;
-    padding-bottom: 10px;
   }
 
   .chat-panel.is-empty .chat-empty-state {

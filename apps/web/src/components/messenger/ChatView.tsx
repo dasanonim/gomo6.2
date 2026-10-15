@@ -12,7 +12,7 @@ import { MessageBubble } from "./MessageBubble";
 import { MessageComposer } from "./MessageComposer";
 import { UserInfoPanel } from "./UserInfoPanel";
 import { parseGiftContent, GiftDetailDialog } from "./MessageContent";
-import { MessageList } from "./MessageList";
+import { MessageList, type MessageListHandle } from "./MessageList";
 import { NotesSettingsDialog } from "./NotesSettingsDialog";
 import { NotesOrganizeDialog } from "./NotesOrganizeDialog";
 import { hasNotesKey } from "@/utils/notesCrypto";
@@ -70,6 +70,8 @@ export const ChatView = memo(function ChatView({
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [isBatchSending, setIsBatchSending] = useState(false);
   const batchSendingRef = useRef(false);
+  // Virtualized list handle: send-time follow and the pinned-message jump.
+  const messageListRef = useRef<MessageListHandle>(null);
   // Notes self-chat organization
   const [notesFolderFilter, setNotesFolderFilter] = useState<string | null>(null);
   const [organizeMessage, setOrganizeMessage] = useState<MessageView | null>(null);
@@ -133,6 +135,13 @@ export const ChatView = memo(function ChatView({
       setPinnedText("[Нажмите чтобы открыть]");
     }
   }, [conversation?.pinned_message_id, messageById]);
+
+  // Jump to the pinned message. The list pages older history on demand, so a
+  // pin outside the loaded window still resolves.
+  const handleJumpToPinned = useCallback(() => {
+    const pid = conversation?.pinned_message_id;
+    if (pid) messageListRef.current?.scrollToMessage(pid);
+  }, [conversation?.pinned_message_id]);
 
   // Escape key to go back to conversation list
   useEffect(() => {
@@ -275,6 +284,9 @@ export const ChatView = memo(function ChatView({
       setDraft("");
       setReplyToMessage(null);
       setPendingAttachments([]);
+      // Sending is an explicit "I am here" gesture: follow the message we just
+      // wrote, even if the user had scrolled up to read history.
+      requestAnimationFrame(() => messageListRef.current?.scrollToBottom());
     } finally {
       batchSendingRef.current = false;
       setIsBatchSending(false);
@@ -458,12 +470,17 @@ export const ChatView = memo(function ChatView({
 
         {/* Pinned message banner — below topbar, above messages */}
         {conversation.pinned_message_id && pinnedText && (
-          <div className="pinned-message-banner">
+          <button
+            type="button"
+            className="pinned-message-banner"
+            onClick={handleJumpToPinned}
+            title="Перейти к закреплённому сообщению"
+          >
             <div className="pinned-message-icon"><Pin size={12} /></div>
             <div className="pinned-message-content">
               <p className="pinned-message-text">{pinnedText}</p>
             </div>
-          </div>
+          </button>
         )}
 
       </div>
@@ -561,6 +578,7 @@ export const ChatView = memo(function ChatView({
         ) : (
           <MessageList
             key={conversation.id}
+            ref={messageListRef}
             renderMessage={renderMessage}
             messagesOverride={visibleMessages}
           />
