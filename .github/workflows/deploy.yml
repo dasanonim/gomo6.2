@@ -226,12 +226,21 @@ jobs:
       # в macOS keychain (там живут устаревшие записи, которые молча выигрывают),
       # а cliPluginsExtraDirs возвращает видимость плагина buildx — иначе
       # `docker buildx` не находит билдер и падает на «unknown flag: --platform».
+      #
+      # Каталог ОБЯЗАН быть своим у каждой ноги матрицы: ноги идут параллельно
+      # на одной машине, а раньше все писали в один $HOME/.docker-gomo6-ci и на
+      # старте делали ему `rm -rf` — то есть вырывали его друг у друга.
+      # Симптомы были разные, причина одна: у ноги, потерявшей config.json,
+      # push уходил без авторизации и ghcr отвечал «failed to fetch oauth token:
+      # denied: denied» (дело не в правах пакета — токен просто не подставлялся),
+      # а у ноги, потерявшей buildx-каталог, падало с «failed to update builder
+      # last activity time: open …/buildx/activity/.tmp-…: invalid argument».
+      # Проверка: последний успешный деплой шёл одной ногой, все упавшие — с
+      # четырьмя.
       - name: Prepare Docker config (ghcr.io, без keychain)
         run: |
           set -eo pipefail
-          CFG="$HOME/.docker-gomo6-ci"
-          rm -rf "$CFG"
-          mkdir -p "$CFG"
+          CFG="$(mktemp -d "${RUNNER_TEMP:-$HOME}/gomo6-docker-XXXXXX")"
           AUTH="$(printf '%s:%s' "${{ github.actor }}" "${{ github.token }}" | base64)"
           printf '{"auths":{"ghcr.io":{"auth":"%s"}},"cliPluginsExtraDirs":["%s"]}' \
             "$AUTH" "$HOME/.docker/cli-plugins" > "$CFG/config.json"
