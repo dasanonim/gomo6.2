@@ -171,6 +171,15 @@ export function ChannelChat({
   const userDraggingRef = useRef(false);
 
   const isScrollingRef = useRef(false);
+  /**
+   * True while a pointer/touch is on the list. NOTHING may mutate the mounted
+   * window (or write `scrollTop`) in that state: WebKit defers or drops a
+   * programmatic scroll change while a gesture is live — even a finger that is
+   * simply resting — so the content moves under the finger and the reader ends
+   * up acting on a different message, with a second jump when the deferred
+   * write lands.
+   */
+  const pointerActiveRef = useRef(false);
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRafRef = useRef<number | null>(null);
   /** A fetched page waiting for the scroller to come to rest. */
@@ -392,7 +401,7 @@ export function ChannelChat({
 
   /** Drop rows from the oldest side. Never the row the reader is looking at. */
   const pruneTopIfNeeded = useCallback(() => {
-    if (isScrollingRef.current) return;
+    if (isScrollingRef.current || pointerActiveRef.current) return;
     const el = getScroller();
     if (!el) return;
     const { start, end } = sliceRef.current;
@@ -423,7 +432,7 @@ export function ChannelChat({
    * dropped at a rest and the layout anchor corrects the position afterwards.
    */
   const gcIfOverCap = useCallback(() => {
-    if (isScrollingRef.current) return;
+    if (isScrollingRef.current || pointerActiveRef.current) return;
     const el = getScroller();
     if (!el) return;
     const { start, end } = sliceRef.current;
@@ -521,8 +530,8 @@ export function ChannelChat({
       // (iOS): verify the rest from the position and re-arm if it still moves.
       // Everything below writes `scrollTop`, which WebKit drops under a live
       // coast.
-      if (el && Math.abs(el.scrollTop - lastTopRef.current) > 1) {
-        lastTopRef.current = el.scrollTop;
+      if (pointerActiveRef.current || (el && Math.abs(el.scrollTop - lastTopRef.current) > 1)) {
+        if (el) lastTopRef.current = el.scrollTop;
         isScrollingRef.current = true;
         if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
         settleTimerRef.current = setTimeout(() => {
@@ -598,6 +607,29 @@ export function ChannelChat({
     };
   }, [handleScroll]);
 
+  // ── Pointer/touch gate ──────────────────────────────────────────────────
+  const markPointerActive = useCallback(() => {
+    pointerActiveRef.current = true;
+  }, []);
+  const clearPointerActive = useCallback(() => {
+    if (!pointerActiveRef.current) return;
+    pointerActiveRef.current = false;
+    settleRef.current?.();
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("pointerup", clearPointerActive, true);
+    window.addEventListener("pointercancel", clearPointerActive, true);
+    window.addEventListener("touchend", clearPointerActive, true);
+    window.addEventListener("touchcancel", clearPointerActive, true);
+    return () => {
+      window.removeEventListener("pointerup", clearPointerActive, true);
+      window.removeEventListener("pointercancel", clearPointerActive, true);
+      window.removeEventListener("touchend", clearPointerActive, true);
+      window.removeEventListener("touchcancel", clearPointerActive, true);
+    };
+  }, [clearPointerActive]);
+
   // ── Sentinels: bi-directional window triggers ───────────────────────────
   // `hasMessages` is a dependency so the observers are (re)attached when the
   // list itself appears — nothing is rendered without messages.
@@ -667,7 +699,7 @@ export function ChannelChat({
   // pins instead. A layout change (an interactive-widget keyboard resizing the
   // shell) also lands here.
   useLayoutEffect(() => {
-    if (!followingRef.current || isScrollingRef.current) return;
+    if (!followingRef.current || isScrollingRef.current || pointerActiveRef.current) return;
     const el = getScroller();
     if (!el) return;
     const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
@@ -800,6 +832,7 @@ export function ChannelChat({
       <div
         onPointerDown={() => {
           userDraggingRef.current = true;
+          markPointerActive();
         }}
         onPointerUp={() => {
           userDraggingRef.current = false;
@@ -807,6 +840,8 @@ export function ChannelChat({
         onPointerCancel={() => {
           userDraggingRef.current = false;
         }}
+        onTouchStart={markPointerActive}
+        onMouseDown={markPointerActive}
         data-testid="channel-chat-messages"
         role="log"
         aria-label="Сообщения канала"

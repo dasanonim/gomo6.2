@@ -130,14 +130,27 @@ virtualization. `CSS.supports("overflow-anchor", …)` is deliberately NOT used:
 an engine may parse the property without anchoring, which would put Safari back
 on the broken branch.
 
-### 2. `scroll` events can go quiet before the momentum has visually ended
+### 2. A quiet event stream is not a rest — and a finger is not a rest either
 
 The heavy pass (pin, insert above the viewport, top prune) writes `scrollTop`,
-and WebKit drops such a write under a live coast — the classic visible jump. The
-settle pass is therefore no longer triggered by the timer alone: it verifies the
-rest from the position (`scrollTop` unchanged since the last observation) and
-re-arms itself otherwise, so a mutation can only ever land on a genuinely
-stopped scroller.
+and WebKit drops such a write while a gesture is live. Two guards, both required:
+
+* **The position must be unchanged** since the last observation, or the pass
+  re-arms itself. `scroll` events can go quiet before the momentum has visually
+  ended (iOS), so the timer alone is not proof.
+* **No pointer may be on the list.** A finger that is simply resting is still a
+  live gesture for WebKit: a mutation there moves the content under the finger
+  (the reader ends up tapping or long-pressing a *different* message — observed
+  on a device as "it replies to a random message while I scroll") and the
+  deferred `scrollTop` write lands later as a second, visible jump ("it
+  teleports me twice"). The list therefore tracks `pointerdown`…`pointerup`
+  (window-level, so a flick that ends off-screen still clears it) and defers
+  every mutation until the release — which also arms the settle, so the work
+  happens immediately after the finger lifts.
+
+The first implementation of this list had the same rule (`gestureRef`) and it was
+dropped as "spaghetti" during the rewrite; the regressions above are what
+reintroducing it fixed. Do not remove it.
 
 ## Media: no late reflow
 

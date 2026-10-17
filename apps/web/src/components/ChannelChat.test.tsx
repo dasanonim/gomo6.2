@@ -318,6 +318,49 @@ it("restores a runway of already-loaded rows when the reader scrolls up", async 
   expect(anchor?.offsetTop).toBe(document.documentElement.scrollTop);
 });
 
+it("does not touch the list while a finger is on the screen", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ChannelChat channelId={CH} currentUserId={ME} />);
+  await screen.findByPlaceholderText(/Написать/i);
+
+  act(() => {
+    for (let id = 1; id <= 400; id += 1) {
+      wsMock.emit("new_channel_message", {
+        id,
+        channel_id: CH,
+        user_id: "u9",
+        username: "bob",
+        avatar_url: null,
+        content: `msg-${id}`,
+        created_at: "2026-08-20T10:00:00Z",
+      });
+    }
+  });
+  await waitFor(() => expect(screen.getByText("msg-400")).toBeInTheDocument());
+  const list = screen.getByTestId("channel-chat-messages");
+  const before = document.querySelectorAll(".channel-message-row").length;
+
+  // Finger down, then scroll up: the runway must NOT be mounted (WebKit drops
+  // the compensating write under a live gesture).
+  fireEvent.pointerDown(list);
+  act(() => {
+    document.documentElement.scrollTop = 0;
+    window.dispatchEvent(new Event("scroll"));
+  });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(document.querySelectorAll(".channel-message-row")).toHaveLength(before);
+
+  // Lifting it runs the deferred pass.
+  act(() => {
+    fireEvent.pointerUp(window);
+  });
+  await waitFor(
+    () => expect(document.querySelectorAll(".channel-message-row").length).toBeGreaterThan(before),
+    { timeout: 3000 },
+  );
+});
+
 it("mounts only the windowed slice for a long history", async () => {
   const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
   vi.stubGlobal("fetch", fetchMock);

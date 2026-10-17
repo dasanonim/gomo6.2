@@ -258,6 +258,16 @@ export const MessageList = memo(
 
     // ── Scroll bookkeeping ─────────────────────────────────────────────
     const isScrollingRef = useRef(false);
+    /**
+     * True while a pointer/touch is on the list. NOTHING may mutate the mounted
+     * window (or write `scrollTop`) in that state: WebKit defers or drops a
+     * programmatic scroll change while a gesture is live — even a finger that
+     * is simply resting — so the content moves under the finger and the reader
+     * ends up acting on a different message, with a second jump when the
+     * deferred write lands. A quiet scroll event stream is NOT proof of a rest;
+     * this is.
+     */
+    const pointerActiveRef = useRef(false);
     const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const scrollRafRef = useRef<number | null>(null);
     const readTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -365,9 +375,9 @@ export const MessageList = memo(
         olderBusyRef.current = false;
       }
       // The insert itself goes through the verified-rest pass: a fetch can
-      // resolve while the reader is coasting, and inserting then is what
-      // WebKit drops.
-      if (!isScrollingRef.current) settleRef.current?.();
+      // resolve while the reader is coasting (or holding the screen), and
+      // inserting then is what WebKit drops.
+      if (!isScrollingRef.current && !pointerActiveRef.current) settleRef.current?.();
       return true;
     }, [loadMoreMessages]);
 
@@ -480,7 +490,7 @@ export const MessageList = memo(
      */
     const gcIfOverCap = useCallback(() => {
       const scroller = scrollerRef.current;
-      if (!scroller || isScrollingRef.current) return;
+      if (!scroller || isScrollingRef.current || pointerActiveRef.current) return;
       const { start, end } = derivedRef.current;
       if (end - start <= MAX_DOM_MESSAGES) return;
       const midpoint = Math.max(0, (scroller.scrollHeight - scroller.clientHeight) / 2);
@@ -586,8 +596,8 @@ export const MessageList = memo(
         // Everything below (a pin, an insert above the viewport, a top prune)
         // writes `scrollTop`, and a write under a live coast is dropped by
         // WebKit — which is exactly the visible jump.
-        if (scroller && Math.abs(scroller.scrollTop - lastTopRef.current) > 1) {
-          lastTopRef.current = scroller.scrollTop;
+        if (pointerActiveRef.current || (scroller && Math.abs(scroller.scrollTop - lastTopRef.current) > 1)) {
+          if (scroller) lastTopRef.current = scroller.scrollTop;
           isScrollingRef.current = true;
           if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
           settleTimerRef.current = setTimeout(() => {
@@ -647,6 +657,35 @@ export const MessageList = memo(
         prefetchOlder();
       });
     }, [updateBottomState, handleSettle, prefetchOlder]);
+
+    // ── Pointer/touch gate ─────────────────────────────────────────────
+    // A release can happen outside the list (a flick that ends off-screen), so
+    // the clearing listeners live on the window. Lifting the finger also arms
+    // the settle, so the work deferred by the gate happens immediately.
+    const markPointerActive = useCallback(() => {
+      pointerActiveRef.current = true;
+    }, []);
+    const clearPointerActive = useCallback(() => {
+      if (!pointerActiveRef.current) return;
+      pointerActiveRef.current = false;
+      settleRef.current?.();
+    }, []);
+
+    useEffect(() => {
+      // `window` is the mounted-window state in this component, so the global
+      // is addressed explicitly.
+      const target = globalThis;
+      target.addEventListener("pointerup", clearPointerActive, true);
+      target.addEventListener("pointercancel", clearPointerActive, true);
+      target.addEventListener("touchend", clearPointerActive, true);
+      target.addEventListener("touchcancel", clearPointerActive, true);
+      return () => {
+        target.removeEventListener("pointerup", clearPointerActive, true);
+        target.removeEventListener("pointercancel", clearPointerActive, true);
+        target.removeEventListener("touchend", clearPointerActive, true);
+        target.removeEventListener("touchcancel", clearPointerActive, true);
+      };
+    }, [clearPointerActive]);
 
     // ── Sentinels: bi-directional sliding-window triggers ──────────────
     // `hasMessages` is a dependency so the observers are (re)attached when the
@@ -725,7 +764,7 @@ export const MessageList = memo(
     // Only ever fires while the reader is at the bottom; the write is skipped
     // mid-coast (the settle pass pins instead).
     useLayoutEffect(() => {
-      if (!followingRef.current || isScrollingRef.current) return;
+      if (!followingRef.current || isScrollingRef.current || pointerActiveRef.current) return;
       if (pinnedTailRef.current === tailKey) return;
       pinnedTailRef.current = tailKey;
       const scroller = scrollerRef.current;
@@ -931,7 +970,16 @@ export const MessageList = memo(
     if (messages.length === 0) return null;
 
     return (
-      <div className="message-scroll-wrap">
+      // The pointer handlers are passive observers that open/close the
+      // "a finger is on the list" gate — they never take over the gesture and
+      // the wrapper is not an interactive control.
+      // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+      <div
+        className="message-scroll-wrap"
+        onPointerDown={markPointerActive}
+        onTouchStart={markPointerActive}
+        onMouseDown={markPointerActive}
+      >
         {/* Loader floats over the list — it must not take part in the scroll
             math, and it is explicitly excluded from scroll anchoring. */}
         {isLoadingMore && hasMoreMessages && (

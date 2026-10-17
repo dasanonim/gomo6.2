@@ -585,6 +585,35 @@ describe("MessageList (native DOM slicing)", () => {
     expect(rowIds(container).at(-1)).not.toBe("m499");
   });
 
+  it("does not touch the list while a finger is on the screen", async () => {
+    // WebKit defers/drops a programmatic scroll change while a gesture is live —
+    // even a resting finger. A mutation there moves the content under the finger
+    // (the reader ends up acting on a different message) and lands a second jump
+    // when the deferred write finally applies.
+    setStore({ messages: longList(500) });
+    const { container } = mountList();
+    const wrap = container.querySelector(".message-scroll-wrap") as HTMLElement;
+    const scroller = scrollerOf(container);
+
+    fireEvent.pointerDown(wrap);
+    const before = rows(container).length;
+    await scrollTo(container, 0);
+    await settle();
+
+    // The gate held: no runway was mounted, the position was not rewritten.
+    expect(rows(container)).toHaveLength(before);
+    expect(scroller.scrollTop).toBe(0);
+
+    // Lifting the finger runs the deferred pass immediately.
+    act(() => {
+      fireEvent.pointerUp(window);
+    });
+    await waitFor(() => {
+      expect(rows(container).length).toBeGreaterThan(before);
+    });
+    expect(scrollerOf(container).scrollTop).toBeGreaterThanOrEqual(RUNWAY_PX);
+  });
+
   it("requests the next page while the reader is still coasting", async () => {
     setStore({ messages: longList(50), hasMoreMessages: true });
     const { container } = mountList();
