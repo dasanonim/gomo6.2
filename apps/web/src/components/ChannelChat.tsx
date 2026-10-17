@@ -16,7 +16,9 @@ import { format, formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import {
   MAX_DOM_MESSAGES,
+  PREFETCH_PX,
   PRUNE_BATCH,
+  RUNWAY_PX,
   TAIL_WINDOW,
   WINDOW_STEP,
   resolveKeyWindow,
@@ -61,7 +63,6 @@ export interface ChannelMessage {
 const MAX_CONTENT_LENGTH = 4000;
 
 const AT_BOTTOM_SLACK = 12; // px from the bottom still treated as "at bottom"
-const TOP_LOAD_ZONE = 300; // px from the top that arms the history loader
 const GROUP_WINDOW_MS = 5 * 60 * 1000; // same-author messages within this are compact
 const LOAD_THROTTLE_MS = 500; // min gap between history page loads
 const SCROLL_SETTLE_MS = 150; // quiet time before the heavy pass (GC)
@@ -174,10 +175,18 @@ export function ChannelChat({
   const scrollRafRef = useRef<number | null>(null);
   /** A fetched page waiting for the scroller to come to rest. */
   const pendingOlderRef = useRef<ChannelMessage[] | null>(null);
-  /** The mounted slice + position of the previous commit (anchoring fallback). */
-  const prevSliceRef = useRef<MessageSlice | null>(null);
+  /**
+   * The row the reader is looking at, plus its layout position when it was
+   * captured. Any layout change above it moves it on screen; the compensation
+   * is derived from ITS displacement, so it does not depend on the order React
+   * commits a page insert and a window update in.
+   */
+  const layoutAnchorRef = useRef<{ key: string; offsetTop: number } | null>(null);
   const lastTopRef = useRef(0);
-  const pendingPruneRef = useRef<{ removed: number } | null>(null);
+  /** Which way the reader is heading: -1 up (history), +1 down, 0 unknown. */
+  const scrollDirectionRef = useRef<-1 | 0 | 1>(0);
+  /** The verified-rest pass, reachable from the fetch continuation. */
+  const settleRef = useRef<(() => void) | null>(null);
 
   const timeLabel = useMemo(
     () => (iso: string) => formatDistanceToNow(safeDate(iso), { locale: dateLocale, addSuffix: true }),
@@ -240,13 +249,14 @@ export function ChannelChat({
       if (older.length < 50) setHasMore(false);
       // Never insert under a live coast: the compensation for content added
       // above the viewport is deferred (and dropped) by WebKit mid-momentum.
-      if (isScrollingRef.current) pendingOlderRef.current = fresh;
-      else insertOlder(fresh);
+      // The page waits in the buffer and the verified-rest pass brings it in.
+      pendingOlderRef.current = fresh;
+      if (!isScrollingRef.current) settleRef.current?.();
     } finally {
       loadingMoreRef.current = false;
       setLoadingOlder(false);
     }
-  }, [channelId, insertOlder]);
+  }, [channelId]);
 
   const maybeLoadOlder = useCallback(() => {
     const now = Date.now();
@@ -364,7 +374,23 @@ export function ChannelChat({
     };
   }, [channelId]);
 
-  // ── Garbage collection: drop rows above the ceiling ─────────────────────
+  // ── Reader anchor + garbage collection ──────────────────────────────────
+  /** The row the reader is looking at, and where it sits right now. */
+  const captureLayoutAnchor = useCallback(() => {
+    const el = getScroller();
+    if (!el) return;
+    const top = el.scrollTop;
+    for (const node of listRef.current?.querySelectorAll<HTMLElement>(".channel-message-row") ?? []) {
+      if (node.offsetTop + node.offsetHeight > top + 1) {
+        const key = node.dataset.messageId;
+        if (key) layoutAnchorRef.current = { key, offsetTop: node.offsetTop };
+        return;
+      }
+    }
+    layoutAnchorRef.current = null;
+  }, []);
+
+  /** Drop rows from the oldest side. Never the row the reader is looking at. */
   const pruneTopIfNeeded = useCallback(() => {
     if (isScrollingRef.current) return;
     const el = getScroller();
@@ -372,28 +398,69 @@ export function ChannelChat({
     const { start, end } = sliceRef.current;
     const over = end - start - MAX_DOM_MESSAGES;
     if (over <= 0) return;
-    const list = messagesRef.current;
-    const remove = Math.min(over + PRUNE_BATCH, end - start - 1);
-    const kept = list[start + remove];
+    if (!layoutAnchorRef.current) captureLayoutAnchor();
+    const nodes = listRef.current?.querySelectorAll<HTMLElement>(".channel-message-row") ?? [];
+    const anchorKey = layoutAnchorRef.current?.key;
+    let anchorIndex = 0;
+    if (anchorKey) {
+      for (let i = 0; i < nodes.length; i += 1) {
+        if (nodes[i].dataset.messageId === anchorKey) {
+          anchorIndex = i;
+          break;
+        }
+      }
+    }
+    const remove = Math.min(over + PRUNE_BATCH, end - start - 1, anchorIndex);
+    if (remove <= 0) return;
+    const kept = messagesRef.current[start + remove];
     if (!kept || start + remove >= end) return;
-    const nodes = listRef.current?.querySelectorAll<HTMLElement>(".channel-message-row");
-    const first = nodes?.[0];
-    const boundary = nodes?.[remove];
-    if (!first || !boundary) return;
-    const removed = boundary.getBoundingClientRect().top - first.getBoundingClientRect().top;
-    if (!(removed > 0)) return;
-    pendingPruneRef.current = { removed };
     setWin((current) => ({ ...current, first: keyOf(kept) }));
-  }, []);
+  }, [captureLayoutAnchor]);
+
+  /**
+   * Ceiling enforcement, applied from the side the reader is NOT heading into.
+   * Rows below the viewport cost nothing to remove; rows above it are only
+   * dropped at a rest and the layout anchor corrects the position afterwards.
+   */
+  const gcIfOverCap = useCallback(() => {
+    if (isScrollingRef.current) return;
+    const el = getScroller();
+    if (!el) return;
+    const { start, end } = sliceRef.current;
+    if (end - start <= MAX_DOM_MESSAGES) return;
+    const midpoint = Math.max(0, (el.scrollHeight - el.clientHeight) / 2);
+    const direction = scrollDirectionRef.current;
+    const trimBottomFirst =
+      direction < 0 || (direction === 0 && !followingRef.current && el.scrollTop < midpoint);
+    if (trimBottomFirst) {
+      const trimmed = trimBottom(messagesRef.current, start, end, keyOf);
+      if (trimmed) setWin((current) => ({ ...current, last: trimmed.last }));
+      return;
+    }
+    pruneTopIfNeeded();
+  }, [pruneTopIfNeeded]);
 
   // ── Sliding window: one older step, one newer step ──────────────────────
-  const expandOlderNow = useCallback(() => {
+  /**
+   * Restore the runway above the reader: mount enough already-loaded rows to
+   * put RUNWAY_PX of content back above the viewport, or bring in the buffered
+   * page when the window already reaches the oldest loaded message. Only ever
+   * called from a verified rest.
+   */
+  const topUpRunway = useCallback(() => {
     if (followingRef.current) return;
-    const { start } = sliceRef.current;
-    const list = messagesRef.current;
+    const el = getScroller();
+    if (!el) return;
+    const { start, end } = sliceRef.current;
+    const rows = end - start;
+    if (rows <= 0) return;
+    const deficit = RUNWAY_PX - el.scrollTop;
+    if (deficit <= 0) return;
     if (start > 0) {
-      const nextStart = Math.max(0, start - WINDOW_STEP);
-      const older = list[nextStart];
+      const average = Math.max(24, (el.scrollHeight - 2) / rows);
+      const needed = Math.ceil(deficit / average);
+      const nextStart = Math.max(0, start - Math.min(Math.max(WINDOW_STEP, needed), 4 * WINDOW_STEP));
+      const older = messagesRef.current[nextStart];
       if (older) {
         setWin((current) => ({ ...current, first: keyOf(older) }));
         return;
@@ -465,22 +532,39 @@ export function ChannelChat({
         return;
       }
       isScrollingRef.current = false;
-      if (el && followingRef.current) el.scrollTop = el.scrollHeight;
+      if (!el) return;
       if (pendingOlderRef.current) {
+        // A page fetched while the reader was up in history must not sit in the
+        // buffer forever; inserting it here is safe because the pin below
+        // restores the bottom in the same frame.
         const page = pendingOlderRef.current;
         pendingOlderRef.current = null;
         insertOlder(page);
       }
-      pruneTopIfNeeded();
-      if (el && !followingRef.current && el.scrollTop <= TOP_LOAD_ZONE) maybeLoadOlder();
+      if (followingRef.current) {
+        el.scrollTop = el.scrollHeight;
+        gcIfOverCap();
+        return;
+      }
+      // Everything below this line may move the content: record the reader's
+      // row first so the layout effect can hold it in place.
+      captureLayoutAnchor();
+      topUpRunway();
+      gcIfOverCap();
+      // Keep the next page buffered before the reader reaches the top.
+      if (el.scrollTop <= PREFETCH_PX) maybeLoadOlder();
     },
-    [insertOlder, pruneTopIfNeeded, maybeLoadOlder],
+    [insertOlder, captureLayoutAnchor, topUpRunway, gcIfOverCap, maybeLoadOlder],
   );
+  settleRef.current = handleSettle;
 
   const handleScroll = useCallback(() => {
     const el = getScroller();
     if (!el) return;
-    lastTopRef.current = el.scrollTop;
+    const top = el.scrollTop;
+    if (top < lastTopRef.current - 1) scrollDirectionRef.current = -1;
+    else if (top > lastTopRef.current + 1) scrollDirectionRef.current = 1;
+    lastTopRef.current = top;
     isScrollingRef.current = true;
     if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
     settleTimerRef.current = setTimeout(() => {
@@ -495,8 +579,9 @@ export function ChannelChat({
     });
 
     // The request may start early (it touches no DOM); the insert waits for a
-    // rest (see loadOlder).
-    if (el.scrollTop <= TOP_LOAD_ZONE) maybeLoadOlder();
+    // rest (see loadOlder). This is what makes the wait at the wall one settle
+    // instead of a network round trip.
+    if (el.scrollTop <= PREFETCH_PX) maybeLoadOlder();
   }, [handleSettle, updateBottomState, maybeLoadOlder]);
 
   // The scroller is the window: listen for window and resize events (the
@@ -521,12 +606,12 @@ export function ChannelChat({
     const top = topSentinelRef.current;
     const bottom = bottomSentinelRef.current;
     if ((!top && !bottom) || typeof IntersectionObserver === "undefined") return;
+    // The top sentinel only *fetches* (no DOM): the insert stays in the
+    // verified-rest pass, the only place allowed to move content.
     const topObserver = top
       ? new IntersectionObserver(
           (entries) => {
-            if (entries.some((entry) => entry.isIntersecting) && !isScrollingRef.current) {
-              expandOlderNow();
-            }
+            if (entries.some((entry) => entry.isIntersecting)) maybeLoadOlder();
           },
           { rootMargin: "600px 0px 0px 0px" },
         )
@@ -545,45 +630,37 @@ export function ChannelChat({
       topObserver?.disconnect();
       bottomObserver?.disconnect();
     };
-  }, [expandOlderNow, expandNewer, hasMessages]);
+  }, [maybeLoadOlder, expandNewer, hasMessages]);
 
-  // ── Position: bottom pin + prepend/prune compensation ───────────────────
+  // ── Position: hold the reader's row in place ─────────────────────────────
+  // A layout change above the reader (a prepended page, a top prune, a row
+  // above growing) moves everything below it. Chromium/Firefox absorb that with
+  // native scroll anchoring; this is the pre-paint fallback (and the only path
+  // in Safari), derived from the committed DOM.
   useLayoutEffect(() => {
     const el = getScroller();
-    const previous = prevSliceRef.current;
-    prevSliceRef.current = { start: slice.start, end: slice.end };
     if (!el) return;
-
-    // Rows were added ABOVE the mounted window: keep the reader's message where
-    // it was. Native scroll anchoring has already done it in Chromium/Firefox;
-    // this is the pre-paint fallback (and the only path in Safari).
-    // The fallback slice of an unresolvable window is a fresh tail, not "rows
-    // added above", so it must not be compensated.
-    const addedAbove = windowResolvable && previous ? previous.start - slice.start : 0;
-    if (addedAbove > 0) {
-      const nodes = listRef.current?.querySelectorAll<HTMLElement>(".channel-message-row");
-      const first = nodes?.[0];
-      const boundary = nodes?.[addedAbove];
-      if (first && boundary) {
-        const added = boundary.getBoundingClientRect().top - first.getBoundingClientRect().top;
-        if (added > 1 && el.scrollTop < lastTopRef.current + added - 1) {
-          el.scrollTop = lastTopRef.current + added;
+    const anchor = layoutAnchorRef.current;
+    if (followingRef.current) {
+      // The pin owns the position while the reader is at the newest message.
+      layoutAnchorRef.current = null;
+    } else if (anchor) {
+      const node = listRef.current?.querySelector<HTMLElement>(`.channel-message-row[data-message-id="${anchor.key}"]`);
+      if (!node) {
+        layoutAnchorRef.current = null;
+      } else {
+        const delta = node.offsetTop - anchor.offsetTop;
+        if (Math.abs(delta) > 1) {
+          const expected = lastTopRef.current + delta;
+          if (Math.abs(el.scrollTop - expected) > 1) el.scrollTop = expected;
+          anchor.offsetTop = node.offsetTop;
         }
       }
     }
 
-    const prune = pendingPruneRef.current;
-    if (prune) {
-      pendingPruneRef.current = null;
-      if (followingRef.current) el.scrollTop = el.scrollHeight;
-      else if (el.scrollTop > lastTopRef.current - prune.removed + 1) {
-        el.scrollTop = Math.max(0, lastTopRef.current - prune.removed);
-      }
-    }
-
-    if (!isScrollingRef.current) pruneTopIfNeeded();
+    if (!isScrollingRef.current) gcIfOverCap();
     lastTopRef.current = el.scrollTop;
-  }, [slice.start, slice.end, messages, pruneTopIfNeeded, windowResolvable]);
+  }, [slice.start, slice.end, messages, gcIfOverCap]);
 
   // Pin to the real bottom while following. Skipped mid-coast: writing
   // `scrollTop` during momentum is what makes iOS stutter; the settle pass

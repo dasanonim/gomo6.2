@@ -25,8 +25,10 @@ import {
   ANCHOR_AFTER,
   ANCHOR_BEFORE,
   MAX_DOM_MESSAGES,
+  PREFETCH_PX,
   PRUNE_BATCH,
   RESET_WINDOW,
+  RUNWAY_PX,
   WINDOW_STEP,
   buildKeyIndex,
   resolveKeyWindow,
@@ -42,14 +44,14 @@ import {
 
 /** Distance from the end that still counts as "at the bottom". */
 const BOTTOM_SLACK = 100;
-/** How long the scroller must be quiet before a heavy pass (GC, read line). */
-const SCROLL_SETTLE_MS = 150;
+/** How long the scroller must be quiet before a heavy pass (GC, read line).
+ *  Deliberately short: the real gate is the verified rest (the position must
+ *  be unchanged), so this only has to outlast a normal inter-event gap. */
+const SCROLL_SETTLE_MS = 100;
 /** Debounce of the read-line report (it reads row offsets from the DOM). */
 const READ_DEBOUNCE_MS = 180;
 /** Minimum gap between two older-history requests (burst guard). */
 const LOAD_COOLDOWN_MS = 400;
-/** The area at the top that arms the history loader. */
-const TOP_TRIGGER_PX = 600;
 /** How many pages `scrollToMessage` may fetch while looking for its target. */
 const MAX_JUMP_PAGES = 20;
 /** Redisplays a jumped-to message for this long. */
@@ -263,15 +265,19 @@ export const MessageList = memo(
     const lastRequestAtRef = useRef(0);
     const olderBusyRef = useRef(false);
     /**
-     * The last committed mounted slice + scroll position. Used to tell content
-     * that was added ABOVE the window (must not move the reader) from content
-     * added below it (must not either), without depending on the order React
-     * happens to flush a store update and a window update in.
+     * The row the reader is looking at, plus its layout position when it was
+     * captured. Any layout change above that row moves it on screen; the
+     * compensation is derived from ITS displacement, not from a difference of
+     * window indices — so it does not depend on the order React happens to
+     * flush a store update and a window update in, and it also covers a row
+     * above the reader growing (a late image, a resolved share card).
      */
-    const prevSliceRef = useRef<MessageSlice | null>(null);
+    const layoutAnchorRef = useRef<{ key: string; offsetTop: number } | null>(null);
     const lastTopRef = useRef(0);
-    /** The scroll geometry captured right BEFORE a top-prune commit. */
-    const pendingPruneRef = useRef<{ removed: number } | null>(null);
+    /** Which way the reader is heading: -1 up (history), +1 down, 0 unknown. */
+    const scrollDirectionRef = useRef<-1 | 0 | 1>(0);
+    /** The verified-rest pass, reachable from the fetch continuation. */
+    const settleRef = useRef<(() => void) | null>(null);
     /** A `scrollToMessage` target that has not been reached yet. */
     const pendingJumpRef = useRef<{ id: string; attempts: number } | null>(null);
     const didInitialPositionRef = useRef(false);
@@ -299,12 +305,15 @@ export const MessageList = memo(
     }, []);
 
     // ── Older history ──────────────────────────────────────────────────
-    /** Slide the mounted window up into already-loaded rows. */
-    const expandOlderLocal = useCallback(() => {
+    /**
+     * Slide the mounted window up into already-loaded rows: `rows` rows at
+     * once, so one rest is enough to restore a whole runway.
+     */
+    const expandOlderLocal = useCallback((rows: number = WINDOW_STEP) => {
       const { start } = derivedRef.current;
       if (start <= 0) return false;
       const list = messagesRef.current;
-      const nextStart = Math.max(0, start - WINDOW_STEP);
+      const nextStart = Math.max(0, start - Math.max(1, rows));
       const older = list[nextStart];
       if (!older) return false;
       setWindow((current) => ({ ...current, first: messageKey(older) }));
@@ -355,14 +364,46 @@ export const MessageList = memo(
       } finally {
         olderBusyRef.current = false;
       }
-      if (!isScrollingRef.current) return flushBufferedPage();
+      // The insert itself goes through the verified-rest pass: a fetch can
+      // resolve while the reader is coasting, and inserting then is what
+      // WebKit drops.
+      if (!isScrollingRef.current) settleRef.current?.();
       return true;
-    }, [loadMoreMessages, flushBufferedPage]);
+    }, [loadMoreMessages]);
 
     /** One older step: local rows first, then a buffered page, then a request. */
-    const expandOlderNow = useCallback(() => {
+    const prefetchOlder = useCallback(() => {
       if (followingRef.current) return;
-      if (expandOlderLocal()) return;
+      const scroller = scrollerRef.current;
+      if (!scroller || scroller.scrollTop > PREFETCH_PX) return;
+      void requestOlderPage();
+    }, [requestOlderPage]);
+
+    /**
+     * Restore the runway above the reader: mount enough already-loaded rows to
+     * put {@link RUNWAY_PX} of content back above the viewport, or bring in a
+     * buffered page when the mounted window already reaches the oldest loaded
+     * message. Only ever called from a verified rest — mounting rows above the
+     * viewport moves the content and is compensated by a single `scrollTop`
+     * write, which WebKit drops under a live coast.
+     */
+    const topUpRunway = useCallback(() => {
+      if (followingRef.current) return;
+      const scroller = scrollerRef.current;
+      if (!scroller) return;
+      const { start, end } = derivedRef.current;
+      const rows = end - start;
+      if (rows <= 0) return;
+      const deficit = RUNWAY_PX - scroller.scrollTop;
+      if (deficit <= 0) return;
+      if (start > 0) {
+        // Measured average of the mounted window — self-correcting, no table of
+        // per-message height estimates.
+        const average = Math.max(24, (scroller.scrollHeight - 2) / rows);
+        const needed = Math.ceil(deficit / average);
+        expandOlderLocal(Math.min(Math.max(WINDOW_STEP, needed), 4 * WINDOW_STEP));
+        return;
+      }
       if (flushBufferedPage()) return;
       void requestOlderPage();
     }, [expandOlderLocal, flushBufferedPage, requestOlderPage]);
@@ -379,11 +420,26 @@ export const MessageList = memo(
       setWindow((current) => ({ ...current, last: messageKey(newest) }));
     }, []);
 
+    const captureLayoutAnchor = useCallback(() => {
+      const scroller = scrollerRef.current;
+      if (!scroller) return;
+      const top = scroller.scrollTop;
+      for (const node of scroller.querySelectorAll<HTMLElement>(".message-item[data-message-key]")) {
+        if (node.offsetTop + node.offsetHeight > top + 1) {
+          const key = node.dataset.messageKey;
+          if (key) layoutAnchorRef.current = { key, offsetTop: node.offsetTop };
+          return;
+        }
+      }
+      layoutAnchorRef.current = null;
+    }, []);
+
     // ── Garbage collection ─────────────────────────────────────────────
     /**
      * Drop rows above the ceiling. Rows that leave the viewport from the TOP
-     * move the content, so this waits for a rest (a scroll-settle pass) and
-     * compensates `scrollTop` in a single layout effect afterwards.
+     * move the content, so this waits for a rest (a scroll-settle pass) and the
+     * layout anchor corrects the position afterwards. Never removes the row the
+     * reader is looking at: the prune is clamped to the rows above the anchor.
      */
     const pruneTopIfNeeded = useCallback(() => {
       const scroller = scrollerRef.current;
@@ -392,19 +448,55 @@ export const MessageList = memo(
       const over = end - start - MAX_DOM_MESSAGES;
       if (over <= 0) return;
       const list = messagesRef.current;
-      const remove = Math.min(over + PRUNE_BATCH, end - start - 1);
+      // The prune must not touch the row the reader is looking at, and its
+      // compensation needs the pre-prune position of that row — captured here
+      // when the settle pass did not already do it.
+      if (!layoutAnchorRef.current) captureLayoutAnchor();
+      const nodes = scroller.querySelectorAll<HTMLElement>(".message-item");
+      const anchorKey = layoutAnchorRef.current?.key;
+      let anchorIndex = 0;
+      if (anchorKey) {
+        for (let i = 0; i < nodes.length; i += 1) {
+          if (nodes[i].dataset.messageKey === anchorKey) {
+            anchorIndex = i;
+            break;
+          }
+        }
+      }
+      const remove = Math.min(over + PRUNE_BATCH, end - start - 1, anchorIndex);
+      if (remove <= 0) return;
       const keepFrom = start + remove;
       const kept = list[keepFrom];
       if (!kept || keepFrom >= end) return;
-      const nodes = scroller.querySelectorAll<HTMLElement>(".message-item");
-      const first = nodes[0];
-      const boundary = nodes[remove];
-      if (!first || !boundary) return;
-      const removed = boundary.getBoundingClientRect().top - first.getBoundingClientRect().top;
-      if (!(removed > 0)) return;
-      pendingPruneRef.current = { removed };
       setWindow((current) => ({ ...current, first: messageKey(kept) }));
-    }, []);
+    }, [captureLayoutAnchor]);
+
+    /**
+     * Ceiling enforcement, applied from the side that is FAR from the reader.
+     * Rows below the viewport cost nothing to remove; rows above it move the
+     * content and are only dropped at a rest (see {@link pruneTopIfNeeded}).
+     * Trimming the wrong side would shorten the runway the reader is heading
+     * into.
+     */
+    const gcIfOverCap = useCallback(() => {
+      const scroller = scrollerRef.current;
+      if (!scroller || isScrollingRef.current) return;
+      const { start, end } = derivedRef.current;
+      if (end - start <= MAX_DOM_MESSAGES) return;
+      const midpoint = Math.max(0, (scroller.scrollHeight - scroller.clientHeight) / 2);
+      // Trim the side the reader is NOT heading into. Heading up (history):
+      // the newest rows are behind them. Heading down or pinned to the bottom:
+      // the oldest rows are. With no direction yet, fall back to geometry.
+      const direction = scrollDirectionRef.current;
+      const trimBottomFirst =
+        direction < 0 || (direction === 0 && !followingRef.current && scroller.scrollTop < midpoint);
+      if (trimBottomFirst) {
+        const trimmed = trimBottom(messagesRef.current, start, end, messageKey);
+        if (trimmed) setWindow((current) => ({ ...current, last: trimmed.last }));
+        return;
+      }
+      pruneTopIfNeeded();
+    }, [pruneTopIfNeeded]);
 
     // ── Read receipts: the "read line" (Telegram-style) ────────────────
     /**
@@ -508,13 +600,29 @@ export const MessageList = memo(
         if (!scroller) return;
         // A message that arrived while the coast was live is pinned now (writing
         // `scrollTop` mid-momentum is what makes iOS stutter).
-        if (followingRef.current) scroller.scrollTop = scroller.scrollHeight;
-        pruneTopIfNeeded();
-        if (!followingRef.current && scroller.scrollTop <= TOP_TRIGGER_PX) expandOlderNow();
+        if (followingRef.current) {
+          // A page buffered while the reader was up in history must not sit in
+          // the store forever; inserting it here is safe because the pin below
+          // restores the bottom in the same frame.
+          flushBufferedPage();
+          scroller.scrollTop = scroller.scrollHeight;
+          gcIfOverCap();
+          reportVisibleReads();
+          return;
+        }
+        // Everything below this line may move the content. The reader's row is
+        // recorded FIRST, so the layout effect can hold it in place whatever
+        // the mutations do (and whatever order React commits them in).
+        captureLayoutAnchor();
+        // Give the next fling its runway back before touching the ceiling
+        // enforcement, so a single rest is enough to restore it.
+        topUpRunway();
+        gcIfOverCap();
         reportVisibleReads();
       },
-      [pruneTopIfNeeded, expandOlderNow, reportVisibleReads],
+      [topUpRunway, gcIfOverCap, reportVisibleReads, captureLayoutAnchor, flushBufferedPage],
     );
+    settleRef.current = handleSettle;
 
     const handleScroll = useCallback(() => {
       isScrollingRef.current = true;
@@ -527,10 +635,18 @@ export const MessageList = memo(
       scrollRafRef.current = requestAnimationFrame(() => {
         scrollRafRef.current = null;
         const scroller = scrollerRef.current;
-        if (scroller) lastTopRef.current = scroller.scrollTop;
+        if (scroller) {
+          const top = scroller.scrollTop;
+          if (top < lastTopRef.current - 1) scrollDirectionRef.current = -1;
+          else if (top > lastTopRef.current + 1) scrollDirectionRef.current = 1;
+          lastTopRef.current = top;
+        }
         updateBottomState();
+        // The next page is requested from here, mid-fling: a request touches no
+        // DOM, so the buffer is already full when the reader hits the top.
+        prefetchOlder();
       });
-    }, [updateBottomState, handleSettle]);
+    }, [updateBottomState, handleSettle, prefetchOlder]);
 
     // ── Sentinels: bi-directional sliding-window triggers ──────────────
     // `hasMessages` is a dependency so the observers are (re)attached when the
@@ -542,14 +658,12 @@ export const MessageList = memo(
       const bottom = bottomSentinelRef.current;
       if (!scroller || typeof IntersectionObserver === "undefined" || (!top && !bottom)) return;
 
-      // During a coast the settle pass re-checks the same trigger zone, so the
-      // observers stay silent until the scroller is at rest.
+      // The top sentinel only *fetches* (no DOM): the insert stays in the
+      // settle pass, which is the only place allowed to move content.
       const topObserver = top
         ? new IntersectionObserver(
             (entries) => {
-              if (entries.some((entry) => entry.isIntersecting) && !isScrollingRef.current) {
-                expandOlderNow();
-              }
+              if (entries.some((entry) => entry.isIntersecting)) prefetchOlder();
             },
             { root: scroller, rootMargin: "600px 0px 0px 0px" },
           )
@@ -568,7 +682,7 @@ export const MessageList = memo(
         topObserver?.disconnect();
         bottomObserver?.disconnect();
       };
-    }, [expandOlderNow, expandNewer, hasMessages]);
+    }, [prefetchOlder, expandNewer, hasMessages]);
 
     // ── Unread counter for arrivals below a frozen window ──────────────
     const tail = messages.length > 0 ? messages[messages.length - 1] : null;
@@ -618,50 +732,45 @@ export const MessageList = memo(
       if (scroller) scroller.scrollTop = scroller.scrollHeight;
     }, [tailKey, derived.start, derived.end]);
 
-    // ── Anchoring fallback for content added above (Safari has no anchoring) ─
-    // The committed DOM is the source of truth: when the mounted slice gained
-    // rows ABOVE the viewport, the position must move down by exactly their
-    // height. Chromium/Firefox have already done that through native scroll
-    // anchoring, so the write is a no-op there; Safari needs it, and it lands
-    // in the same frame, before paint, always at rest.
+    // ── Anchoring: keep the reader's row where it is ───────────────────
+    // A layout change above the reader (a prepended page, a top prune, a row
+    // above growing) moves everything below it. Chromium/Firefox absorb that
+    // with native scroll anchoring; this is the pre-paint fallback (and the only
+    // path in Safari), derived from the committed DOM: the displacement of the
+    // row the reader is looking at, measured against the position it had when
+    // the mutation was requested.
     useLayoutEffect(() => {
       const scroller = scrollerRef.current;
-      const previous = prevSliceRef.current;
-      prevSliceRef.current = { start: derived.start, end: derived.end };
       if (!scroller) return;
 
-      // A window whose keys no longer resolve is a full replacement: the
-      // fallback slice is a fresh tail, not "rows added above", so it must not
-      // be compensated.
-      const addedAbove = windowResolvable && previous ? previous.start - derived.start : 0;
-      if (addedAbove > 0) {
-        const items = scroller.querySelectorAll<HTMLElement>(".message-item");
-        const first = items[0];
-        const boundary = items[addedAbove];
-        if (first && boundary) {
-          const added = boundary.getBoundingClientRect().top - first.getBoundingClientRect().top;
-          if (added > 1 && scroller.scrollTop < lastTopRef.current + added - 1) {
-            scroller.scrollTop = lastTopRef.current + added;
+      const anchor = layoutAnchorRef.current;
+      if (followingRef.current) {
+        // The pin owns the position while the reader is at the newest message;
+        // a stale anchor from before would be meaningless.
+        layoutAnchorRef.current = null;
+      } else if (anchor) {
+        const node = findItemByKey(scroller, anchor.key);
+        if (!node) {
+          layoutAnchorRef.current = null;
+        } else {
+          const delta = node.offsetTop - anchor.offsetTop;
+          if (Math.abs(delta) > 1) {
+            // Where `scrollTop` must be for the anchor row to stay put. Native
+            // anchoring has already moved it there in Chromium/Firefox, so the
+            // write only happens where there is none (Safari) — and only ever
+            // at a verified rest.
+            const expected = lastTopRef.current + delta;
+            if (Math.abs(scroller.scrollTop - expected) > 1) scroller.scrollTop = expected;
+            anchor.offsetTop = node.offsetTop;
           }
         }
       }
 
-      const prune = pendingPruneRef.current;
-      if (prune) {
-        pendingPruneRef.current = null;
-        // At the bottom the engine clamps to the new maximum on its own;
-        // elsewhere the removed height is subtracted from the position.
-        if (followingRef.current) scroller.scrollTop = scroller.scrollHeight;
-        else if (scroller.scrollTop > lastTopRef.current - prune.removed + 1) {
-          scroller.scrollTop = Math.max(0, lastTopRef.current - prune.removed);
-        }
-      }
-
-      // Top GC also runs here (never mid-coast): a commit that grew the window
-      // past the ceiling must not wait for the next scroll event to shrink.
-      if (!isScrollingRef.current) pruneTopIfNeeded();
+      // Ceiling enforcement also runs here (never mid-coast): a commit that
+      // grew the window past it must not wait for the next scroll event.
+      if (!isScrollingRef.current) gcIfOverCap();
       lastTopRef.current = scroller.scrollTop;
-    }, [derived.start, derived.end, messages, tailKey, pruneTopIfNeeded, windowResolvable]);
+    }, [derived.start, derived.end, messages, tailKey, gcIfOverCap, windowResolvable]);
 
     // ── Jump to a message (pinned banner, quoted reply) ────────────────
     useLayoutEffect(() => {

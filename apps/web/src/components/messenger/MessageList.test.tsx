@@ -6,7 +6,7 @@ import {
   __resetMessageScrollAnchorsForTests,
   writeMessageScrollAnchor,
 } from "./core/messageScrollAnchors";
-import { INITIAL_WINDOW, MAX_DOM_MESSAGES, RESET_WINDOW } from "./core/slicing";
+import { INITIAL_WINDOW, MAX_DOM_MESSAGES, RESET_WINDOW, RUNWAY_PX } from "./core/slicing";
 import type { MessageView } from "./types";
 
 // ── Store mock ─────────────────────────────────────────────────────────────
@@ -89,6 +89,7 @@ const triggerSentinel = (selector: string) => {
 // the scrollable content and the compensation can be asserted.
 const ROW = 60;
 const VIEWPORT = 600;
+let rowHeight = ROW;
 let scrollTopValue = 0;
 
 const messageItemsIn = (node: HTMLElement) =>
@@ -98,7 +99,7 @@ const itemOffsetTop = (node: HTMLElement) => {
   let top = 0;
   let sibling = node.previousElementSibling;
   while (sibling) {
-    if (sibling.classList.contains("message-item")) top += ROW;
+    if (sibling.classList.contains("message-item")) top += rowHeight;
     sibling = sibling.previousElementSibling;
   }
   return top;
@@ -121,22 +122,28 @@ function installLayout() {
     configurable: true,
     get(this: HTMLElement) {
       if (!this.classList.contains("message-scroll")) return 0;
-      return messageItemsIn(this).length * ROW + 2; // + the two 1px sentinels
+      return messageItemsIn(this).length * rowHeight + 2; // + the two 1px sentinels
     },
   });
   Object.defineProperty(proto, "scrollTop", {
     configurable: true,
-    get() {
+    get(this: HTMLElement) {
+      // An engine clamps the position when the content above it shrinks.
+      const max = Math.max(0, this.scrollHeight - this.clientHeight);
+      if (scrollTopValue > max) scrollTopValue = max;
       return scrollTopValue;
     },
-    set(value: number) {
-      scrollTopValue = Number.isFinite(value) ? Math.max(0, value) : 0;
+    set(this: HTMLElement, value: number) {
+      // Clamped like an engine: `scrollTop = scrollHeight` lands on the real
+      // bottom, which is what the list's own pin relies on.
+      const max = Math.max(0, this.scrollHeight - this.clientHeight);
+      scrollTopValue = Number.isFinite(value) ? Math.max(0, Math.min(value, max)) : 0;
     },
   });
   Object.defineProperty(proto, "offsetHeight", {
     configurable: true,
     get(this: HTMLElement) {
-      return this.classList.contains("message-item") ? ROW : 0;
+      return this.classList.contains("message-item") ? rowHeight : 0;
     },
   });
   Object.defineProperty(proto, "offsetTop", {
@@ -149,7 +156,7 @@ function installLayout() {
     configurable: true,
     value(this: HTMLElement) {
       const top = this.classList.contains("message-item") ? itemOffsetTop(this) : 0;
-      const height = this.classList.contains("message-item") ? ROW : 0;
+      const height = this.classList.contains("message-item") ? rowHeight : 0;
       return { top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) };
     },
   });
@@ -201,6 +208,11 @@ const setStore = (patch: Record<string, unknown>) => {
 const rows = (container: HTMLElement) => Array.from(container.querySelectorAll<HTMLElement>(".message-item"));
 const rowIds = (container: HTMLElement) => rows(container).map((row) => row.dataset.messageId);
 const scrollerOf = (container: HTMLElement) => container.querySelector<HTMLElement>(".message-scroll")!;
+/** 0 means the viewport sits exactly at the newest message. */
+const distanceFromBottom = (container: HTMLElement) => {
+  const scroller = scrollerOf(container);
+  return Math.round(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight);
+};
 
 /** Scrolls the viewport, driving the same rAF pass the browser would. */
 const scrollTo = async (container: HTMLElement, top: number) => {
@@ -224,6 +236,7 @@ beforeEach(() => {
   captured.length = 0;
   observers.length = 0;
   scrollTopValue = 0;
+  rowHeight = ROW;
   h.loadMoreMessages.mockClear();
   h.loadMoreMessages.mockImplementation(async () => {});
   h.flushPendingOlderMessages.mockClear();
@@ -362,8 +375,7 @@ describe("MessageList (native DOM slicing)", () => {
 
     const { container } = mountList();
 
-    const scroller = scrollerOf(container);
-    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+    expect(distanceFromBottom(container)).toBe(0);
     expect(rowIds(container).at(-1)).toBe("m199");
   });
 
@@ -387,8 +399,7 @@ describe("MessageList (native DOM slicing)", () => {
 
     const { container } = mountList();
 
-    const scroller = scrollerOf(container);
-    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+    expect(distanceFromBottom(container)).toBe(0);
     expect(rowIds(container).at(-1)).toBe("m199");
   });
 
@@ -472,8 +483,7 @@ describe("MessageList (native DOM slicing)", () => {
 
     expect(rows(container)).toHaveLength(RESET_WINDOW);
     expect(rowIds(container)[0]).toBe(`new${60 - RESET_WINDOW}`);
-    const scroller = scrollerOf(container);
-    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+    expect(distanceFromBottom(container)).toBe(0);
     expect(container.querySelector(".scroll-to-bottom-btn")).toBeNull();
   });
 
@@ -539,17 +549,54 @@ describe("MessageList (native DOM slicing)", () => {
     expect(h.queueMarkRead).not.toHaveBeenCalledWith("c1", "peer-2", expect.any(String));
   });
 
-  it("slides the window up into already-loaded rows and compensates the scroll", async () => {
+  it("restores a whole fling's runway above the reader at rest", async () => {
     setStore({ messages: longList(500) });
     const { container } = mountList();
     await scrollTo(container, 0);
     await settle();
 
-    // 50 rows were added ABOVE the viewport; the reader's place must not move,
-    // so `scrollTop` grew by exactly the inserted height.
-    expect(rows(container)).toHaveLength(INITIAL_WINDOW + 50);
-    expect(rowIds(container)[0]).toBe(`m${500 - INITIAL_WINDOW - 50}`);
-    expect(scrollerOf(container).scrollTop).toBe(50 * ROW);
+    const scroller = scrollerOf(container);
+    // A whole fling's worth of content is mounted above the reader again...
+    expect(scroller.scrollTop).toBeGreaterThanOrEqual(RUNWAY_PX);
+    expect(rows(container).length).toBeGreaterThan(INITIAL_WINDOW);
+    // ...and their place did not move: the row that was at the top of the
+    // viewport is still exactly there.
+    const anchor = rows(container).find((row) => row.dataset.messageId === "m350");
+    expect(anchor?.offsetTop).toBe(scroller.scrollTop);
+  });
+
+  it("enforces the ceiling from behind the reader, never from the runway", async () => {
+    // Short rows: restoring the runway mounts enough of them to pass the
+    // ceiling, which forces a trim while the reader is deep in history.
+    rowHeight = 26;
+    setStore({ messages: longList(500) });
+    const { container } = mountList();
+    await scrollTo(container, 0);
+    await settle();
+
+    const scroller = scrollerOf(container);
+    expect(rows(container).length).toBeLessThanOrEqual(MAX_DOM_MESSAGES);
+    // The runway is intact and the reader did not move: the row that was at the
+    // top of the viewport is still exactly there...
+    const anchor = rows(container).find((row) => row.dataset.messageId === "m350");
+    expect(anchor?.offsetTop).toBe(scroller.scrollTop);
+    expect(scroller.scrollTop).toBeGreaterThanOrEqual(RUNWAY_PX);
+    // ...and the rows that left came from BELOW the viewport.
+    expect(rowIds(container).at(-1)).not.toBe("m499");
+  });
+
+  it("requests the next page while the reader is still coasting", async () => {
+    setStore({ messages: longList(50), hasMoreMessages: true });
+    const { container } = mountList();
+
+    // One scroll event, no settle yet: the *request* must already be in flight
+    // (it touches no DOM), while the insert waits for the rest.
+    await scrollTo(container, 0);
+
+    await waitFor(() => {
+      expect(h.loadMoreMessages).toHaveBeenCalledWith("c1", { postpone: true });
+    });
+    expect(h.flushPendingOlderMessages).not.toHaveBeenCalled();
   });
 
   it("requests a buffered older page when the window already reaches the oldest loaded row", async () => {
@@ -595,8 +642,7 @@ describe("MessageList (native DOM slicing)", () => {
 
     expect(rows(container).length).toBeLessThanOrEqual(MAX_DOM_MESSAGES);
     expect(rowIds(container).at(-1)).toBe("new199");
-    const scroller = scrollerOf(container);
-    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+    expect(distanceFromBottom(container)).toBe(0);
   });
 
   it("does not re-render existing rows when 50 messages arrive", () => {

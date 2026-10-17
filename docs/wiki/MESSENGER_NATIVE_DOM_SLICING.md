@@ -44,6 +44,19 @@ MessageList / ChannelChat
 * **Bi-directional sentinels** (`.chat-scroll-sentinel`, `overflow-anchor: none`)
   with `rootMargin: 600px` slide the window: up into already-loaded rows first,
   then into a fetched page; down into rows that were garbage-collected below.
+  The top sentinel only *fetches* — the insert always happens in the settle pass.
+* **Runway.** A bounded window means the scrollable content ends at the oldest
+  mounted row, so a fling that reaches it hits a rubber-band dead stop and the
+  reader waits. Two things keep that away: the next page is *requested* from the
+  per-frame scroll pass (`PREFETCH_PX = 6000`, network only — no DOM, so it is
+  safe mid-fling, and the store buffers up to two pages), and every verified
+  rest restores `RUNWAY_PX = 4000` of content above the viewport by mounting
+  already-loaded rows (or inserting the buffered page). The wait at a real wall
+  is then one settle, not a network round trip.
+* **Ceiling enforcement trims the side the reader is NOT heading into**: rows
+  below the viewport while they are moving up, rows above it while they are
+  moving down or pinned to the bottom. A top prune is clamped so it can never
+  remove the row the reader is looking at.
 * **Garbage collection**: rows below the viewport are dropped immediately (they
   cannot move anything the reader sees). Rows above the viewport are dropped
   only when the scroller is at rest, and the removed height is subtracted from
@@ -59,18 +72,21 @@ MessageList / ChannelChat
 
 ## The anchoring fallback (Safari)
 
-`overflow-anchor` is Chromium/Firefox only. The fallback is deliberately
-derived from the **committed DOM**, not from a pre-commit snapshot, so it does
-not depend on the order React flushes a store update and a window update:
+`overflow-anchor` is Chromium/Firefox only. The fallback is anchored on **the
+row the reader is looking at**, not on the window's indices:
 
-1. the layout effect compares the committed slice with the previous one;
-2. `previous.start - start > 0` means rows were added above the window;
-3. the added height is measured from the DOM (`offsetTop` of the first kept row
-   minus the first row);
-4. if `scrollTop` did not already move by that much (native anchoring did not
-   run), it is corrected — before paint, at rest.
+1. at the start of the settle pass (before anything is mutated) the first
+   visible row is recorded: its key and its `offsetTop`;
+2. the layout effect after the commit finds that row again and measures how far
+   it moved in layout (`delta`);
+3. if the engine did not already move `scrollTop` by `delta` (native anchoring
+   did not run), it is corrected — before paint, at a verified rest.
 
-The symmetric case (top GC) subtracts the measured removed height.
+Anchoring on the reader's row instead of the slice's indices means the
+correction does not depend on the order React commits a store update and a
+window update in, and it also covers a row above the reader *growing* (a late
+image, a resolved share card). The same measurement is what makes a top prune
+safe: the anchor row moves up, `delta` is negative, and the position follows.
 
 ## Device findings: iOS Safari (2026-10-17)
 
@@ -142,5 +158,9 @@ only.)
   `ChannelChat.test.tsx` (window bound, history paging).
 * Manual (required, not a substitute for a device): open at the bottom, fling
   up, reach the top, come back, receive a message in both states, resize.
+* Tuning knobs, all in `core/slicing.ts` / `MessageList.tsx`: `RUNWAY_PX` (how
+  much content is kept above the reader), `PREFETCH_PX` (how early the next page
+  is requested), `SCROLL_SETTLE_MS` (how long the scroller must be quiet before
+  the heavy pass — the verified rest is the real gate), `MAX_DOM_MESSAGES`.
 * **Still to do on a real device**: iOS Safari and Android Chrome — momentum
   scrolling, keyboard open/close, URL-bar resize, rotation.

@@ -61,11 +61,81 @@ function jsonResponse(data: unknown, ok = true, status = 200) {
   };
 }
 
+// ── Layout stand-in ────────────────────────────────────────────────────────
+// The channel chat scrolls the document, so the geometry that matters is the
+// scrolling element's. jsdom has none: without this every scroll decision sees
+// a 0px viewport and "always at the bottom".
+const ROW = 60;
+const VIEWPORT = 600;
+let scrollTopValue = 0;
+const savedLayout: Array<[string, PropertyDescriptor | undefined]> = [];
+
+function installLayout() {
+  const proto = HTMLElement.prototype;
+  for (const key of ["clientHeight", "scrollHeight", "scrollTop", "offsetTop", "offsetHeight"]) {
+    savedLayout.push([key, Object.getOwnPropertyDescriptor(proto, key)]);
+  }
+  Object.defineProperty(proto, "clientHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this === document.documentElement ? VIEWPORT : 0;
+    },
+  });
+  Object.defineProperty(proto, "scrollHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      if (this !== document.documentElement) return 0;
+      return document.querySelectorAll(".channel-message-row").length * ROW + 2;
+    },
+  });
+  Object.defineProperty(proto, "scrollTop", {
+    configurable: true,
+    get(this: HTMLElement) {
+      const max = Math.max(0, this.scrollHeight - this.clientHeight);
+      if (scrollTopValue > max) scrollTopValue = max;
+      return scrollTopValue;
+    },
+    set(this: HTMLElement, value: number) {
+      const max = Math.max(0, this.scrollHeight - this.clientHeight);
+      scrollTopValue = Number.isFinite(value) ? Math.max(0, Math.min(value, max)) : 0;
+    },
+  });
+  Object.defineProperty(proto, "offsetHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.classList.contains("channel-message-row") ? ROW : 0;
+    },
+  });
+  Object.defineProperty(proto, "offsetTop", {
+    configurable: true,
+    get(this: HTMLElement) {
+      if (!this.classList.contains("channel-message-row")) return 0;
+      let top = 0;
+      let sibling = this.previousElementSibling;
+      while (sibling) {
+        if (sibling.classList.contains("channel-message-row")) top += ROW;
+        sibling = sibling.previousElementSibling;
+      }
+      return top;
+    },
+  });
+}
+
+function restoreLayout() {
+  for (const [key, descriptor] of savedLayout.splice(0)) {
+    if (descriptor) Object.defineProperty(HTMLElement.prototype, key, descriptor);
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key];
+  }
+}
+
 beforeEach(() => {
   wsMock.reset();
+  scrollTopValue = 0;
+  installLayout();
 });
 
 afterEach(() => {
+  restoreLayout();
   vi.unstubAllGlobals();
 });
 
@@ -206,6 +276,46 @@ it("loads an older history page on scroll-to-top", async () => {
   );
   // The prepended page lands at the top of the virtual list.
   await waitFor(() => expect(screen.getByText("old--49")).toBeInTheDocument());
+});
+
+it("restores a runway of already-loaded rows when the reader scrolls up", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ChannelChat channelId={CH} currentUserId={ME} />);
+  await screen.findByPlaceholderText(/Написать/i);
+
+  act(() => {
+    for (let id = 1; id <= 400; id += 1) {
+      wsMock.emit("new_channel_message", {
+        id,
+        channel_id: CH,
+        user_id: "u9",
+        username: "bob",
+        avatar_url: null,
+        content: `msg-${id}`,
+        created_at: "2026-08-20T10:00:00Z",
+      });
+    }
+  });
+  await waitFor(() => expect(screen.getByText("msg-400")).toBeInTheDocument());
+  const before = document.querySelectorAll(".channel-message-row").length;
+
+  // Scroll to the top of the mounted window: reading history.
+  act(() => {
+    document.documentElement.scrollTop = 0;
+    window.dispatchEvent(new Event("scroll"));
+  });
+
+  // A whole fling's worth of already-loaded rows is mounted above the reader,
+  // and the row that was at the top of the viewport did not move.
+  await waitFor(
+    () => expect(document.querySelectorAll(".channel-message-row").length).toBeGreaterThan(before),
+    { timeout: 3000 },
+  );
+  const rows = Array.from(document.querySelectorAll<HTMLElement>(".channel-message-row"));
+  const anchor = rows.find((row) => row.dataset.messageId === "251");
+  expect(document.documentElement.scrollTop).toBeGreaterThanOrEqual(4000);
+  expect(anchor?.offsetTop).toBe(document.documentElement.scrollTop);
 });
 
 it("mounts only the windowed slice for a long history", async () => {
