@@ -70,6 +70,49 @@ const VIEWPORT = 600;
 let scrollTopValue = 0;
 const savedLayout: Array<[string, PropertyDescriptor | undefined]> = [];
 
+// ── IntersectionObserver stand-in ──────────────────────────────────────────
+// jsdom never intersects anything, so the window sentinels are driven
+// explicitly: the contract under test is "a visible sentinel slides the window",
+// not the browser's geometry.
+type IOEntry = { isIntersecting: boolean; target: Element };
+const observers: Array<{ callback: (entries: IOEntry[]) => void; targets: Element[]; rootMargin: string }> = [];
+
+class MockIntersectionObserver {
+  callback: (entries: IOEntry[]) => void;
+  targets: Element[] = [];
+  rootMargin: string;
+  constructor(callback: (entries: IOEntry[]) => void, options?: { rootMargin?: string }) {
+    this.callback = callback;
+    this.rootMargin = options?.rootMargin ?? "";
+    observers.push(this);
+  }
+  observe(target: Element) {
+    this.targets.push(target);
+  }
+  unobserve(target: Element) {
+    this.targets = this.targets.filter((candidate) => candidate !== target);
+  }
+  disconnect() {
+    this.targets = [];
+  }
+  takeRecords() {
+    return [];
+  }
+}
+
+/** Fires the TOP sentinel (the one armed with a top-only rootMargin). */
+const triggerTopSentinel = () => {
+  const observer = observers.find((candidate) => candidate.rootMargin.startsWith("600px"));
+  const target = observer?.targets[0];
+  if (!observer || !target) throw new Error("top sentinel observer not found");
+  act(() => {
+    observer.callback([{ isIntersecting: true, target }]);
+  });
+};
+
+const isScroller = (el: HTMLElement) =>
+  el === document.documentElement || el === document.body || el === document.scrollingElement;
+
 function installLayout() {
   const proto = HTMLElement.prototype;
   for (const key of ["clientHeight", "scrollHeight", "scrollTop", "offsetTop", "offsetHeight"]) {
@@ -78,13 +121,13 @@ function installLayout() {
   Object.defineProperty(proto, "clientHeight", {
     configurable: true,
     get(this: HTMLElement) {
-      return this === document.documentElement ? VIEWPORT : 0;
+      return isScroller(this) ? VIEWPORT : 0;
     },
   });
   Object.defineProperty(proto, "scrollHeight", {
     configurable: true,
     get(this: HTMLElement) {
-      if (this !== document.documentElement) return 0;
+      if (!isScroller(this)) return 0;
       return document.querySelectorAll(".channel-message-row").length * ROW + 2;
     },
   });
@@ -130,6 +173,9 @@ function restoreLayout() {
 
 beforeEach(() => {
   wsMock.reset();
+  observers.length = 0;
+  (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
+    MockIntersectionObserver;
   scrollTopValue = 0;
   installLayout();
 });
@@ -278,89 +324,6 @@ it("loads an older history page on scroll-to-top", async () => {
   await waitFor(() => expect(screen.getByText("old--49")).toBeInTheDocument());
 });
 
-it("restores a runway of already-loaded rows when the reader scrolls up", async () => {
-  const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-  vi.stubGlobal("fetch", fetchMock);
-  render(<ChannelChat channelId={CH} currentUserId={ME} />);
-  await screen.findByPlaceholderText(/Написать/i);
-
-  act(() => {
-    for (let id = 1; id <= 400; id += 1) {
-      wsMock.emit("new_channel_message", {
-        id,
-        channel_id: CH,
-        user_id: "u9",
-        username: "bob",
-        avatar_url: null,
-        content: `msg-${id}`,
-        created_at: "2026-08-20T10:00:00Z",
-      });
-    }
-  });
-  await waitFor(() => expect(screen.getByText("msg-400")).toBeInTheDocument());
-  const before = document.querySelectorAll(".channel-message-row").length;
-
-  // Scroll to the top of the mounted window: reading history.
-  act(() => {
-    document.documentElement.scrollTop = 0;
-    window.dispatchEvent(new Event("scroll"));
-  });
-
-  // A whole fling's worth of already-loaded rows is mounted above the reader,
-  // and the row that was at the top of the viewport did not move.
-  await waitFor(
-    () => expect(document.querySelectorAll(".channel-message-row").length).toBeGreaterThan(before),
-    { timeout: 3000 },
-  );
-  const rows = Array.from(document.querySelectorAll<HTMLElement>(".channel-message-row"));
-  const anchor = rows.find((row) => row.dataset.messageId === "251");
-  expect(document.documentElement.scrollTop).toBeGreaterThanOrEqual(4000);
-  expect(anchor?.offsetTop).toBe(document.documentElement.scrollTop);
-});
-
-it("does not touch the list while a finger is on the screen", async () => {
-  const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-  vi.stubGlobal("fetch", fetchMock);
-  render(<ChannelChat channelId={CH} currentUserId={ME} />);
-  await screen.findByPlaceholderText(/Написать/i);
-
-  act(() => {
-    for (let id = 1; id <= 400; id += 1) {
-      wsMock.emit("new_channel_message", {
-        id,
-        channel_id: CH,
-        user_id: "u9",
-        username: "bob",
-        avatar_url: null,
-        content: `msg-${id}`,
-        created_at: "2026-08-20T10:00:00Z",
-      });
-    }
-  });
-  await waitFor(() => expect(screen.getByText("msg-400")).toBeInTheDocument());
-  const list = screen.getByTestId("channel-chat-messages");
-  const before = document.querySelectorAll(".channel-message-row").length;
-
-  // Finger down, then scroll up: the runway must NOT be mounted (WebKit drops
-  // the compensating write under a live gesture).
-  fireEvent.pointerDown(list);
-  act(() => {
-    document.documentElement.scrollTop = 0;
-    window.dispatchEvent(new Event("scroll"));
-  });
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  expect(document.querySelectorAll(".channel-message-row")).toHaveLength(before);
-
-  // Lifting it runs the deferred pass.
-  act(() => {
-    fireEvent.pointerUp(window);
-  });
-  await waitFor(
-    () => expect(document.querySelectorAll(".channel-message-row").length).toBeGreaterThan(before),
-    { timeout: 3000 },
-  );
-});
-
 it("mounts only the windowed slice for a long history", async () => {
   const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
   vi.stubGlobal("fetch", fetchMock);
@@ -392,6 +355,54 @@ it("mounts only the windowed slice for a long history", async () => {
   expect(mounted[0].className).toContain("chat-native-row");
   expect(mounted[0].style.position).toBe("");
   expect(document.querySelector(".chat-scroll-sentinel")).not.toBeNull();
+});
+
+it("does not touch the list while a finger is on the screen", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ChannelChat channelId={CH} currentUserId={ME} />);
+  await screen.findByPlaceholderText(/Написать/i);
+
+  act(() => {
+    for (let id = 1; id <= 400; id += 1) {
+      wsMock.emit("new_channel_message", {
+        id,
+        channel_id: CH,
+        user_id: "u9",
+        username: "bob",
+        avatar_url: null,
+        content: `msg-${id}`,
+        created_at: "2026-08-20T10:00:00Z",
+      });
+    }
+  });
+  await waitFor(() => expect(screen.getByText("msg-400")).toBeInTheDocument());
+  const list = screen.getByTestId("channel-chat-messages");
+  const before = document.querySelectorAll(".channel-message-row").length;
+
+  // Finger down, then scroll up: nothing may be mounted (WebKit drops the
+  // compensating write under a live gesture).
+  fireEvent.pointerDown(list);
+  act(() => {
+    document.documentElement.scrollTop = 0;
+    window.dispatchEvent(new Event("scroll"));
+  });
+  // The sentinel that would normally slide the window is armed, but the finger
+  // is still down: nothing may be mounted.
+  triggerTopSentinel();
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(document.querySelectorAll(".channel-message-row")).toHaveLength(before);
+
+  // Lifting the finger clears the gate, and the same trigger now mounts the
+  // already-loaded rows above the reader.
+  act(() => {
+    fireEvent.pointerUp(window);
+  });
+  triggerTopSentinel();
+  await waitFor(
+    () => expect(document.querySelectorAll(".channel-message-row").length).toBeGreaterThan(before),
+    { timeout: 3000 },
+  );
 });
 
 it("marks deleted messages with a placeholder and blanks the text", async () => {  const msg = { id: 3, channel_id: CH, user_id: ME, username: "me", avatar_url: null, content: "привет", created_at: "2026-08-20T09:00:00Z" };

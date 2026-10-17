@@ -52,21 +52,6 @@ export const INITIAL_WINDOW = 150;
 export const RESET_WINDOW = 50;
 /** Rows added per bi-directional expansion step. */
 export const WINDOW_STEP = 50;
-/**
- * Runway kept above the viewport while the reader is in history: the mounted
- * window must always have at least this much content ABOVE them. A fling on a
- * phone covers a few thousand pixels, so a shorter runway means the reader
- * slams into the top of the mounted window (a rubber-band dead stop) and waits
- * for the next chunk. Restored at every rest.
- */
-export const RUNWAY_PX = 4000;
-/**
- * Where the next older page is requested. Deliberately much earlier than the
- * runway floor: the *request* touches no DOM, so it runs mid-fling and the page
- * is already in the store buffer when the reader reaches the top — the wait at
- * the wall is then one settle, not a network round trip.
- */
-export const PREFETCH_PX = 6000;
 /** Rows removed beyond the ceiling, so GC does not run on every arrival. */
 export const PRUNE_BATCH = 50;
 /** Rows mounted above a `scrollToMessage` target. */

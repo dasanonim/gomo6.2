@@ -45,18 +45,12 @@ MessageList / ChannelChat
   with `rootMargin: 600px` slide the window: up into already-loaded rows first,
   then into a fetched page; down into rows that were garbage-collected below.
   The top sentinel only *fetches* — the insert always happens in the settle pass.
-* **Runway.** A bounded window means the scrollable content ends at the oldest
-  mounted row, so a fling that reaches it hits a rubber-band dead stop and the
-  reader waits. Two things keep that away: the next page is *requested* from the
-  per-frame scroll pass (`PREFETCH_PX = 6000`, network only — no DOM, so it is
-  safe mid-fling, and the store buffers up to two pages), and every verified
-  rest restores `RUNWAY_PX = 4000` of content above the viewport by mounting
-  already-loaded rows (or inserting the buffered page). The wait at a real wall
-  is then one settle, not a network round trip.
-* **Ceiling enforcement trims the side the reader is NOT heading into**: rows
-  below the viewport while they are moving up, rows above it while they are
-  moving down or pinned to the bottom. A top prune is clamped so it can never
-  remove the row the reader is looking at.
+* **Early request, late insert.** The next page is requested from the per-frame
+  scroll pass (`PREFETCH_PX = 6000`) and buffered by the store (up to two
+  pages). The request touches no DOM, so it is safe under a live coast; the
+  *insert* still waits for a verified rest. That takes the network out of the
+  wait when the reader reaches the top of the mounted window, which is where the
+  scrollable content really ends.
 * **Garbage collection**: rows below the viewport are dropped immediately (they
   cannot move anything the reader sees). Rows above the viewport are dropped
   only when the scroller is at rest, and the removed height is subtracted from
@@ -72,23 +66,20 @@ MessageList / ChannelChat
 
 ## The anchoring fallback (Safari)
 
-`overflow-anchor` is Chromium/Firefox only. The fallback is anchored on **the
-row the reader is looking at**, not on the window's indices:
+`overflow-anchor` is Chromium/Firefox only. The fallback is deliberately derived
+from the **committed DOM**, so it does not depend on the order React flushes a
+store update and a window update:
 
-1. at the start of the settle pass (before anything is mutated) the first
-   visible row is recorded: its key and its `offsetTop`;
-2. the layout effect after the commit finds that row again and measures how far
-   it moved in layout (`delta`);
-3. if the engine did not already move `scrollTop` by `delta` (native anchoring
-   did not run), it is corrected — before paint, at a verified rest.
+1. the layout effect compares the committed slice with the previous one;
+2. `previous.start - start > 0` means rows were added above the window;
+3. the added height is measured from the DOM (the `offsetTop` of the first kept
+   row minus the first row);
+4. if `scrollTop` did not already move by that much (native anchoring did not
+   run), it is corrected — before paint, at a verified rest.
 
-Anchoring on the reader's row instead of the slice's indices means the
-correction does not depend on the order React commits a store update and a
-window update in, and it also covers a row above the reader *growing* (a late
-image, a resolved share card). The same measurement is what makes a top prune
-safe: the anchor row moves up, `delta` is negative, and the position follows.
+The symmetric case (top GC) subtracts the measured removed height.
 
-## Device findings: iOS Safari (2026-10-17)
+## Device findings (iOS Safari)
 
 Two WebKit-specific causes of jitter were found on a real iPhone after the first
 round of testing. Both are fixed; the first one is the important one.
@@ -151,6 +142,26 @@ and WebKit drops such a write while a gesture is live. Two guards, both required
 The first implementation of this list had the same rule (`gestureRef`) and it was
 dropped as "spaghetti" during the rewrite; the regressions above are what
 reintroducing it fixed. Do not remove it.
+
+### 3. Rolled back: the aggressive runway (2026-10-18)
+
+An attempt to remove the "wall" added a runway floor restored at *every* rest
+(mounting up to 200 rows), direction-aware ceiling enforcement and an
+anchor-based compensation. On a real iPhone it produced strong jerks right after
+the scroll stopped: the runway grew the window past the ceiling constantly, so
+the ceiling enforcement fired (up to a hundred rows removed at once) at every
+stop, and every stop also mounted a large block and rewrote `scrollTop` — a lot
+of layout and position churn exactly when the momentum ends.
+
+What survived the rollback: the pointer gate (above) and the early request
+(`PREFETCH_PX`). The wall and the waiting at it are therefore still there. The
+runway idea is sound but must be reintroduced incrementally with a device test
+per step, and preferably as *spacer-absorbed mounting*: keep a rolling spacer
+above the mounted window whose height shrinks by the **measured** height of the
+rows being mounted, so the content above the reader never changes and mounting
+costs no `scrollTop` write at all — which makes it safe even mid-momentum. That
+is the only design that removes the wall without touching the position while a
+gesture is live.
 
 ## Media: no late reflow
 
