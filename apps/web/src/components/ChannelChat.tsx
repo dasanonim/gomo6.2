@@ -828,7 +828,10 @@ export function ChannelChat({
     // short, plus stays in flow when it grows past one screen.
     <div className="relative bg-background min-h-[100dvh] flex flex-col">
       {/* Message stream — contributes height to the document; the window
-          scrolls this page, not an inner overflow container. */}
+          scrolls this page, not an inner overflow container. The pointer
+          handlers are passive observers that open/close the "a finger is on the
+          list" gate — they never take over the gesture. */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
       <div
         onPointerDown={() => {
           userDraggingRef.current = true;
