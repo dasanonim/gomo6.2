@@ -613,8 +613,23 @@ describe("MessageList (native DOM slicing)", () => {
     expect(captured.every((entry) => entry.id.startsWith("new"))).toBe(true);
   });
 
-  it("re-renders rows when the ambient render version changes", () => {
-    setStore({ messages: [makeMessage("a"), makeMessage("b")] });
+  it("falls back to the tail, without compensation, when the window's keys are gone", async () => {
+    setStore({ messages: longList(400) });
+    const { container } = mountList();
+    // Freeze the window on the middle rows (250..399).
+    await scrollTo(container, 0);
+    expect(rowIds(container)[0]).toBe("m250");
+
+    // A full replacement: every key is gone. The fallback tail window is a
+    // fresh slice, not "rows added above" — compensating it would throw the
+    // reader hundreds of rows down.
+    setStore({ messages: longList(300, "fresh") });
+
+    expect(rowIds(container).at(-1)).toBe("fresh299");
+    expect(scrollerOf(container).scrollTop).toBe(0);
+  });
+
+  it("re-renders rows when the ambient render version changes", () => {    setStore({ messages: [makeMessage("a"), makeMessage("b")] });
     const { rerender } = render(
       <MessageList renderMessage={renderMessage} renderVersion={{ pinned: null }} />,
     );

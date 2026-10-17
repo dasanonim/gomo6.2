@@ -141,9 +141,18 @@ export function ChannelChat({
   keyIndexRef.current = keyIndex;
 
   const resolved = resolveKeyWindow(win, keyIndex, messages.length);
+  const windowResolvable = resolved !== null;
   const slice: MessageSlice = resolved ?? tailSlice(messages.length);
   const sliceRef = useRef(slice);
   sliceRef.current = slice;
+
+  // A window whose keys are gone (a full list replacement) falls back to a
+  // fresh tail window for this render; re-seed the state so it stops pointing
+  // at messages that no longer exist.
+  useEffect(() => {
+    if (windowResolvable) return;
+    setWin((current) => (sameKeyWindow(current, TAIL_WINDOW) ? current : TAIL_WINDOW));
+  }, [windowResolvable]);
 
   // True while pinned to the bottom: appends clamp to the real bottom, and the
   // "N new" pill counts messages only while the user is scrolled up.
@@ -531,7 +540,9 @@ export function ChannelChat({
     // Rows were added ABOVE the mounted window: keep the reader's message where
     // it was. Native scroll anchoring has already done it in Chromium/Firefox;
     // this is the pre-paint fallback (and the only path in Safari).
-    const addedAbove = previous ? previous.start - slice.start : 0;
+    // The fallback slice of an unresolvable window is a fresh tail, not "rows
+    // added above", so it must not be compensated.
+    const addedAbove = windowResolvable && previous ? previous.start - slice.start : 0;
     if (addedAbove > 0) {
       const nodes = listRef.current?.querySelectorAll<HTMLElement>(".channel-message-row");
       const first = nodes?.[0];
@@ -555,7 +566,7 @@ export function ChannelChat({
 
     if (!isScrollingRef.current) pruneTopIfNeeded();
     lastTopRef.current = el.scrollTop;
-  }, [slice.start, slice.end, messages, pruneTopIfNeeded]);
+  }, [slice.start, slice.end, messages, pruneTopIfNeeded, windowResolvable]);
 
   // Pin to the real bottom while following. Skipped mid-coast: writing
   // `scrollTop` during momentum is what makes iOS stutter; the settle pass

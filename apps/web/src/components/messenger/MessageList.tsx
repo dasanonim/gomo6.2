@@ -610,7 +610,10 @@ export const MessageList = memo(
       prevSliceRef.current = { start: derived.start, end: derived.end };
       if (!scroller) return;
 
-      const addedAbove = previous ? previous.start - derived.start : 0;
+      // A window whose keys no longer resolve is a full replacement: the
+      // fallback slice is a fresh tail, not "rows added above", so it must not
+      // be compensated.
+      const addedAbove = windowResolvable && previous ? previous.start - derived.start : 0;
       if (addedAbove > 0) {
         const items = scroller.querySelectorAll<HTMLElement>(".message-item");
         const first = items[0];
@@ -638,7 +641,7 @@ export const MessageList = memo(
       // past the ceiling must not wait for the next scroll event to shrink.
       if (!isScrollingRef.current) pruneTopIfNeeded();
       lastTopRef.current = scroller.scrollTop;
-    }, [derived.start, derived.end, messages, tailKey, pruneTopIfNeeded]);
+    }, [derived.start, derived.end, messages, tailKey, pruneTopIfNeeded, windowResolvable]);
 
     // ── Jump to a message (pinned banner, quoted reply) ────────────────
     useLayoutEffect(() => {
