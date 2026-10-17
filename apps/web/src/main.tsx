@@ -7,6 +7,7 @@ import App from "./App.tsx";
 import { toast } from "@/components/ui/sonner";
 import { setupGlobalErrorHandlers } from "@/lib/logging";
 import { initMobileKeyboard } from "@/lib/mobileKeyboard";
+import { initScrollAnchoringFlag } from "@/lib/scrollAnchoring";
 import { initPerfTier } from "@/utils/perfTier";
 import "./index.css";
 import "@/theme/theme.css";
@@ -19,6 +20,13 @@ import "@/components/Lightbox.css";
 // Mobile virtual keyboard: tracks the visual viewport, publishes --app-vh /
 // --kb-inset CSS variables and keeps the focused input above the keyboard.
 const disposeMobileKeyboard = initMobileKeyboard();
+
+// Whether the engine compensates a layout change above the viewport with native
+// scroll anchoring. The chat lists branch on it: with anchoring their rows may
+// be skipped by `content-visibility`, without it every mounted row must stay
+// laid out (a skipped row's real height would move the reader — the
+// per-message stutter on iOS Safari). Must run before the first paint.
+initScrollAnchoringFlag();
 
 // Classify the device once and put weak hardware on the cheap glass tier
 // (html.perf-lite) before the header ever paints.

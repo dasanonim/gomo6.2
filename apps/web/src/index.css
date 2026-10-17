@@ -810,13 +810,24 @@ html.perf-lite .profile-tabbar--stuck .profile-tabbar__bg {
      rows. `overflow-anchor: auto` is the chat's own anchor: a prepended page
      must never move the message the reader is looking at.
      Used by the messenger list (`.message-item`) and the GomoSub channel chat.
-     `contain: paint` clips ink that escapes the row, so per-row decorations
-     must stay inside the row box. */
+
+     `content-visibility` is applied ONLY where the engine compensates the
+     height change of an unskipped row with native scroll anchoring (the
+     `has-scroll-anchoring` class is set behaviourally in lib/scrollAnchoring.ts).
+     Without anchoring — every WebKit browser — a row that scrolls into view
+     replaces its 64px estimate with its real height and moves everything below
+     it: that is a stutter on every single message while scrolling up through a
+     window that has not been rendered yet, plus an underestimated scrollable
+     height that ends a momentum fling early. There the mounted window IS the
+     virtualization and every row stays laid out. */
   .chat-native-row {
+    contain: layout style;
+    overflow-anchor: auto;
+  }
+
+  .has-scroll-anchoring .chat-native-row {
     content-visibility: auto;
     contain-intrinsic-size: auto 64px;
-    contain: layout style paint;
-    overflow-anchor: auto;
   }
 
   /* Window sentinels (top/bottom of the mounted slice): 1px of dead space that

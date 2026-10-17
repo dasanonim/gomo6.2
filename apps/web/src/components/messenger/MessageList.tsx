@@ -484,17 +484,37 @@ export const MessageList = memo(
 
     // ── Scroll pass ────────────────────────────────────────────────────
     /** The heavy pass, run once the scroller has been quiet for a moment. */
-    const handleSettle = useCallback(() => {
-      isScrollingRef.current = false;
-      const scroller = scrollerRef.current;
-      if (!scroller) return;
-      // A message that arrived while the coast was live is pinned now (writing
-      // `scrollTop` mid-momentum is what makes iOS stutter).
-      if (followingRef.current) scroller.scrollTop = scroller.scrollHeight;
-      pruneTopIfNeeded();
-      if (!followingRef.current && scroller.scrollTop <= TOP_TRIGGER_PX) expandOlderNow();
-      reportVisibleReads();
-    }, [pruneTopIfNeeded, expandOlderNow, reportVisibleReads]);
+    const handleSettle = useCallback(
+      // Named so the re-arm below can call the same function without a ref.
+      function handleSettle() {
+        const scroller = scrollerRef.current;
+        // `scroll` events can go quiet before the momentum has visually ended
+        // (iOS), so the rest is verified from the position itself: if it moved
+        // since the last observation, re-arm instead of mutating the list.
+        // Everything below (a pin, an insert above the viewport, a top prune)
+        // writes `scrollTop`, and a write under a live coast is dropped by
+        // WebKit — which is exactly the visible jump.
+        if (scroller && Math.abs(scroller.scrollTop - lastTopRef.current) > 1) {
+          lastTopRef.current = scroller.scrollTop;
+          isScrollingRef.current = true;
+          if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
+          settleTimerRef.current = setTimeout(() => {
+            settleTimerRef.current = null;
+            handleSettle();
+          }, SCROLL_SETTLE_MS);
+          return;
+        }
+        isScrollingRef.current = false;
+        if (!scroller) return;
+        // A message that arrived while the coast was live is pinned now (writing
+        // `scrollTop` mid-momentum is what makes iOS stutter).
+        if (followingRef.current) scroller.scrollTop = scroller.scrollHeight;
+        pruneTopIfNeeded();
+        if (!followingRef.current && scroller.scrollTop <= TOP_TRIGGER_PX) expandOlderNow();
+        reportVisibleReads();
+      },
+      [pruneTopIfNeeded, expandOlderNow, reportVisibleReads],
+    );
 
     const handleScroll = useCallback(() => {
       isScrollingRef.current = true;

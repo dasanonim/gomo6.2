@@ -760,10 +760,9 @@ main.is-messenger-page {
   margin-top: auto;
 }
 
-/* One mounted message. The native virtualization contract (content-visibility,
-   the intrinsic-size fallback and `overflow-anchor`) lives in the shared
-   `.chat-native-row` utility — see src/index.css. `contain: paint` there clips
-   ink that escapes the row — see `.notes-quick-pin` below. */
+/* One mounted message. The row contract (content-visibility where the engine
+   can anchor, plus `overflow-anchor`) lives in the shared `.chat-native-row`
+   utility — see src/index.css. */
 .message-row {
   box-sizing: border-box;
   width: 100%;
@@ -3772,9 +3771,9 @@ main.is-messenger-page {
    is never clipped by media bubbles' overflow. Notes are a self-chat (the
    bubble always sits at the row's right edge), so right:2px lands the button
    exactly on the bubble's top-right corner. Revealed on hover, always visible
-   when pinned. It sits INSIDE the message box: `.message-item` carries
-   `contain: paint` (native content-visibility virtualization), so ink that
-   escapes the row — a negative `top` — would be clipped. */
+   when pinned. It sits INSIDE the message box: where `content-visibility`
+   applies (engines with scroll anchoring) the row also gets paint containment,
+   so ink that escapes the row — a negative `top` — would be clipped. */
 .notes-quick-pin {
   position: absolute;
   top: 0;

@@ -72,6 +72,57 @@ not depend on the order React flushes a store update and a window update:
 
 The symmetric case (top GC) subtracts the measured removed height.
 
+## Device findings: iOS Safari (2026-10-17)
+
+Two WebKit-specific causes of jitter were found on a real iPhone after the first
+round of testing. Both are fixed; the first one is the important one.
+
+### 1. `content-visibility` without scroll anchoring = a stutter per message
+
+Measured in the same conversation, same window, only the flag differing:
+
+| | `content-visibility` | row heights of the mounted window | `scrollHeight` |
+|---|---|---|---|
+| Chromium (anchoring) | `auto` | 64, 64, 64, … (skipped) | 3202 |
+| Safari (no anchoring) | `visible` | 111, 89, 69, 69, 69 … (real) | 3161 |
+
+A skipped row occupies `contain-intrinsic-size` (64px). When it scrolls into
+view its **real** height replaces that estimate, so everything below it moves by
+the difference. Chromium/Firefox absorb that with native scroll anchoring;
+WebKit has none, so the reader sees a small jump on *every* message while
+scrolling up through a window that has not been rendered yet — and the
+underestimated `scrollHeight` also ends a momentum fling early. Once every
+mounted row has been rendered (sizes remembered) the jitter disappears, which is
+exactly the "it only stutters until everything is loaded" symptom.
+
+Fix: the capability is now **detected behaviourally** (a probe scroller:
+insert 40px above the fold and see whether `scrollTop` follows —
+`lib/scrollAnchoring.ts`), the result is published as `has-scroll-anchoring` on
+`<html>` before the first paint, and `content-visibility` is gated on it:
+
+```css
+.chat-native-row { contain: layout style; overflow-anchor: auto; }
+.has-scroll-anchoring .chat-native-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 64px;
+}
+```
+
+So Chromium/Firefox keep the native row-skipping optimization, and WebKit lays
+out the mounted window (≤ 300 rows) completely — there the window itself is the
+virtualization. `CSS.supports("overflow-anchor", …)` is deliberately NOT used:
+an engine may parse the property without anchoring, which would put Safari back
+on the broken branch.
+
+### 2. `scroll` events can go quiet before the momentum has visually ended
+
+The heavy pass (pin, insert above the viewport, top prune) writes `scrollTop`,
+and WebKit drops such a write under a live coast — the classic visible jump. The
+settle pass is therefore no longer triggered by the timer alone: it verifies the
+rest from the position (`scrollTop` unchanged since the last observation) and
+re-arms itself otherwise, so a mutation can only ever land on a genuinely
+stopped scroller.
+
 ## Media: no late reflow
 
 `getAttachmentDisplayStyle` always returns a `width` + `aspect-ratio` box, from

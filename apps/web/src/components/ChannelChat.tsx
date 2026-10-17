@@ -447,18 +447,35 @@ export function ChannelChat({
   }, []);
 
   // ── Scroll pass ─────────────────────────────────────────────────────────
-  const handleSettle = useCallback(() => {
-    isScrollingRef.current = false;
-    const el = getScroller();
-    if (el && followingRef.current) el.scrollTop = el.scrollHeight;
-    if (pendingOlderRef.current) {
-      const page = pendingOlderRef.current;
-      pendingOlderRef.current = null;
-      insertOlder(page);
-    }
-    pruneTopIfNeeded();
-    if (el && !followingRef.current && el.scrollTop <= TOP_LOAD_ZONE) maybeLoadOlder();
-  }, [insertOlder, pruneTopIfNeeded, maybeLoadOlder]);
+  const handleSettle = useCallback(
+    function handleSettle() {
+      const el = getScroller();
+      // `scroll` events can go quiet before the momentum has visually ended
+      // (iOS): verify the rest from the position and re-arm if it still moves.
+      // Everything below writes `scrollTop`, which WebKit drops under a live
+      // coast.
+      if (el && Math.abs(el.scrollTop - lastTopRef.current) > 1) {
+        lastTopRef.current = el.scrollTop;
+        isScrollingRef.current = true;
+        if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = setTimeout(() => {
+          settleTimerRef.current = null;
+          handleSettle();
+        }, SCROLL_SETTLE_MS);
+        return;
+      }
+      isScrollingRef.current = false;
+      if (el && followingRef.current) el.scrollTop = el.scrollHeight;
+      if (pendingOlderRef.current) {
+        const page = pendingOlderRef.current;
+        pendingOlderRef.current = null;
+        insertOlder(page);
+      }
+      pruneTopIfNeeded();
+      if (el && !followingRef.current && el.scrollTop <= TOP_LOAD_ZONE) maybeLoadOlder();
+    },
+    [insertOlder, pruneTopIfNeeded, maybeLoadOlder],
+  );
 
   const handleScroll = useCallback(() => {
     const el = getScroller();

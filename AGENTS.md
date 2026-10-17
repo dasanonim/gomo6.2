@@ -341,16 +341,21 @@ npx tsc --noEmit -p apps/docs/tsconfig.json
   targets an explicit `conversationId` and touches `s.messages` only when that chat is
   open (pattern: `messengerStore.createFavoriteNote`, issue #509).
 - **Chat scrolling is native DOM slicing — no virtualization library.** Messenger
-  `MessageList` and GomoSub `ChannelChat` render normal-flow rows with
-  `content-visibility: auto` (`.chat-native-row`) and slide a **keyed** window
-  (`messenger/core/slicing.ts`, keys = `messageKey`, never indices). Sentinels
-  (`rootMargin: 600px`) expand; rows below the viewport are GC'd immediately,
-  rows above it only at rest (with a `scrollTop` correction in the same layout
-  pass). Nothing writes `scrollTop` while a finger or a momentum scroll is live;
-  native `overflow-anchor` holds the reader's place on a prepend, with one
-  pre-paint fallback for Safari. Rows are memoized on `(message, prev, quoted,
-  peerReceipt, renderVersion)` — a NEW ambient render input must be added to
-  `renderVersion` in `ChatView.tsx`, otherwise mounted rows will not re-render.
+  `MessageList` and GomoSub `ChannelChat` render normal-flow rows (`.chat-native-row`)
+  and slide a **keyed** window (`messenger/core/slicing.ts`, keys = `messageKey`,
+  never indices). Sentinels (`rootMargin: 600px`) expand; rows below the viewport
+  are GC'd immediately, rows above it only at rest (with a `scrollTop` correction
+  in the same layout pass). Nothing writes `scrollTop` while a finger or a momentum
+  scroll is live — and the "at rest" state is *verified from the position*, not
+  trusted from the event stream (iOS scroll events can go quiet before the coast
+  ends). Rows are memoized on `(message, prev, quoted, peerReceipt, renderVersion)`
+  — a NEW ambient render input must be added to `renderVersion` in `ChatView.tsx`,
+  otherwise mounted rows will not re-render.
+  `content-visibility` on rows is gated on the `has-scroll-anchoring` class on
+  `<html>` (`lib/scrollAnchoring.ts`, detected behaviourally at boot): WebKit has
+  no scroll anchoring, so a row unskipping from its 64px estimate to its real
+  height would move the reader — that is the per-message stutter on iOS. Never
+  gate it on `CSS.supports("overflow-anchor", …)`.
   See [docs/wiki/MESSENGER_NATIVE_DOM_SLICING.md](docs/wiki/MESSENGER_NATIVE_DOM_SLICING.md).
 - **Channel switching**: `channelSlug` must be in the `loadBoard` effect deps in
   `apps/web/src/pages/Board.tsx`. Missing it = stale threads on channel nav.
