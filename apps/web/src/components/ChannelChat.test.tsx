@@ -50,33 +50,6 @@ vi.mock("@/i18n/dateLocale", () => ({
   useDateLocale: () => undefined,
 }));
 
-// jsdom has no layout: a real useVirtualizer sees clientHeight 0 and renders
-// nothing. The messenger tests use the same minimal stand-in.
-vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: (opts: { count: number; estimateSize: (index: number) => number }) => {
-    const count = opts.count;
-    const sizes = Array.from({ length: count }, (_, i) => opts.estimateSize(i));
-    const offsets = sizes.map((s, i) => sizes.slice(0, i).reduce((a, b) => a + b, 0));
-    return {
-      getVirtualItems: () =>
-        Array.from({ length: count }, (_, i) => ({
-          index: i,
-          key: i,
-          start: offsets[i],
-          size: sizes[i],
-          end: offsets[i] + sizes[i],
-        })),
-      getTotalSize: () => sizes.reduce((a, b) => a + b, 0),
-      getOffsetForIndex: (i: number) => [offsets[i] ?? 0, "start"] as const,
-      measureElement: () => undefined,
-      scrollToIndex: () => {},
-      get isScrolling() {
-        return false;
-      },
-    };
-  },
-}));
-
 const CH = "10000000-0000-0000-0000-000000000001";
 const ME = "20000000-0000-0000-0000-000000000002";
 
@@ -235,8 +208,40 @@ it("loads an older history page on scroll-to-top", async () => {
   await waitFor(() => expect(screen.getByText("old--49")).toBeInTheDocument());
 });
 
-it("marks deleted messages with a placeholder and blanks the text", async () => {
-  const msg = { id: 3, channel_id: CH, user_id: ME, username: "me", avatar_url: null, content: "привет", created_at: "2026-08-20T09:00:00Z" };
+it("mounts only the windowed slice for a long history", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<ChannelChat channelId={CH} currentUserId={ME} />);
+  await screen.findByPlaceholderText(/Написать/i);
+
+  act(() => {
+    for (let id = 1; id <= 400; id += 1) {
+      wsMock.emit("new_channel_message", {
+        id,
+        channel_id: CH,
+        user_id: "u9",
+        username: "bob",
+        avatar_url: null,
+        content: `msg-${id}`,
+        created_at: "2026-08-20T10:00:00Z",
+      });
+    }
+  });
+
+  await waitFor(() => expect(screen.getByText("msg-400")).toBeInTheDocument());
+
+  // Native DOM slicing: a normal-flow row with the shared content-visibility
+  // contract, and a mounted window bounded well below the history length.
+  const mounted = document.querySelectorAll<HTMLElement>(".channel-message-row");
+  expect(mounted.length).toBeGreaterThan(0);
+  expect(mounted.length).toBeLessThanOrEqual(300);
+  expect(mounted[0].className).toContain("chat-native-row");
+  expect(mounted[0].style.position).toBe("");
+  expect(document.querySelector(".chat-scroll-sentinel")).not.toBeNull();
+});
+
+it("marks deleted messages with a placeholder and blanks the text", async () => {  const msg = { id: 3, channel_id: CH, user_id: ME, username: "me", avatar_url: null, content: "привет", created_at: "2026-08-20T09:00:00Z" };
   const fetchMock = vi
     .fn()
     .mockResolvedValueOnce(jsonResponse([msg]))

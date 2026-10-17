@@ -112,7 +112,7 @@ const MessageItem = memo(
     return (
       <div
         // `.message-row` is kept for the existing long-press/menu host hooks.
-        className={`message-item message-row${flash ? " is-flash" : ""}`}
+        className={`message-item message-row chat-native-row${flash ? " is-flash" : ""}`}
         data-message-id={message.id}
         data-message-key={messageKey(message)}
       >
@@ -324,7 +324,7 @@ export const MessageList = memo(
         const resolvedLast =
           current.last === null ? next.length : (index.get(current.last) ?? next.length - 1) + 1;
         const end = Math.max(1, Math.min(next.length, resolvedLast));
-        const trimmed = trimBottom(next, 0, end);
+        const trimmed = trimBottom(next, 0, end, messageKey);
         return { first: headKey, last: trimmed ? trimmed.last : current.last };
       });
     }, []);
@@ -820,9 +820,9 @@ export const MessageList = memo(
           <div className="message-list">
             {/* Sentinels arm the bi-directional window slide. They must never
                 be picked as a scroll anchor. */}
-            <div ref={topSentinelRef} className="scroll-sentinel scroll-sentinel-top" aria-hidden="true" />
+            <div ref={topSentinelRef} className="chat-scroll-sentinel scroll-sentinel-top" aria-hidden="true" />
             {rows}
-            <div ref={bottomSentinelRef} className="scroll-sentinel scroll-sentinel-bottom" aria-hidden="true" />
+            <div ref={bottomSentinelRef} className="chat-scroll-sentinel scroll-sentinel-bottom" aria-hidden="true" />
           </div>
         </div>
 

@@ -143,16 +143,16 @@ describe("slicing — trimBottom", () => {
   const messages = list(500);
 
   it("does nothing at or below the ceiling", () => {
-    expect(trimBottom(messages, 0, MAX_DOM_MESSAGES)).toBeNull();
-    expect(trimBottom(messages, 100, 200)).toBeNull();
+    expect(trimBottom(messages, 0, MAX_DOM_MESSAGES, (m) => m.id)).toBeNull();
+    expect(trimBottom(messages, 100, 200, (m) => m.id)).toBeNull();
   });
 
   it("drops the rows below the ceiling and reports the new tail key", () => {
-    expect(trimBottom(messages, 0, 400)).toEqual({ end: MAX_DOM_MESSAGES, last: `m${MAX_DOM_MESSAGES - 1}` });
+    expect(trimBottom(messages, 0, 400, (m) => m.id)).toEqual({ end: MAX_DOM_MESSAGES, last: `m${MAX_DOM_MESSAGES - 1}` });
   });
 
   it("keeps the window's start when it has slid away from zero", () => {
-    expect(trimBottom(messages, 100, 600)).toEqual({ end: 400, last: "m399" });
+    expect(trimBottom(messages, 100, 600, (m) => m.id)).toEqual({ end: 400, last: "m399" });
   });
 });
 

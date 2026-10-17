@@ -801,6 +801,32 @@ html.perf-lite .profile-tabbar--stuck .profile-tabbar__bg {
     -webkit-backdrop-filter: blur(var(--surface-blur, 0px)) saturate(var(--surface-saturate, 100%));
     backdrop-filter: blur(var(--surface-blur, 0px)) saturate(var(--surface-saturate, 100%));
   }
+
+  /* ── Native DOM-slicing chat rows ──
+     One mounted message in a normal-flow list. The browser's own renderer skips
+     the rows that are far outside the viewport (`content-visibility`) and lays
+     them out from their remembered height (`auto`), or the 64px fallback before
+     their first paint — that IS the virtualization, no spacer and no absolute
+     rows. `overflow-anchor: auto` is the chat's own anchor: a prepended page
+     must never move the message the reader is looking at.
+     Used by the messenger list (`.message-item`) and the GomoSub channel chat.
+     `contain: paint` clips ink that escapes the row, so per-row decorations
+     must stay inside the row box. */
+  .chat-native-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 64px;
+    contain: layout style paint;
+    overflow-anchor: auto;
+  }
+
+  /* Window sentinels (top/bottom of the mounted slice): 1px of dead space that
+     must NEVER be picked as a scroll anchor. */
+  .chat-scroll-sentinel {
+    width: 100%;
+    height: 1px;
+    overflow-anchor: none;
+    pointer-events: none;
+  }
 }
 
 /* Indeterminate segment for the header loading bar (components/TopLoadingBar). */

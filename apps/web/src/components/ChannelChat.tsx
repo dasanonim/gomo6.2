@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { apiClient } from "@/integrations/api/client";
 import { wsService } from "@/services/websocket";
 import { Button } from "@/components/ui/button";
@@ -15,13 +14,37 @@ import { safeDate } from "@/utils/safeDate";
 import { useDateLocale } from "@/i18n/dateLocale";
 import { format, formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import {
+  MAX_DOM_MESSAGES,
+  PRUNE_BATCH,
+  TAIL_WINDOW,
+  WINDOW_STEP,
+  resolveKeyWindow,
+  sameKeyWindow,
+  tailSlice,
+  trimBottom,
+  type KeyWindow,
+  type MessageSlice,
+} from "./messenger/core/slicing";
 
-// Discord-style text channel: a full-bleed virtualized message stream under a
-// channel header rendered by Board. The virtualizer renders only the visible
-// rows (like the messenger's MessageList), history is fetched in pages on
-// scroll-to-top, and the view stays pinned to the bottom while the user is
-// there. Deliberately leaner than the messenger: no read receipts, no
-// scroll-restore across sessions, no keyboard lift.
+// Discord-style text channel.
+//
+// Two deliberate differences from the messenger list:
+//
+//  1. The chat lives in NORMAL document flow and scrolls with the WINDOW
+//     (`document.scrollingElement`), not an inner overflow container. That is
+//     the only layout iOS pans natively: focusing the composer (the page's last
+//     flow element) makes Safari scroll the whole page up, so the bottom
+//     message rides up with everything else — no fixed shell, no translate
+//     lift, no --app-vh resizing.
+//  2. The mounted window is DOM-sliced exactly like the messenger list
+//     (see ./messenger/core/slicing): a keyed window of rows in normal flow,
+//     `content-visibility` for the browser's own virtualization, native scroll
+//     anchoring, and a single pre-paint compensation where the engine has no
+//     anchoring (Safari). Nothing here owns the scroll position.
+//
+// Deliberately leaner than the messenger: no read receipts, no cross-session
+// scroll restore, no pinned messages.
 
 export interface ChannelMessage {
   id: number;
@@ -37,14 +60,11 @@ export interface ChannelMessage {
 
 const MAX_CONTENT_LENGTH = 4000;
 
-// ── Virtual list geometry (kept in sync with the row markup below) ─────────
-const HISTORY_HEADER_HEIGHT = 28; // "Начало канала" / "Загружаем историю…" strip
-const BOTTOM_GAP_HEIGHT = 16;     // breathing room under the last message
-const AT_BOTTOM_SLACK = 12;       // px from the bottom still treated as "at bottom"
-const TOP_LOAD_ZONE = 300;        // px from the top that arms the history loader
-const OVERSCAN = 10;              // rows rendered beyond the viewport
+const AT_BOTTOM_SLACK = 12; // px from the bottom still treated as "at bottom"
+const TOP_LOAD_ZONE = 300; // px from the top that arms the history loader
 const GROUP_WINDOW_MS = 5 * 60 * 1000; // same-author messages within this are compact
-const LOAD_THROTTLE_MS = 500;     // min gap between history page loads
+const LOAD_THROTTLE_MS = 500; // min gap between history page loads
+const SCROLL_SETTLE_MS = 150; // quiet time before the heavy pass (GC)
 
 interface ChannelChatProps {
   channelId: string;
@@ -70,20 +90,6 @@ function authHeaders(json = false): Record<string, string> {
 const HISTORY_URL = (channelId: string) =>
   `/api/v1/gomosubchat/channels/${channelId}/messages`;
 
-/** Rough pre-measurement height — the virtualizer corrects it with the real
- *  measured row once it scrolls into view. Full-width rows fit ~70 chars. */
-function estimateRowHeight(m: ChannelMessage | undefined, prev: ChannelMessage | null): number {
-  if (!m) return 58;
-  const grouped =
-    !!prev &&
-    prev.user_id === m.user_id &&
-    safeDate(m.created_at).getTime() - safeDate(prev.created_at).getTime() < GROUP_WINDOW_MS;
-  const base = grouped ? 30 : 58; // avatar/name header only on ungrouped rows
-  if (m.deleted_at) return base;
-  const lines = Math.max(1, Math.ceil(m.content.length / 70));
-  return base + (lines - 1) * 26;
-}
-
 function isGroupedWith(prev: ChannelMessage | null, m: ChannelMessage): boolean {
   return (
     !!prev &&
@@ -91,6 +97,14 @@ function isGroupedWith(prev: ChannelMessage | null, m: ChannelMessage): boolean 
     safeDate(m.created_at).getTime() - safeDate(prev.created_at).getTime() < GROUP_WINDOW_MS
   );
 }
+
+/** The window scroll root: the document itself, never an inner container. */
+function getScroller(): HTMLElement | null {
+  if (typeof document === "undefined") return null;
+  return (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
+}
+
+const keyOf = (message: ChannelMessage): string => String(message.id);
 
 export function ChannelChat({
   channelId,
@@ -112,41 +126,49 @@ export function ChannelChat({
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState("");
 
-  // The chat lives in NORMAL document flow and scrolls with the WINDOW
-  // (document.scrollingElement) — not an inner overflow container. This is
-  // the only layout iOS can pan natively: focus the composer (the last flow
-  // element) and Safari scrolls the whole page up of its own accord, so the
-  // bottom message rides up with everything else. No fixed shell, no
-  // translate lift, no --app-vh resizing — nothing to teleport.
-  const scrollerRef = useRef<HTMLElement | null>(null);
-  // True while pinned to the bottom: appends clamp to the real bottom, and the
-  // "N new" pill counts messages only while the user is scrolled up.
-  const stickToBottomRef = useRef(true);
+  // ── Mounted window (see ./messenger/core/slicing) ────────────────────────
+  // `first: null` = the tail window; `last: null` = follow the tail.
+  const [win, setWin] = useState<KeyWindow>(TAIL_WINDOW);
+
   const messagesRef = useRef<ChannelMessage[]>([]);
   messagesRef.current = messages;
+
+  const keyIndex = useMemo(
+    () => new Map(messages.map((message, index) => [keyOf(message), index])),
+    [messages],
+  );
+  const keyIndexRef = useRef(keyIndex);
+  keyIndexRef.current = keyIndex;
+
+  const resolved = resolveKeyWindow(win, keyIndex, messages.length);
+  const slice: MessageSlice = resolved ?? tailSlice(messages.length);
+  const sliceRef = useRef(slice);
+  sliceRef.current = slice;
+
+  // True while pinned to the bottom: appends clamp to the real bottom, and the
+  // "N new" pill counts messages only while the user is scrolled up.
+  const followingRef = useRef(true);
+
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const topSentinelRef = useRef<HTMLDivElement | null>(null);
+  const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
+
   const hasMoreRef = useRef(false);
   hasMoreRef.current = hasMore;
   const loadingMoreRef = useRef(false);
   const lastLoadAtRef = useRef(0);
   const prevLastIdRef = useRef<number | null>(null);
   const userDraggingRef = useRef(false);
-  // The message at the top of the viewport when a history page was requested;
-  // the layout effect below re-freezes it after the prepend so the view does
-  // not jump.
-  const pendingAnchorRef = useRef<{ id: number; offset: number } | null>(null);
 
-  // Bind the virtualizer to the window scroll (document.scrollingElement).
-  useLayoutEffect(() => {
-    scrollerRef.current = (document.scrollingElement || document.documentElement) as HTMLElement | null;
-  }, []);
-
-  const virtualizer = useVirtualizer({
-    count: messages.length,
-    getScrollElement: () => scrollerRef.current,
-    estimateSize: (index) => estimateRowHeight(messages[index], messages[index - 1] ?? null),
-    overscan: OVERSCAN,
-    getItemKey: (index) => messages[index].id,
-  });
+  const isScrollingRef = useRef(false);
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
+  /** A fetched page waiting for the scroller to come to rest. */
+  const pendingOlderRef = useRef<ChannelMessage[] | null>(null);
+  /** The mounted slice + position of the previous commit (anchoring fallback). */
+  const prevSliceRef = useRef<MessageSlice | null>(null);
+  const lastTopRef = useRef(0);
+  const pendingPruneRef = useRef<{ removed: number } | null>(null);
 
   const timeLabel = useMemo(
     () => (iso: string) => formatDistanceToNow(safeDate(iso), { locale: dateLocale, addSuffix: true }),
@@ -159,24 +181,32 @@ export function ChannelChat({
   );
 
   // ── History page (scroll-to-top) ─────────────────────────────────────────
+  /**
+   * Insert a page above the mounted window. Rows are added ABOVE the viewport,
+   * which is the one mutation that has to be compensated to keep the reader's
+   * place — native anchoring does it in Chromium/Firefox, the layout effect
+   * below does it where there is none (Safari).
+   */
+  const insertOlder = useCallback((fresh: ChannelMessage[]) => {
+    if (fresh.length === 0) return;
+    const next = [...fresh, ...messagesRef.current];
+    messagesRef.current = next;
+    setMessages(next);
+    setWin((current) => {
+      const index = new Map(next.map((message, at) => [keyOf(message), at]));
+      const resolvedLast =
+        current.last === null ? next.length : (index.get(current.last) ?? next.length - 1) + 1;
+      const end = Math.max(1, Math.min(next.length, resolvedLast));
+      const trimmed = trimBottom(next, 0, end, keyOf);
+      return { first: keyOf(fresh[0]), last: trimmed ? trimmed.last : current.last };
+    });
+  }, []);
+
   const loadOlder = useCallback(async () => {
     if (loadingMoreRef.current) return;
     const list = messagesRef.current;
     if (list.length === 0) return;
     const oldest = list[0];
-
-    // Freeze the top-most visible message before the prepend.
-    let anchor = { id: oldest.id, offset: 0 };
-    const el = scrollerRef.current;
-    if (el) {
-      for (const item of virtualizer.getVirtualItems()) {
-        const m = list[item.index];
-        if (m && item.end > el.scrollTop) {
-          anchor = { id: m.id, offset: Math.max(0, el.scrollTop - item.start) };
-          break;
-        }
-      }
-    }
 
     loadingMoreRef.current = true;
     setLoadingOlder(true);
@@ -192,20 +222,36 @@ export function ChannelChat({
         setHasMore(false);
         return;
       }
-      const existing = new Set(list.map((m) => m.id));
+      const existing = new Set(messagesRef.current.map((m) => m.id));
       const fresh = older.filter((m) => !existing.has(m.id));
       if (fresh.length === 0) {
         setHasMore(false);
         return;
       }
-      pendingAnchorRef.current = anchor;
-      setMessages((prev) => [...fresh, ...prev]);
       if (older.length < 50) setHasMore(false);
+      // Never insert under a live coast: the compensation for content added
+      // above the viewport is deferred (and dropped) by WebKit mid-momentum.
+      if (isScrollingRef.current) pendingOlderRef.current = fresh;
+      else insertOlder(fresh);
     } finally {
       loadingMoreRef.current = false;
       setLoadingOlder(false);
     }
-  }, [channelId, virtualizer]);
+  }, [channelId, insertOlder]);
+
+  const maybeLoadOlder = useCallback(() => {
+    const now = Date.now();
+    if (
+      !hasMoreRef.current ||
+      loadingMoreRef.current ||
+      userDraggingRef.current ||
+      now - lastLoadAtRef.current <= LOAD_THROTTLE_MS
+    ) {
+      return;
+    }
+    lastLoadAtRef.current = now;
+    void loadOlder();
+  }, [loadOlder]);
 
   // ── Mount: history + room subscription + realtime handlers ──────────────
   useEffect(() => {
@@ -215,7 +261,8 @@ export function ChannelChat({
     setMessages([]);
     setEditingId(null);
     setHasMore(false);
-    stickToBottomRef.current = true;
+    setWin(TAIL_WINDOW);
+    followingRef.current = true;
     setIsAtBottom(true);
     setNewMessageCount(0);
 
@@ -308,29 +355,123 @@ export function ChannelChat({
     };
   }, [channelId]);
 
-  // ── Scroll: at-bottom tracking + history loader ─────────────────────────
-  const handleScroll = useCallback(() => {
-    const el = scrollerRef.current;
+  // ── Garbage collection: drop rows above the ceiling ─────────────────────
+  const pruneTopIfNeeded = useCallback(() => {
+    if (isScrollingRef.current) return;
+    const el = getScroller();
+    if (!el) return;
+    const { start, end } = sliceRef.current;
+    const over = end - start - MAX_DOM_MESSAGES;
+    if (over <= 0) return;
+    const list = messagesRef.current;
+    const remove = Math.min(over + PRUNE_BATCH, end - start - 1);
+    const kept = list[start + remove];
+    if (!kept || start + remove >= end) return;
+    const nodes = listRef.current?.querySelectorAll<HTMLElement>(".channel-message-row");
+    const first = nodes?.[0];
+    const boundary = nodes?.[remove];
+    if (!first || !boundary) return;
+    const removed = boundary.getBoundingClientRect().top - first.getBoundingClientRect().top;
+    if (!(removed > 0)) return;
+    pendingPruneRef.current = { removed };
+    setWin((current) => ({ ...current, first: keyOf(kept) }));
+  }, []);
+
+  // ── Sliding window: one older step, one newer step ──────────────────────
+  const expandOlderNow = useCallback(() => {
+    if (followingRef.current) return;
+    const { start } = sliceRef.current;
+    const list = messagesRef.current;
+    if (start > 0) {
+      const nextStart = Math.max(0, start - WINDOW_STEP);
+      const older = list[nextStart];
+      if (older) {
+        setWin((current) => ({ ...current, first: keyOf(older) }));
+        return;
+      }
+    }
+    if (pendingOlderRef.current) {
+      const page = pendingOlderRef.current;
+      pendingOlderRef.current = null;
+      insertOlder(page);
+      return;
+    }
+    maybeLoadOlder();
+  }, [insertOlder, maybeLoadOlder]);
+
+  const expandNewer = useCallback(() => {
+    if (followingRef.current) return;
+    const { end } = sliceRef.current;
+    const list = messagesRef.current;
+    if (end >= list.length) return;
+    const nextEnd = Math.min(list.length, end + WINDOW_STEP);
+    const newest = list[nextEnd - 1];
+    if (!newest) return;
+    setWin((current) => ({ ...current, last: keyOf(newest) }));
+  }, []);
+
+  // ── Bottom stickiness ───────────────────────────────────────────────────
+  const updateBottomState = useCallback(() => {
+    const el = getScroller();
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_SLACK;
-    if (atBottom !== stickToBottomRef.current) {
-      stickToBottomRef.current = atBottom;
-      setIsAtBottom(atBottom);
-      if (atBottom) setNewMessageCount(0);
+    if (atBottom === followingRef.current) return;
+    if (atBottom) {
+      followingRef.current = true;
+      setIsAtBottom(true);
+      setNewMessageCount(0);
+      // Back at the newest message: re-seed the tail window. Every row that
+      // leaves is above the viewport, so nothing visible moves.
+      setWin((current) => (sameKeyWindow(current, TAIL_WINDOW) ? current : TAIL_WINDOW));
+    } else {
+      followingRef.current = false;
+      setIsAtBottom(false);
+      const { start, end } = sliceRef.current;
+      const list = messagesRef.current;
+      const first = list[start];
+      const newest = list[end - 1];
+      setWin((current) => ({
+        first: current.first ?? (first ? keyOf(first) : null),
+        last: newest ? keyOf(newest) : current.last,
+      }));
     }
+  }, []);
 
-    const now = Date.now();
-    if (
-      el.scrollTop <= TOP_LOAD_ZONE &&
-      hasMoreRef.current &&
-      !loadingMoreRef.current &&
-      !userDraggingRef.current &&
-      now - lastLoadAtRef.current > LOAD_THROTTLE_MS
-    ) {
-      lastLoadAtRef.current = now;
-      void loadOlder();
+  // ── Scroll pass ─────────────────────────────────────────────────────────
+  const handleSettle = useCallback(() => {
+    isScrollingRef.current = false;
+    const el = getScroller();
+    if (el && followingRef.current) el.scrollTop = el.scrollHeight;
+    if (pendingOlderRef.current) {
+      const page = pendingOlderRef.current;
+      pendingOlderRef.current = null;
+      insertOlder(page);
     }
-  }, [loadOlder]);
+    pruneTopIfNeeded();
+    if (el && !followingRef.current && el.scrollTop <= TOP_LOAD_ZONE) maybeLoadOlder();
+  }, [insertOlder, pruneTopIfNeeded, maybeLoadOlder]);
+
+  const handleScroll = useCallback(() => {
+    const el = getScroller();
+    if (!el) return;
+    lastTopRef.current = el.scrollTop;
+    isScrollingRef.current = true;
+    if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = setTimeout(() => {
+      settleTimerRef.current = null;
+      handleSettle();
+    }, SCROLL_SETTLE_MS);
+
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      updateBottomState();
+    });
+
+    // The request may start early (it touches no DOM); the insert waits for a
+    // rest (see loadOlder).
+    if (el.scrollTop <= TOP_LOAD_ZONE) maybeLoadOlder();
+  }, [handleSettle, updateBottomState, maybeLoadOlder]);
 
   // The scroller is the window: listen for window and resize events (the
   // layout owns the page, so a mobile keyboard that changes the visible area
@@ -346,35 +487,91 @@ export function ChannelChat({
     };
   }, [handleScroll]);
 
-  // ── Position stabilization: bottom pin / prepend anchor ─────────────────
-  const totalSize = virtualizer.getTotalSize();
-  useLayoutEffect(() => {
-    const el = scrollerRef.current;
-    if (!el || virtualizer.isScrolling) return;
+  // ── Sentinels: bi-directional window triggers ───────────────────────────
+  useEffect(() => {
+    const top = topSentinelRef.current;
+    const bottom = bottomSentinelRef.current;
+    if ((!top && !bottom) || typeof IntersectionObserver === "undefined") return;
+    const topObserver = top
+      ? new IntersectionObserver(
+          (entries) => {
+            if (entries.some((entry) => entry.isIntersecting) && !isScrollingRef.current) {
+              expandOlderNow();
+            }
+          },
+          { rootMargin: "600px 0px 0px 0px" },
+        )
+      : null;
+    const bottomObserver = bottom
+      ? new IntersectionObserver(
+          (entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) expandNewer();
+          },
+          { rootMargin: "0px 0px 600px 0px" },
+        )
+      : null;
+    if (topObserver && top) topObserver.observe(top);
+    if (bottomObserver && bottom) bottomObserver.observe(bottom);
+    return () => {
+      topObserver?.disconnect();
+      bottomObserver?.disconnect();
+    };
+  }, [expandOlderNow, expandNewer]);
 
-    const pending = pendingAnchorRef.current;
-    if (pending) {
-      const idx = messages.findIndex((m) => m.id === pending.id);
-      if (idx >= 0) {
-        const res = virtualizer.getOffsetForIndex(idx);
-        if (res) {
-          const target = res[0] - pending.offset;
-          if (Math.abs(el.scrollTop - target) > 1) el.scrollTop = target;
+  // ── Position: bottom pin + prepend/prune compensation ───────────────────
+  useLayoutEffect(() => {
+    const el = getScroller();
+    const previous = prevSliceRef.current;
+    prevSliceRef.current = { start: slice.start, end: slice.end };
+    if (!el) return;
+
+    // Rows were added ABOVE the mounted window: keep the reader's message where
+    // it was. Native scroll anchoring has already done it in Chromium/Firefox;
+    // this is the pre-paint fallback (and the only path in Safari).
+    const addedAbove = previous ? previous.start - slice.start : 0;
+    if (addedAbove > 0) {
+      const nodes = listRef.current?.querySelectorAll<HTMLElement>(".channel-message-row");
+      const first = nodes?.[0];
+      const boundary = nodes?.[addedAbove];
+      if (first && boundary) {
+        const added = boundary.getBoundingClientRect().top - first.getBoundingClientRect().top;
+        if (added > 1 && el.scrollTop < lastTopRef.current + added - 1) {
+          el.scrollTop = lastTopRef.current + added;
         }
       }
-      pendingAnchorRef.current = null;
-      return;
     }
 
-    if (stickToBottomRef.current) {
-      const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
-      if (Math.abs(el.scrollTop - maxScrollTop) > 1) el.scrollTop = maxScrollTop;
+    const prune = pendingPruneRef.current;
+    if (prune) {
+      pendingPruneRef.current = null;
+      if (followingRef.current) el.scrollTop = el.scrollHeight;
+      else if (el.scrollTop > lastTopRef.current - prune.removed + 1) {
+        el.scrollTop = Math.max(0, lastTopRef.current - prune.removed);
+      }
     }
-    // scrollRect.height changes when an interactive-widget keyboard resizes the
-    // shell (Chrome/Firefox Android) and is the honest "the layout changed"
-    // signal — re-pin to the new bottom. On iOS the layout never changes so it
-    // never fires (the translate lift owns the position there).
-  }, [totalSize, messages, virtualizer, virtualizer.isScrolling, virtualizer.scrollRect?.height]);
+
+    if (!isScrollingRef.current) pruneTopIfNeeded();
+    lastTopRef.current = el.scrollTop;
+  }, [slice.start, slice.end, messages, pruneTopIfNeeded]);
+
+  // Pin to the real bottom while following. Skipped mid-coast: writing
+  // `scrollTop` during momentum is what makes iOS stutter; the settle pass
+  // pins instead. A layout change (an interactive-widget keyboard resizing the
+  // shell) also lands here.
+  useLayoutEffect(() => {
+    if (!followingRef.current || isScrollingRef.current) return;
+    const el = getScroller();
+    if (!el) return;
+    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (Math.abs(el.scrollTop - maxScrollTop) > 1) el.scrollTop = maxScrollTop;
+  }, [messages.length, slice.start, slice.end]);
+
+  useEffect(() => {
+    return () => {
+      if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
+      if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+    };
+  }, []);
 
   // ── "N new messages" counter while scrolled up ──────────────────────────
   useEffect(() => {
@@ -386,7 +583,7 @@ export function ChannelChat({
     const prevLast = prevLastIdRef.current;
     if (prevLast !== null && lastId !== prevLast) {
       const idx = messages.findIndex((m) => m.id === prevLast);
-      if (idx >= 0 && !stickToBottomRef.current) {
+      if (idx >= 0 && !followingRef.current) {
         const appended = messages.slice(idx + 1);
         const incoming = appended.filter((m) => m.user_id !== currentUserId).length;
         if (incoming > 0) setNewMessageCount((c) => c + incoming);
@@ -396,20 +593,16 @@ export function ChannelChat({
   }, [messages, currentUserId]);
 
   const scrollToBottom = useCallback(() => {
-    stickToBottomRef.current = true;
+    followingRef.current = true;
+    // An explicit "take me to the newest" overrides the coast tracking.
+    isScrollingRef.current = false;
     setIsAtBottom(true);
     setNewMessageCount(0);
-    const el = scrollerRef.current;
-    if (!el) return;
-    if (typeof el.scrollTo === "function") {
-      try {
-        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-        return;
-      } catch {
-        // fall through
-      }
-    }
-    el.scrollTop = el.scrollHeight;
+    // No smooth scroll: re-seed the window to the newest rows and snap in one
+    // frame. A smooth scroll across thousands of pixels reads as a hang.
+    setWin(TAIL_WINDOW);
+    const el = getScroller();
+    if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
   const handleSend = async () => {
@@ -483,8 +676,7 @@ export function ChannelChat({
   const canDelete = (m: ChannelMessage) =>
     !m.deleted_at && ((Boolean(currentUserId) && m.user_id === currentUserId) || canDeleteOthers);
 
-  const virtualItems = virtualizer.getVirtualItems();
-  const contentHeight = HISTORY_HEADER_HEIGHT + totalSize + BOTTOM_GAP_HEIGHT;
+  const rows: ChannelMessage[] = messages.slice(slice.start, slice.end);
   const displayName = channelName || "канал";
 
   return (
@@ -534,11 +726,9 @@ export function ChannelChat({
             </p>
           </div>
         ) : (
-          <div style={{ height: contentHeight, position: "relative" }}>
-            <div
-              className="flex items-center justify-center gap-3 text-[11px] text-muted-foreground/70"
-              style={{ position: "absolute", top: 0, left: 0, right: 0, height: HISTORY_HEADER_HEIGHT }}
-            >
+          <div ref={listRef} className="channel-message-list">
+            <div ref={topSentinelRef} className="chat-scroll-sentinel" aria-hidden="true" />
+            <div className="flex items-center justify-center gap-3 py-2 text-[11px] text-muted-foreground/70">
               <span className="h-px flex-1 max-w-24 bg-border/60" />
               {loadingOlder ? (
                 <span className="inline-flex items-center gap-1.5">
@@ -552,18 +742,15 @@ export function ChannelChat({
               <span className="h-px flex-1 max-w-24 bg-border/60" />
             </div>
 
-            {virtualItems.map((row) => {
-              const m = messages[row.index];
-              if (!m) return null;
-              const prev = row.index > 0 ? messages[row.index - 1] : null;
+            {rows.map((m, offset) => {
+              const index = slice.start + offset;
+              const prev = index > 0 ? messages[index - 1] : null;
               const grouped = isGroupedWith(prev, m);
               return (
                 <div
-                  key={row.key}
-                  data-index={row.index}
+                  key={m.id}
                   data-message-id={m.id}
-                  ref={virtualizer.measureElement}
-                  style={{ position: "absolute", top: HISTORY_HEADER_HEIGHT + row.start, left: 0, right: 0 }}
+                  className="channel-message-row chat-native-row"
                 >
                   <div
                     className={`group relative flex gap-3 px-4 sm:px-5 hover:bg-muted/40 transition-colors ${
@@ -608,6 +795,7 @@ export function ChannelChat({
                       ) : editingId === m.id ? (
                         <div className="flex items-center gap-1 mt-0.5">
                           <input
+                            data-autofocus="true"
                             value={editDraft}
                             maxLength={MAX_CONTENT_LENGTH}
                             onChange={(e) => setEditDraft(e.target.value)}
@@ -649,7 +837,7 @@ export function ChannelChat({
                               setEditingId(m.id);
                               setEditDraft(m.content);
                               requestAnimationFrame(() => {
-                                const el = scrollerRef.current?.querySelector('[data-autofocus="true"]') as HTMLInputElement | null;
+                                const el = listRef.current?.querySelector('[data-autofocus="true"]') as HTMLInputElement | null;
                                 el?.focus();
                               });
                             }}
@@ -675,7 +863,8 @@ export function ChannelChat({
               );
             })}
 
-            <div aria-hidden="true" style={{ position: "absolute", top: HISTORY_HEADER_HEIGHT + totalSize, left: 0, right: 0, height: BOTTOM_GAP_HEIGHT }} />
+            <div ref={bottomSentinelRef} className="chat-scroll-sentinel" aria-hidden="true" />
+            <div aria-hidden="true" className="h-4" />
           </div>
         )}
       </div>

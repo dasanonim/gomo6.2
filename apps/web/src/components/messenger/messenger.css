@@ -760,34 +760,16 @@ main.is-messenger-page {
   margin-top: auto;
 }
 
-/* One mounted message. Native browser virtualization: the engine skips rows
-   that are far outside the viewport and lays them out from their remembered
-   height (`auto`), or the 64px fallback before their first paint. `contain:
-   paint` clips ink that escapes the row — see `.notes-quick-pin` below. */
-.message-item {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 64px;
-  contain: layout style paint;
-  /* The chat's own anchor: the row the reader is looking at is never the one
-     that gets scrolled away when content is inserted above it. */
-  overflow-anchor: auto;
-}
-
+/* One mounted message. The native virtualization contract (content-visibility,
+   the intrinsic-size fallback and `overflow-anchor`) lives in the shared
+   `.chat-native-row` utility — see src/index.css. `contain: paint` there clips
+   ink that escapes the row — see `.notes-quick-pin` below. */
 .message-row {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
   max-width: 100%;
   padding-inline: var(--message-gutter);
-}
-
-/* Window sentinels (top/bottom of the mounted slice). They are 1px of dead
-   space and must NEVER be picked as a scroll anchor. */
-.scroll-sentinel {
-  width: 100%;
-  height: 1px;
-  overflow-anchor: none;
-  pointer-events: none;
 }
 
 /* `scrollToMessage` briefly rings the message it jumped to. Transform/outline

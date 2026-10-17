@@ -155,14 +155,15 @@ export function resolveKeyWindow(
  * anything the reader can see. Returns the slice's new end plus the key the
  * window must now end on, or `null` when no trim is needed.
  */
-export function trimBottom(
-  messages: readonly MessageIdentity[],
+export function trimBottom<T>(
+  messages: readonly T[],
   start: number,
   end: number,
+  keyOf: (message: T) => string,
 ): { end: number; last: string } | null {
   if (end - start <= MAX_DOM_MESSAGES) return null;
   const nextEnd = Math.min(end, start + MAX_DOM_MESSAGES);
   const node = messages[nextEnd - 1];
   if (!node) return null;
-  return { end: nextEnd, last: messageKey(node) };
+  return { end: nextEnd, last: keyOf(node) };
 }
