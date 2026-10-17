@@ -351,7 +351,7 @@ export const MessageBubble = memo(function MessageBubble({
     };
     const onScroll = () => {
       // Scrolling takes the message away from the panel (and the row can even
-      // be virtualized out of the window) — close instead of leaving an
+      // be sliced out of the mounted window) — close instead of leaving an
       // orphaned floating panel. Nothing scrolls programmatically while the
       // menu is open, so every scroll event here is genuinely user-driven.
       dismissMenu();

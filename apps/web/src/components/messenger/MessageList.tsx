@@ -513,6 +513,9 @@ export const MessageList = memo(
     }, [updateBottomState, handleSettle]);
 
     // ── Sentinels: bi-directional sliding-window triggers ──────────────
+    // `hasMessages` is a dependency so the observers are (re)attached when the
+    // scroller itself appears — the list renders nothing without messages.
+    const hasMessages = messages.length > 0;
     useEffect(() => {
       const scroller = scrollerRef.current;
       const top = topSentinelRef.current;
@@ -545,7 +548,7 @@ export const MessageList = memo(
         topObserver?.disconnect();
         bottomObserver?.disconnect();
       };
-    }, [expandOlderNow, expandNewer]);
+    }, [expandOlderNow, expandNewer, hasMessages]);
 
     // ── Unread counter for arrivals below a frozen window ──────────────
     const tail = messages.length > 0 ? messages[messages.length - 1] : null;

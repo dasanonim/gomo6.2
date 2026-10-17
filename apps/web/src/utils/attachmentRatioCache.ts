@@ -2,9 +2,9 @@
 //
 // Old photos carry no width/height metadata, so the first time they render we
 // only know their proportions after the protected blob URL finishes loading.
-// Remembering the ratio per attachment URL lets the virtualizer height
-// estimate reserve the right amount of space on the next chat open — no scroll
-// jump when the image re-fetches.
+// Remembering the ratio per attachment URL lets the reserved media box be the
+// right size on the next chat open — the image can never reflow the list when
+// it arrives.
 //
 // The cache is bounded and shared across conversations; entries are small
 // numbers, never file contents.
@@ -23,9 +23,9 @@ export function fallbackAttachmentAspectRatio(type: "image" | "video"): number {
 
 let cached: Record<string, CacheEntry> | null = null;
 
-// Version counter bumped on every mutation. ChatView subscribes to it so the
-// virtualizer re-estimates row heights in the *current* session the moment an
-// image finishes loading — not only after the chat is reopened.
+// Version counter bumped on every mutation. It lets a subscriber react to a
+// ratio being learned in the *current* session — not only after the chat is
+// reopened.
 let version = 0;
 const listeners = new Set<() => void>();
 
@@ -131,8 +131,8 @@ export function rememberAttachmentAspectRatio(
 }
 
 /**
- * Subscribe to cache mutations. Returns an unsubscribe function. Combined with
- * `getCacheVersion` it powers the virtualizer re-estimation in the current
+ * Subscribe to cache mutations. Returns an unsubscribe function; combined with
+ * `getAttachmentRatiosVersion` it reports a ratio learned in the current
  * session.
  */
 export function subscribeToAttachmentRatios(listener: () => void): () => void {

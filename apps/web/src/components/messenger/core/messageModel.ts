@@ -5,7 +5,7 @@
  * the sender-minted `client_id` (stable across the optimistic → server
  * round-trip). Using ONE identity everywhere — `client_id || id` — lets an
  * optimistic message and its server echo collapse into a single slot instead
- * of racing as two rows, and keeps the virtualizer's item keys stable.
+ * of racing as two rows, and keeps the mounted list's row keys stable.
  *
  * Before this module the store keyed merges by `id || client_id` while
  * MessageList keyed items by `client_id ?? id` — two different identities for
@@ -113,7 +113,7 @@ export function prependOlder<T extends MessageIdentity>(
 /**
  * Insert or replace a single message by canonical identity, preserving its
  * slot. This is the optimistic → server swap: the temporary row is replaced
- * in place, so the virtualizer never reflows (a re-sort could move it).
+ * in place, so a mounted row never reflows (a re-sort could move it).
  */
 export function upsertMessage<T extends MessageIdentity>(
   messages: readonly T[],

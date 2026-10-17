@@ -340,6 +340,18 @@ npx tsc --noEmit -p apps/docs/tsconfig.json
   crashes if the messenger store is uninitialized. Add a dedicated store action that
   targets an explicit `conversationId` and touches `s.messages` only when that chat is
   open (pattern: `messengerStore.createFavoriteNote`, issue #509).
+- **Chat scrolling is native DOM slicing — no virtualization library.** Messenger
+  `MessageList` and GomoSub `ChannelChat` render normal-flow rows with
+  `content-visibility: auto` (`.chat-native-row`) and slide a **keyed** window
+  (`messenger/core/slicing.ts`, keys = `messageKey`, never indices). Sentinels
+  (`rootMargin: 600px`) expand; rows below the viewport are GC'd immediately,
+  rows above it only at rest (with a `scrollTop` correction in the same layout
+  pass). Nothing writes `scrollTop` while a finger or a momentum scroll is live;
+  native `overflow-anchor` holds the reader's place on a prepend, with one
+  pre-paint fallback for Safari. Rows are memoized on `(message, prev, quoted,
+  peerReceipt, renderVersion)` — a NEW ambient render input must be added to
+  `renderVersion` in `ChatView.tsx`, otherwise mounted rows will not re-render.
+  See [docs/wiki/MESSENGER_NATIVE_DOM_SLICING.md](docs/wiki/MESSENGER_NATIVE_DOM_SLICING.md).
 - **Channel switching**: `channelSlug` must be in the `loadBoard` effect deps in
   `apps/web/src/pages/Board.tsx`. Missing it = stale threads on channel nav.
 - **Releases**: bump `VERSION` and add a `## [X.Y.Z]` section to `CHANGELOG.md`, then
@@ -352,6 +364,7 @@ npx tsc --noEmit -p apps/docs/tsconfig.json
 [DOCKER_SETUP](docs/wiki/DOCKER_SETUP.md) · [SECURITY_AUDIT](docs/wiki/SECURITY_AUDIT.md) ·
 [MESSENGER_SECURITY](docs/wiki/MESSENGER_SECURITY.md) · [OAUTH_API](docs/wiki/OAUTH_API.md) ·
 [PUBLIC_IDS](docs/wiki/PUBLIC_IDS.md) · [BOT_SYSTEM_ARCHITECTURE](docs/wiki/BOT_SYSTEM_ARCHITECTURE.md) ·
+[MESSENGER_NATIVE_DOM_SLICING](docs/wiki/MESSENGER_NATIVE_DOM_SLICING.md) ·
 [REALTIME_WEBSOCKET_PATTERN](docs/wiki/REALTIME_WEBSOCKET_PATTERN.md) ·
 [PRESENCE_SYSTEM_DESIGN](docs/wiki/PRESENCE_SYSTEM_DESIGN.md) ·
 [THREAD_ATTACHMENTS_GUIDE](docs/wiki/THREAD_ATTACHMENTS_GUIDE.md).

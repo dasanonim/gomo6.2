@@ -69,7 +69,7 @@ export const ChatView = memo(function ChatView({
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [isBatchSending, setIsBatchSending] = useState(false);
   const batchSendingRef = useRef(false);
-  // Virtualized list handle: send-time follow and the pinned-message jump.
+  // Message-list handle: send-time follow and the pinned-message jump.
   const messageListRef = useRef<MessageListHandle>(null);
   // Notes self-chat organization
   const [notesFolderFilter, setNotesFolderFilter] = useState<string | null>(null);

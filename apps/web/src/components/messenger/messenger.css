@@ -3603,7 +3603,7 @@ main.is-messenger-page {
 
 /* ── Notes organization: pinned section, folder filter, quick pin, chips ── */
 
-/* Pinned notes section — compact non-virtualized list above the main list */
+/* Pinned notes section — compact, always-mounted list above the main list */
 .notes-pinned-section {
   flex-shrink: 0;
   max-height: 38vh;

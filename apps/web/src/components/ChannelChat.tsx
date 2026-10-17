@@ -488,6 +488,9 @@ export function ChannelChat({
   }, [handleScroll]);
 
   // ── Sentinels: bi-directional window triggers ───────────────────────────
+  // `hasMessages` is a dependency so the observers are (re)attached when the
+  // list itself appears — nothing is rendered without messages.
+  const hasMessages = messages.length > 0;
   useEffect(() => {
     const top = topSentinelRef.current;
     const bottom = bottomSentinelRef.current;
@@ -516,7 +519,7 @@ export function ChannelChat({
       topObserver?.disconnect();
       bottomObserver?.disconnect();
     };
-  }, [expandOlderNow, expandNewer]);
+  }, [expandOlderNow, expandNewer, hasMessages]);
 
   // ── Position: bottom pin + prepend/prune compensation ───────────────────
   useLayoutEffect(() => {
