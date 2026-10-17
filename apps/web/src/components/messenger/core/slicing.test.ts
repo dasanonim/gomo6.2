@@ -4,6 +4,7 @@ import {
   ANCHOR_BEFORE,
   INITIAL_WINDOW,
   MAX_DOM_MESSAGES,
+  RESET_WINDOW,
   TAIL_WINDOW,
   aroundSlice,
   buildKeyIndex,
@@ -11,6 +12,7 @@ import {
   resolveKeyWindow,
   sameKeyWindow,
   sliceSize,
+  tailKeyWindow,
   tailSlice,
   trimBottom,
 } from "./slicing";
@@ -29,6 +31,20 @@ describe("slicing — tailSlice", () => {
 
   it("is empty for an empty history", () => {
     expect(tailSlice(0)).toEqual({ start: 0, end: 0 });
+  });
+});
+
+describe("slicing — tailKeyWindow", () => {
+  it("describes the newest window in keys, still following the tail", () => {
+    expect(tailKeyWindow(list(500))).toEqual({ first: `m${500 - INITIAL_WINDOW}`, last: null });
+  });
+
+  it("supports a smaller reset window for a jump to the bottom", () => {
+    expect(tailKeyWindow(list(500), RESET_WINDOW)).toEqual({ first: `m${500 - RESET_WINDOW}`, last: null });
+  });
+
+  it("is the empty window for an empty history", () => {
+    expect(tailKeyWindow([])).toEqual(TAIL_WINDOW);
   });
 });
 

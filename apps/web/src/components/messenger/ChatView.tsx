@@ -12,7 +12,7 @@ import { MessageBubble } from "./MessageBubble";
 import { MessageComposer } from "./MessageComposer";
 import { UserInfoPanel } from "./UserInfoPanel";
 import { parseGiftContent, GiftDetailDialog } from "./MessageContent";
-import { MessageList, type MessageListHandle } from "./MessageList";
+import { MessageList, type MessageListHandle, type MessageRenderExtras } from "./MessageList";
 import { NotesSettingsDialog } from "./NotesSettingsDialog";
 import { NotesOrganizeDialog } from "./NotesOrganizeDialog";
 import { hasNotesKey } from "@/utils/notesCrypto";
@@ -47,7 +47,6 @@ export const ChatView = memo(function ChatView({
   const isLoading = useMessengerStore((s) => s.isMessagesLoading);
   const isSending = useMessengerStore((s) => s.isSending);
   const me = useMessengerStore((s) => s.me);
-  const receipts = useMessengerStore((s) => s.receipts);
   const error = useMessengerStore((s) => s.error);
   const setError = useMessengerStore((s) => s.setError);
 
@@ -324,16 +323,15 @@ export const ChatView = memo(function ChatView({
     (
       msg: MessageView,
       prev: MessageView | null,
-      extras: { dateLabel: string | null; isConsecutive: boolean },
+      extras: MessageRenderExtras,
     ) => {
       void language;
       if (!conversation || !me) return null;
-      const { dateLabel, isConsecutive: isGrouped } = extras;
-      const convReceipts = receipts.get(conversation.id) ?? [];
-      const peerReceipt = convReceipts.find((r) => r.message_id === msg.id && r.user_id !== me.id) ?? null;
-      const quoted = msg.parent_message_id
-        ? (messageById.get(msg.parent_message_id) ?? null)
-        : null;
+      // The reply target and the peer's receipt arrive resolved from the list
+      // (it owns the full history + the receipts map), so this renderer's
+      // identity does not change on every arrival and message rows can be
+      // memoized. `renderVersion` below covers the ambient inputs.
+      const { dateLabel, isConsecutive: isGrouped, quoted, peerReceipt } = extras;
       const giftData = parseGiftContent(msg.content);
 
       if (giftData) {
@@ -398,7 +396,20 @@ export const ChatView = memo(function ChatView({
         </div>
       );
     },
-    [conversation, me, messageById, receipts, language, handleStartEdit, deleteMessage, togglePin, toggleNotesPin, sendMessage, handleReply, handleCopy],
+    [conversation, me, language, handleStartEdit, deleteMessage, togglePin, toggleNotesPin, sendMessage, handleReply, handleCopy],
+  );
+
+  // Identity of the ambient render inputs: pinned id, group/notes flags, the
+  // reader's own id. Message rows compare it to know whether they must
+  // re-render even though their own message object did not change.
+  const renderVersion = useMemo(
+    () => ({
+      pinned: conversation?.pinned_message_id ?? null,
+      group: conversation?.is_group ?? false,
+      notes: conversation?.is_notes ?? false,
+      me: me?.id ?? null,
+    }),
+    [conversation?.pinned_message_id, conversation?.is_group, conversation?.is_notes, me?.id],
   );
 
   if (!conversation || !me) {
@@ -517,6 +528,10 @@ export const ChatView = memo(function ChatView({
                     {renderMessage(msg, prev, {
                       dateLabel: null,
                       isConsecutive: isConsecutive(prev, msg),
+                      quoted: msg.parent_message_id
+                        ? messageById.get(msg.parent_message_id) ?? null
+                        : null,
+                      peerReceipt: null,
                     })}
                   </div>
                 );
@@ -580,6 +595,7 @@ export const ChatView = memo(function ChatView({
             key={conversation.id}
             ref={messageListRef}
             renderMessage={renderMessage}
+            renderVersion={renderVersion}
             messagesOverride={visibleMessages}
           />
         )}

@@ -1,52 +1,34 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 import { MessageList, type MessageListHandle, type MessageRenderExtras } from "./MessageList";
-import { writeMessageScrollAnchor, __resetMessageScrollAnchorsForTests } from "./core/messageScrollAnchors";
+import {
+  __resetMessageScrollAnchorsForTests,
+  writeMessageScrollAnchor,
+} from "./core/messageScrollAnchors";
+import { INITIAL_WINDOW, MAX_DOM_MESSAGES, RESET_WINDOW } from "./core/slicing";
 import type { MessageView } from "./types";
 
-// ── Hoisted shared state (accessible from vi.mock factories) ──────────────
+// ── Store mock ─────────────────────────────────────────────────────────────
+// A real zustand store, so the component re-renders through the same
+// subscription path it uses in the app.
 const h = vi.hoisted(() => ({
   loadMoreMessages: vi.fn(async () => {}),
   flushPendingOlderMessages: vi.fn(() => false),
   queueMarkRead: vi.fn(),
-  // Assigned by the store mock; a real zustand store, so the component
-  // re-renders through the same subscription path as in the app.
-  store: null as unknown as { setState: (patch: Record<string, unknown>) => void },
-  // Virtualizer stand-in controls.
-  atBottom: true,
-  scrollOffset: 0,
-  rangeStart: 0,
-  isScrolling: false,
-  /** Tracked width of the stand-in scroller, i.e. the wrap width driver. */
-  scrollRectWidth: 780,
-  windowStart: 0,
-  windowSize: 3,
-  lastOptions: null as null | {
-    count: number;
-    anchorTo?: string;
-    followOnAppend?: unknown;
-    scrollEndThreshold?: number;
-    overscan?: number;
-    paddingEnd?: number;
-    directDomUpdates?: boolean;
-    getItemKey: (index: number) => unknown;
-    estimateSize: (index: number) => number;
+  store: null as unknown as {
+    getState: () => { messages: MessageView[] };
+    setState: (patch: Record<string, unknown>) => void;
   },
-  scrollToIndex: vi.fn(),
-  scrollToEnd: vi.fn(),
-  scrollToOffset: vi.fn(),
-  resizeItem: vi.fn(),
-  itemSizeCache: new Map<unknown, number>(),
 }));
 
 vi.mock("@/stores/messengerStore", async () => {
   const { create } = await import("zustand");
   const useMessengerStore = create(() => ({
     messages: [] as MessageView[],
-    selectedConversationId: null as string | null,
-    me: null as { id: string } | null,
-    conversations: [] as Array<{ id: string; is_group: boolean }>,
+    selectedConversationId: "c1" as string | null,
+    me: { id: "me" } as { id: string } | null,
+    receipts: new Map<string, Array<{ message_id: string; user_id: string; read_at: string | null; delivered_at: string | null }>>(),
     hasMoreMessages: false,
     isLoadingMore: false,
     loadMoreMessages: h.loadMoreMessages,
@@ -59,80 +41,128 @@ vi.mock("@/stores/messengerStore", async () => {
   };
 });
 
-/**
- * jsdom has no layout: a real `useVirtualizer` measures a 0px-tall scroller and
- * renders nothing. This stand-in reproduces the *contract* the list depends on
- * — a window of virtual items with stable keys, a total size, and the chat
- * options it was configured with — without pretending to be scroll physics.
- * Real end-anchoring behaviour is verified in the browser, not here.
- */
-vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: (opts: {
-    count: number;
-    estimateSize: (index: number) => number;
-    getItemKey: (index: number) => unknown;
-  }) => {
-    h.lastOptions = opts as unknown as typeof h.lastOptions;
-    const count = opts.count;
-    const sizes = Array.from({ length: count }, (_, i) => opts.estimateSize(i));
-    const starts: number[] = [];
-    let running = 0;
-    for (let i = 0; i < count; i += 1) {
-      starts.push(running);
-      running += sizes[i];
-    }
-    const total = running;
-    const VIEWPORT = 600;
-    const start = Math.max(0, Math.min(h.windowStart, Math.max(0, count - h.windowSize)));
-    const end = Math.min(count, start + h.windowSize);
-    return {
-      getVirtualItems: () =>
-        Array.from({ length: Math.max(0, end - start) }, (_, offset) => {
-          const index = start + offset;
-          return {
-            index,
-            key: opts.getItemKey(index),
-            start: starts[index],
-            size: sizes[index],
-            end: starts[index] + sizes[index],
-          };
-        }),
-      getTotalSize: () => total,
-      // The component derives "at the end" from tracked values, so the stand-in
-      // has to expose them the same way the real virtualizer does.
-      get scrollRect() {
-        return { height: VIEWPORT, width: h.scrollRectWidth };
-      },
-      get scrollOffset() {
-        return h.atBottom ? Math.max(0, total - VIEWPORT) : h.scrollOffset;
-      },
-      get range() {
-        return { startIndex: h.rangeStart, endIndex: Math.min(count - 1, h.rangeStart + 3) };
-      },
-      getOffsetForIndex: (index: number) => [starts[index] ?? 0, "start"] as const,
-      measureElement: () => undefined,
-      // The height cache the list primes before paint, and the API it primes
-      // it through — modelled like the real virtualizer so the "already known"
-      // check behaves the same.
-      itemSizeCache: h.itemSizeCache,
-      resizeItem: (index: number, size: number) => {
-        h.itemSizeCache.set(h.lastOptions!.getItemKey(index), size);
-        h.resizeItem(index, size);
-      },
-      // `directDomUpdates` contract: the virtualizer owns the spacer height.
-      containerRef: (node: HTMLElement | null) => {
-        if (node) node.style.height = `${total}px`;
-      },
-      scrollToIndex: (...args: unknown[]) => h.scrollToIndex(...args),
-      scrollToEnd: (...args: unknown[]) => h.scrollToEnd(...args),
-      scrollToOffset: (...args: unknown[]) => h.scrollToOffset(...args),
-      getDistanceFromEnd: () => (h.atBottom ? 0 : 5000),
-      get isScrolling() {
-        return h.isScrolling;
-      },
-    };
-  },
-}));
+// ── IntersectionObserver stand-in ──────────────────────────────────────────
+// jsdom has no layout and never intersects anything, so the two window
+// sentinels are driven explicitly. The contract under test is "a sentinel that
+// becomes visible slides the window", not the browser's geometry.
+type IOEntry = { isIntersecting: boolean; target: Element };
+type IOCallback = (entries: IOEntry[]) => void;
+
+const observers: Array<{ callback: IOCallback; targets: Element[]; rootMargin: string }> = [];
+
+class MockIntersectionObserver {
+  callback: IOCallback;
+  targets: Element[] = [];
+  rootMargin: string;
+  constructor(callback: IOCallback, options?: { rootMargin?: string }) {
+    this.callback = callback;
+    this.rootMargin = options?.rootMargin ?? "";
+    observers.push(this);
+  }
+  observe(target: Element) {
+    this.targets.push(target);
+  }
+  unobserve(target: Element) {
+    this.targets = this.targets.filter((candidate) => candidate !== target);
+  }
+  disconnect() {
+    this.targets = [];
+  }
+  takeRecords() {
+    return [];
+  }
+}
+
+const triggerSentinel = (selector: string) => {
+  const element = document.querySelector(selector);
+  if (!element) throw new Error(`sentinel not found: ${selector}`);
+  const observer = observers.find((candidate) => candidate.targets.includes(element));
+  if (!observer) throw new Error(`no observer is watching ${selector}`);
+  act(() => {
+    observer.callback([{ isIntersecting: true, target: element }]);
+  });
+};
+
+// ── Layout stand-in ────────────────────────────────────────────────────────
+// A fixed row height and viewport make every scroll decision observable:
+// `scrollHeight` is derived from the mounted rows, so a prepend genuinely grows
+// the scrollable content and the compensation can be asserted.
+const ROW = 60;
+const VIEWPORT = 600;
+let scrollTopValue = 0;
+
+const messageItemsIn = (node: HTMLElement) =>
+  Array.from(node.querySelectorAll<HTMLElement>(".message-item"));
+
+const itemOffsetTop = (node: HTMLElement) => {
+  let top = 0;
+  let sibling = node.previousElementSibling;
+  while (sibling) {
+    if (sibling.classList.contains("message-item")) top += ROW;
+    sibling = sibling.previousElementSibling;
+  }
+  return top;
+};
+
+const savedDescriptors: Array<[string, PropertyDescriptor | undefined]> = [];
+
+function installLayout() {
+  const proto = HTMLElement.prototype;
+  for (const key of ["clientHeight", "scrollHeight", "scrollTop", "offsetTop", "offsetHeight", "getBoundingClientRect"]) {
+    savedDescriptors.push([key, Object.getOwnPropertyDescriptor(proto, key)]);
+  }
+  Object.defineProperty(proto, "clientHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.classList.contains("message-scroll") ? VIEWPORT : 0;
+    },
+  });
+  Object.defineProperty(proto, "scrollHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      if (!this.classList.contains("message-scroll")) return 0;
+      return messageItemsIn(this).length * ROW + 2; // + the two 1px sentinels
+    },
+  });
+  Object.defineProperty(proto, "scrollTop", {
+    configurable: true,
+    get() {
+      return scrollTopValue;
+    },
+    set(value: number) {
+      scrollTopValue = Number.isFinite(value) ? Math.max(0, value) : 0;
+    },
+  });
+  Object.defineProperty(proto, "offsetHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.classList.contains("message-item") ? ROW : 0;
+    },
+  });
+  Object.defineProperty(proto, "offsetTop", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.classList.contains("message-item") ? itemOffsetTop(this) : 0;
+    },
+  });
+  Object.defineProperty(proto, "getBoundingClientRect", {
+    configurable: true,
+    value(this: HTMLElement) {
+      const top = this.classList.contains("message-item") ? itemOffsetTop(this) : 0;
+      const height = this.classList.contains("message-item") ? ROW : 0;
+      return { top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) };
+    },
+  });
+}
+
+function restoreLayout() {
+  for (const [key, descriptor] of savedDescriptors.splice(0)) {
+    if (descriptor) Object.defineProperty(HTMLElement.prototype, key, descriptor);
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key];
+  }
+}
+
+// ── Fixtures ───────────────────────────────────────────────────────────────
 
 const makeMessage = (id: string, overrides: Partial<MessageView> = {}): MessageView => ({
   id,
@@ -148,6 +178,9 @@ const makeMessage = (id: string, overrides: Partial<MessageView> = {}): MessageV
   ...overrides,
 });
 
+const longList = (count: number, prefix = "m") =>
+  Array.from({ length: count }, (_, index) => makeMessage(`${prefix}${index}`));
+
 /** Captures every (message, prev, extras) tuple the list hands to the renderer. */
 const captured: Array<{ id: string; prevId: string | null; extras: MessageRenderExtras }> = [];
 
@@ -159,213 +192,105 @@ const renderMessage = (message: MessageView, prev: MessageView | null, extras: M
 const mountList = (props: Partial<Parameters<typeof MessageList>[0]> = {}) =>
   render(<MessageList renderMessage={renderMessage} {...props} />);
 
-/** Push a store patch through the real subscription path. */
 const setStore = (patch: Record<string, unknown>) => {
   act(() => {
     h.store.setState(patch);
   });
 };
 
-/** A list long enough to overflow the stand-in viewport (600px). */
-const longList = (count: number) => Array.from({ length: count }, (_, i) => makeMessage(`m${i}`));
+const rows = (container: HTMLElement) => Array.from(container.querySelectorAll<HTMLElement>(".message-item"));
+const rowIds = (container: HTMLElement) => rows(container).map((row) => row.dataset.messageId);
+const scrollerOf = (container: HTMLElement) => container.querySelector<HTMLElement>(".message-scroll")!;
 
-const rows = (container: HTMLElement) => Array.from(container.querySelectorAll(".message-row"));
+/** Scrolls the viewport, driving the same rAF pass the browser would. */
+const scrollTo = async (container: HTMLElement, top: number) => {
+  const scroller = scrollerOf(container);
+  scrollTopValue = top;
+  await act(async () => {
+    fireEvent.scroll(scroller);
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+  });
+};
+
+/** Waits out the scroll-settle window (the heavy pass runs after it). */
+const settle = async () => {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 220));
+  });
+};
 
 beforeEach(() => {
   cleanup();
   captured.length = 0;
-  h.atBottom = true;
-  h.scrollOffset = 0;
-  h.rangeStart = 0;
-  h.scrollRectWidth = 780;
-  h.windowStart = 0;
-  h.windowSize = 3;
-  h.lastOptions = null;
+  observers.length = 0;
+  scrollTopValue = 0;
   h.loadMoreMessages.mockClear();
-  h.queueMarkRead.mockClear();
-  h.scrollToIndex.mockClear();
-  h.scrollToEnd.mockClear();
-  h.scrollToOffset.mockClear();
-  h.resizeItem.mockClear();
+  h.loadMoreMessages.mockImplementation(async () => {});
   h.flushPendingOlderMessages.mockClear();
-  h.isScrolling = false;
-  h.itemSizeCache.clear();
+  h.flushPendingOlderMessages.mockImplementation(() => false);
+  h.queueMarkRead.mockClear();
   __resetMessageScrollAnchorsForTests();
+  (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
+    MockIntersectionObserver;
+  installLayout();
   setStore({
     messages: [],
-    selectedConversationId: null,
-    me: null,
-    conversations: [],
+    selectedConversationId: "c1",
+    me: { id: "me" },
+    receipts: new Map(),
     hasMoreMessages: false,
     isLoadingMore: false,
   });
 });
 
-describe("MessageList (virtualized)", () => {
-  it("scales the height estimate with the column width, like the real wrap", () => {
-    // The estimate drives every pre-measurement offset; a fixed
-    // characters-per-line number is calibrated for one width and wrong by ~2x
-    // on the other, which is what made iOS accumulate hundreds of pixels of
-    // corrections and dump them in one batch when the scroll stopped.
-    const long = { content: "я".repeat(220) };
+afterEach(() => {
+  restoreLayout();
+});
 
-    h.scrollRectWidth = 330; // phone-ish column
-    setStore({ messages: [makeMessage("a", long)] });
-    mountList();
-    const narrow = h.lastOptions!.estimateSize(0);
-    cleanup();
+// ── Tests ──────────────────────────────────────────────────────────────────
 
-    h.scrollRectWidth = 780; // desktop column
-    setStore({ messages: [makeMessage("a", long)] });
-    mountList();
-    const wide = h.lastOptions!.estimateSize(0);
-
-    expect(narrow).toBeGreaterThan(wide);
-    // ~22 chars/line narrow against ~55 wide: 220 chars is ~10 lines vs ~4.
-    expect(narrow - wide).toBeGreaterThan(100);
-  });
-
-  it("treats explicit newlines as line breaks in the estimate", () => {
-    h.scrollRectWidth = 330;
-
-    setStore({ messages: [makeMessage("a", { content: "short" })] });
-    mountList();
-    const oneLine = h.lastOptions!.estimateSize(0);
-    cleanup();
-
-    // The content renders with `white-space: pre-wrap`, so "\n" is a real break.
-    setStore({ messages: [makeMessage("a", { content: "short\nshort\nshort\nshort" })] });
-    mountList();
-    const fourLines = h.lastOptions!.estimateSize(0);
-
-    expect(fourLines).toBeGreaterThan(oneLine + 40);
-  });
-
-  it("primes the height cache from the mounted rows before paint", () => {
-    // jsdom has no layout, so the row height has to be faked — the point is the
-    // contract: whatever a mounted row measures becomes the cached size in the
-    // same commit, without waiting for the library's ResizeObserver.
-    const offsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
-    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
-      configurable: true,
-      get: () => 77,
-    });
-    try {
-      setStore({ messages: [makeMessage("a"), makeMessage("b")] });
-      mountList();
-
-      expect(h.resizeItem).toHaveBeenCalledWith(0, 77);
-      expect(h.resizeItem).toHaveBeenCalledWith(1, 77);
-    } finally {
-      if (offsetHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", offsetHeight);
-      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
-    }
-  });
-
-  it("stops reading the DOM once a row's height is known", () => {
-    const offsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
-    let reads = 0;
-    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
-      configurable: true,
-      get: () => {
-        reads += 1;
-        return 77;
-      },
-    });
-    try {
-      setStore({ messages: [makeMessage("a"), makeMessage("b")] });
-      mountList();
-      const primed = h.resizeItem.mock.calls.length;
-      expect(primed).toBeGreaterThan(0);
-
-      // Any later commit (a new message, a prepend) reads only the genuinely
-      // new rows: the ones already cached must not force another layout, since
-      // that layout is what makes a scroll stutter.
-      reads = 0;
-      setStore({ messages: [makeMessage("a"), makeMessage("b"), makeMessage("c")] });
-      expect(reads).toBe(1);
-    } finally {
-      if (offsetHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", offsetHeight);
-      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
-    }
-  });
-
-  it("mounts only the virtual window, in source order, not the whole history", () => {
-    h.windowStart = 40;
-    setStore({ messages: Array.from({ length: 500 }, (_, i) => makeMessage(`m${i}`)) });
+describe("MessageList (native DOM slicing)", () => {
+  it("mounts only the windowed slice, in source order", () => {
+    setStore({ messages: longList(500) });
 
     const { container } = mountList();
 
-    expect(rows(container)).toHaveLength(3);
-    expect(rows(container).map((row) => row.getAttribute("data-message-id"))).toEqual([
-      "m40",
-      "m41",
-      "m42",
-    ]);
+    expect(rows(container)).toHaveLength(INITIAL_WINDOW);
+    expect(rowIds(container)[0]).toBe(`m${500 - INITIAL_WINDOW}`);
+    expect(rowIds(container).at(-1)).toBe("m499");
     // The renderer still sees the real neighbours from the full list, so
     // grouping and date separators stay correct at a window boundary.
-    expect(captured.map((entry) => [entry.id, entry.prevId])).toEqual([
-      ["m40", "m39"],
-      ["m41", "m40"],
-      ["m42", "m41"],
-    ]);
+    expect(captured[0].prevId).toBe(`m${500 - INITIAL_WINDOW - 1}`);
   });
 
-  it("positions rows absolutely inside a spacer owned by the virtualizer", () => {
-    setStore({ messages: [makeMessage("a"), makeMessage("b")] });
+  it("renders a normal-flow list: no spacer, no absolute rows, no transforms", () => {
+    setStore({ messages: longList(30) });
 
     const { container } = mountList();
 
-    const spacer = container.querySelector(".message-virtual-list") as HTMLElement;
-    expect(spacer).not.toBeNull();
-    // `directDomUpdates`: the spacer height comes from `containerRef`.
-    expect(spacer.style.height).not.toBe("");
+    expect(container.querySelector(".message-virtual-list")).toBeNull();
+    const scroller = scrollerOf(container);
+    expect(scroller.children).toHaveLength(1);
+    expect(scroller.firstElementChild?.className).toContain("message-list");
     for (const row of rows(container)) {
-      expect((row as HTMLElement).style.position).toBe("absolute");
-      expect((row as HTMLElement).style.top).toBe("0px");
-      // The virtualizer owns the main-axis position — the row must not set it,
-      // or React would overwrite the library's writes with stale offsets.
-      expect((row as HTMLElement).style.transform).toBe("");
+      expect(row.style.position).toBe("");
+      expect(row.style.transform).toBe("");
+      expect(row.style.top).toBe("");
     }
   });
 
-  it("configures the virtualizer for end-anchored chat", () => {
-    setStore({ messages: [makeMessage("a")] });
+  it("brackets the slice with the two window sentinels", () => {
+    setStore({ messages: longList(30) });
 
-    mountList();
+    const { container } = mountList();
 
-    expect(h.lastOptions?.anchorTo).toBe("end");
-    expect(h.lastOptions?.followOnAppend).toBe(true);
-    // Deliberately narrow: a wide slack reads as the list tugging the reader down.
-    expect(h.lastOptions?.scrollEndThreshold).toBeLessThanOrEqual(16);
-    // Small on purpose: every mounted row outside the viewport is a row that
-    // gets measured, and each measurement is a scroll-position correction.
-    expect(h.lastOptions?.overscan).toBeLessThanOrEqual(8);
-    expect(h.lastOptions?.overscan).toBeGreaterThanOrEqual(4);
-    // Holds back React commits during a scroll — the main-thread cost that
-    // makes an iOS momentum scroll stutter.
-    expect(h.lastOptions?.directDomUpdates).toBe(true);
-    // The bottom gap must take part in the scroll math, not hide below the fold.
-    expect(h.lastOptions?.paddingEnd).toBeGreaterThan(0);
+    const list = container.querySelector(".message-list") as HTMLElement;
+    expect(list.firstElementChild?.className).toContain("scroll-sentinel-top");
+    expect(list.lastElementChild?.className).toContain("scroll-sentinel-bottom");
+    expect(rows(container)[0].previousElementSibling).toBe(list.firstElementChild);
   });
 
-  it("keys rows by the canonical identity, never by index", () => {
-    setStore({
-      messages: [
-        makeMessage("server-1", { client_id: "local-1" }),
-        makeMessage("server-2", { client_id: "local-2" }),
-      ],
-    });
-
-    mountList();
-
-    // client_id || id — an optimistic row keeps its slot when the server twin
-    // replaces it, and prepended pages shift indexes without moving rows.
-    expect(h.lastOptions?.getItemKey(0)).toBe("local-1");
-    expect(h.lastOptions?.getItemKey(1)).toBe("local-2");
-  });
-
-  it("hands the renderer the grouping + date extras", () => {
+  it("hands the renderer the grouping and date extras", () => {
     setStore({
       messages: [
         makeMessage("a", { sent_at: "2026-08-08T12:00:00.000Z" }),
@@ -386,8 +311,27 @@ describe("MessageList (virtualized)", () => {
     expect(captured[2].extras.dateLabel).toBeTruthy();
   });
 
+  it("resolves the quoted message and the peer receipt into the extras", () => {
+    setStore({
+      messages: [
+        makeMessage("a"),
+        makeMessage("reply", { parent_message_id: "a" }),
+      ],
+      receipts: new Map([
+        ["c1", [{ message_id: "reply", user_id: "peer", read_at: "2026-08-08T12:05:00.000Z", delivered_at: null }]],
+      ]),
+    });
+
+    mountList();
+
+    const reply = captured.find((entry) => entry.id === "reply");
+    expect(reply?.extras.quoted?.id).toBe("a");
+    expect(reply?.extras.peerReceipt?.message_id).toBe("reply");
+    // The reader's own receipt never becomes the peer's.
+    expect(captured.find((entry) => entry.id === "a")?.extras.quoted).toBeNull();
+  });
+
   it("prefers messagesOverride over the store list (notes folder filter)", () => {
-    h.windowSize = 30;
     setStore({ messages: [makeMessage("stored")] });
 
     mountList({ messagesOverride: [makeMessage("notes-1"), makeMessage("notes-2")] });
@@ -407,196 +351,151 @@ describe("MessageList (virtualized)", () => {
 
     const { container } = mountList();
 
-    const scroller = container.querySelector(".message-scroll") as HTMLElement;
+    const scroller = scrollerOf(container);
     expect(scroller.getAttribute("role")).toBe("log");
-    // Virtualization mounts/unmounts rows while scrolling; a live region would
-    // make a screen reader re-read the history on every window change.
     expect(scroller.getAttribute("aria-live")).toBe("off");
-    // New messages are announced through a dedicated throttled status region.
     expect(container.querySelector('[role="status"]')).not.toBeNull();
   });
 
   it("opens at the newest message", () => {
-    setStore({ messages: [makeMessage("a"), makeMessage("b")] });
+    setStore({ messages: longList(200) });
 
-    mountList();
+    const { container } = mountList();
 
-    expect(h.scrollToEnd).toHaveBeenCalled();
+    const scroller = scrollerOf(container);
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+    expect(rowIds(container).at(-1)).toBe("m199");
   });
 
   it("restores the reader's place instead of jumping to the newest message", () => {
-    // `a` occupies the top of the viewport with 5px of it above the fold.
-    writeMessageScrollAnchor("c1", { key: "b", offset: 5 });
-    setStore({
-      selectedConversationId: "c1",
-      messages: [makeMessage("a"), makeMessage("b"), makeMessage("c")],
-    });
-    h.windowSize = 30;
+    writeMessageScrollAnchor("c1", { key: "m300", offset: 5 });
+    setStore({ messages: longList(500) });
 
-    mountList();
+    const { container } = mountList();
 
-    // Offsets are re-derived from the fresh measurements, not replayed blindly:
-    // `b` starts after the (measured) height of `a`.
-    const startOfB = h.lastOptions?.estimateSize(0) ?? 0;
-    expect(h.scrollToOffset).toHaveBeenCalledWith(startOfB - 5, { align: "start" });
-    expect(h.scrollToEnd).not.toHaveBeenCalled();
+    // The anchored row is mounted with runway above it and scrolled to its
+    // exact offset (5px of it hidden above the fold).
+    expect(rowIds(container)).toContain("m300");
+    const scroller = scrollerOf(container);
+    // 20 rows above it inside the restored window.
+    expect(scroller.scrollTop).toBe(20 * ROW - 5);
   });
 
   it("falls back to the newest message when the anchored message is gone", () => {
     writeMessageScrollAnchor("c1", { key: "deleted-long-ago", offset: 5 });
-    setStore({ selectedConversationId: "c1", messages: [makeMessage("a"), makeMessage("b")] });
+    setStore({ messages: longList(200) });
 
-    mountList();
+    const { container } = mountList();
 
-    expect(h.scrollToEnd).toHaveBeenCalled();
-    expect(h.scrollToOffset).not.toHaveBeenCalled();
+    const scroller = scrollerOf(container);
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+    expect(rowIds(container).at(-1)).toBe("m199");
   });
 
   it("offers a jump-to-latest button only while the reader is away from the end", async () => {
-    setStore({ messages: longList(40) });
+    setStore({ messages: longList(400) });
     const { container } = mountList();
-    const scroller = container.querySelector(".message-scroll") as HTMLElement;
 
-    // Starts pinned: nothing to jump to.
     expect(container.querySelector(".scroll-to-bottom-btn")).toBeNull();
 
-    // A gesture that leaves the end reveals the affordance...
-    h.atBottom = false;
-    h.scrollOffset = 0;
-    fireEvent.pointerDown(scroller);
-    fireEvent.scroll(scroller);
+    await scrollTo(container, 0);
     await waitFor(() => {
       expect(container.querySelector(".scroll-to-bottom-btn")).not.toBeNull();
     });
 
-    // ...and returning to the end puts it away again.
-    h.atBottom = true;
-    fireEvent.scroll(scroller);
+    const scroller = scrollerOf(container);
+    await scrollTo(container, scroller.scrollHeight - VIEWPORT);
     await waitFor(() => {
       expect(container.querySelector(".scroll-to-bottom-btn")).toBeNull();
     });
   });
 
-  it("treats the reader's gesture as authoritative even if the coast starts at the end", async () => {
-    setStore({ messages: longList(40) });
+  it("freezes the mounted window while reading history", async () => {
+    setStore({ messages: longList(400) });
     const { container } = mountList();
-    const scroller = container.querySelector(".message-scroll") as HTMLElement;
+    await scrollTo(container, 0);
 
-    fireEvent.pointerDown(scroller);
-    // The first sample of a flick still reads "at the end": on iOS the tracked
-    // offset lags the momentum, so this is the normal case, not an edge case.
-    h.atBottom = true;
-    fireEvent.scroll(scroller);
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    // The window stops following the tail...
+    expect(rowIds(container).at(-1)).toBe("m399");
 
-    // The coast genuinely leaves the end — the gesture must still win, and the
-    // list must not be pinned back under the finger.
-    h.atBottom = false;
-    h.scrollOffset = 0;
-    fireEvent.scroll(scroller);
+    // ...so an arrival is NOT mounted and does not move the reader.
+    setStore({ messages: [...longList(400), ...longList(50, "new")] });
+    expect(rowIds(container)).not.toContain("new0");
+    expect(rowIds(container)).toHaveLength(INITIAL_WINDOW);
     await waitFor(() => {
-      expect(container.querySelector(".scroll-to-bottom-btn")).not.toBeNull();
-    });
-  });
-
-  it("loads one history page per approach to the top, not a chain", async () => {
-    setStore({
-      selectedConversationId: "c1",
-      messages: [makeMessage("a"), makeMessage("b")],
-      hasMoreMessages: true,
-    });
-    h.windowSize = 10;
-    // The reader is at the very top of the loaded history.
-    h.rangeStart = 0;
-
-    mountList();
-    // The page is only *fetched* here — it is inserted at a rest, never under
-    // a live coast.
-    await waitFor(() => {
-      expect(h.loadMoreMessages).toHaveBeenCalledTimes(1);
-    });
-    expect(h.loadMoreMessages).toHaveBeenCalledWith("c1", { postpone: true });
-
-    // The page landed above the fold: the visible window no longer starts at
-    // the oldest loaded message, so the loader stays disarmed until the reader
-    // scrolls again. A chain here re-anchors and re-lays out under the finger.
-    h.rangeStart = 40;
-    setStore({
-      messages: [makeMessage("older-1"), makeMessage("older-2"), makeMessage("a"), makeMessage("b")],
-    });
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(h.loadMoreMessages).toHaveBeenCalledTimes(1);
-  });
-
-  it("never inserts a buffered page while the coast is live", async () => {
-    setStore({
-      selectedConversationId: "c1",
-      messages: [makeMessage("a"), makeMessage("b")],
-      hasMoreMessages: true,
-    });
-    h.windowSize = 10;
-    h.rangeStart = 0;
-    h.isScrolling = true;
-
-    mountList();
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    // Inserting now would move the content under the reader — and on iOS the
-    // compensation for it is deferred until the coast ends.
-    expect(h.flushPendingOlderMessages).not.toHaveBeenCalled();
-
-    // As soon as the scroller is at rest the buffered page goes in.
-    h.isScrolling = false;
-    await waitFor(() => {
-      expect(h.flushPendingOlderMessages).toHaveBeenCalledWith("c1");
+      expect(container.querySelector(".scroll-to-bottom-badge")?.textContent).toBe("50");
     });
   });
 
   it("counts appended arrivals while reading history, but not prepended pages", async () => {
-    const base = longList(40);
+    const base = longList(400);
     setStore({ messages: base });
-    h.windowSize = 40;
     const { container } = mountList();
-    const scroller = container.querySelector(".message-scroll") as HTMLElement;
+    await scrollTo(container, 0);
 
-    // The reader scrolls up: the list is no longer pinned to the newest message.
-    h.atBottom = false;
-    h.scrollOffset = 0;
-    fireEvent.pointerDown(scroller);
-    fireEvent.scroll(scroller);
-    await waitFor(() => {
-      expect(container.querySelector(".scroll-to-bottom-btn")).not.toBeNull();
-    });
-
-    // A new message lands at the tail.
-    setStore({ messages: [...base, makeMessage("d")] });
+    setStore({ messages: [...base, makeMessage("tail-1")] });
     await waitFor(() => {
       expect(container.querySelector(".scroll-to-bottom-badge")?.textContent).toBe("1");
     });
 
     // An older page is prepended: the array grows, but the tail does not move.
-    setStore({ messages: [makeMessage("older"), ...base, makeMessage("d")] });
+    setStore({ messages: [makeMessage("older"), ...base, makeMessage("tail-1")] });
     expect(container.querySelector(".scroll-to-bottom-badge")?.textContent).toBe("1");
   });
 
-  it("does not chase new messages while the reader is at the end", async () => {
-    const base = [makeMessage("a"), makeMessage("b")];
+  it("does not chase new messages while the reader is at the end", () => {
+    const base = longList(20);
     setStore({ messages: base });
     const { container } = mountList();
 
-    // No pill, no counter: the viewport is already following the newest message.
-    setStore({ messages: [...base, makeMessage("c")] });
+    setStore({ messages: [...base, makeMessage("tail-1")] });
 
+    expect(container.querySelector(".scroll-to-bottom-btn")).toBeNull();
+    expect(rowIds(container)).toContain("tail-1");
+  });
+
+  it("jump-to-latest re-seeds the window to the newest rows and snaps", async () => {
+    const base = longList(400);
+    setStore({ messages: base });
+    const ref = createRef<MessageListHandle>();
+    const { container } = mountList({ ref });
+    await scrollTo(container, 0);
+
+    setStore({ messages: [...base, ...longList(60, "new")] });
+    await waitFor(() => {
+      expect(container.querySelector(".scroll-to-bottom-badge")).not.toBeNull();
+    });
+
+    act(() => {
+      ref.current?.scrollToBottom();
+    });
+
+    expect(rows(container)).toHaveLength(RESET_WINDOW);
+    expect(rowIds(container)[0]).toBe(`new${60 - RESET_WINDOW}`);
+    const scroller = scrollerOf(container);
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
     expect(container.querySelector(".scroll-to-bottom-btn")).toBeNull();
   });
 
-  it("pages older history when asked to reveal a message that is not loaded", () => {
+  it("jumps straight to a loaded message outside the mounted window", () => {
+    setStore({ messages: longList(500) });
     const ref = createRef<MessageListHandle>();
-    setStore({
-      selectedConversationId: "c1",
-      messages: [makeMessage("a"), makeMessage("b")],
-      hasMoreMessages: true,
+    const { container } = mountList({ ref });
+
+    act(() => {
+      ref.current?.scrollToMessage("m100");
     });
 
+    expect(rowIds(container)).toContain("m100");
+    const scroller = scrollerOf(container);
+    // Centred: 20 rows above the target inside the new window.
+    expect(scroller.scrollTop).toBe(20 * ROW - (VIEWPORT - ROW) / 2);
+    expect(h.loadMoreMessages).not.toHaveBeenCalled();
+  });
+
+  it("pages older history when asked to reveal a message that is not loaded", () => {
+    setStore({ messages: longList(50), hasMoreMessages: true });
+    const ref = createRef<MessageListHandle>();
     mountList({ ref });
 
     act(() => {
@@ -604,52 +503,126 @@ describe("MessageList (virtualized)", () => {
     });
 
     expect(h.loadMoreMessages).toHaveBeenCalledWith("c1");
-    expect(h.scrollToIndex).not.toHaveBeenCalled();
-  });
-
-  it("jumps straight to a message that is already loaded", () => {
-    const ref = createRef<MessageListHandle>();
-    setStore({ selectedConversationId: "c1", messages: [makeMessage("a"), makeMessage("b")] });
-    h.windowSize = 10;
-
-    mountList({ ref });
-
-    act(() => {
-      ref.current?.scrollToMessage("a");
-    });
-
-    expect(h.scrollToIndex).toHaveBeenCalledWith(0, { align: "center" });
-    expect(h.loadMoreMessages).not.toHaveBeenCalled();
   });
 
   it("reports a read line for the newest fully visible message from someone else", async () => {
-    const clientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
-    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
-      configurable: true,
-      get: () => 600,
+    setStore({
+      messages: [
+        makeMessage("peer-1", { sender_user_id: "peer" }),
+        makeMessage("mine-1", { sender_user_id: "me" }),
+      ],
     });
-    try {
-      setStore({
-        selectedConversationId: "c1",
-        me: { id: "me" },
-        messages: [
-          makeMessage("peer-1", { sender_user_id: "peer" }),
-          makeMessage("mine-1", { sender_user_id: "me" }),
-        ],
-      });
-      h.windowSize = 10;
 
-      mountList();
+    mountList();
 
-      await waitFor(() => {
-        expect(h.queueMarkRead).toHaveBeenCalled();
-      });
-      // Own messages never become the read line, and nothing below the fold is
-      // reported — this is what keeps a scroll burst to one request.
+    await waitFor(() => {
       expect(h.queueMarkRead).toHaveBeenCalledWith("c1", "peer-1", expect.any(String));
-    } finally {
-      if (clientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeight);
-      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientHeight;
-    }
+    });
+  });
+
+  it("does not report a message that is below the fold", async () => {
+    setStore({
+      messages: [
+        makeMessage("peer-1", { sender_user_id: "peer" }),
+        // Own messages fill the viewport, so the read line cannot advance past
+        // peer-1 even though peer-2 is mounted further down.
+        ...Array.from({ length: 11 }, (_, index) => makeMessage(`filler-${index}`, { sender_user_id: "me" })),
+        makeMessage("peer-2", { sender_user_id: "peer" }),
+      ],
+    });
+
+    const { container } = mountList();
+    await scrollTo(container, 0);
+    await settle();
+
+    expect(h.queueMarkRead).toHaveBeenCalledWith("c1", "peer-1", expect.any(String));
+    expect(h.queueMarkRead).not.toHaveBeenCalledWith("c1", "peer-2", expect.any(String));
+  });
+
+  it("slides the window up into already-loaded rows and compensates the scroll", async () => {
+    setStore({ messages: longList(500) });
+    const { container } = mountList();
+    await scrollTo(container, 0);
+    await settle();
+
+    // 50 rows were added ABOVE the viewport; the reader's place must not move,
+    // so `scrollTop` grew by exactly the inserted height.
+    expect(rows(container)).toHaveLength(INITIAL_WINDOW + 50);
+    expect(rowIds(container)[0]).toBe(`m${500 - INITIAL_WINDOW - 50}`);
+    expect(scrollerOf(container).scrollTop).toBe(50 * ROW);
+  });
+
+  it("requests a buffered older page when the window already reaches the oldest loaded row", async () => {
+    setStore({ messages: longList(50), hasMoreMessages: true });
+    const { container } = mountList();
+    await scrollTo(container, 0);
+
+    triggerSentinel(".scroll-sentinel-top");
+
+    await waitFor(() => {
+      expect(h.loadMoreMessages).toHaveBeenCalledWith("c1", { postpone: true });
+    });
+    // Nothing was inserted yet — the buffered page lands at rest.
+    expect(rows(container)).toHaveLength(50);
+  });
+
+  it("inserts the buffered page above the reader and keeps their place", async () => {
+    const base = longList(50);
+    const older = longList(50, "old");
+    setStore({ messages: base, hasMoreMessages: true });
+    h.flushPendingOlderMessages.mockImplementation(() => {
+      h.store.setState({ messages: [...older, ...base] });
+      return true;
+    });
+    const { container } = mountList();
+    await scrollTo(container, 0);
+    await settle();
+
+    expect(h.flushPendingOlderMessages).toHaveBeenCalledWith("c1");
+    expect(rowIds(container)).toHaveLength(100);
+    expect(rowIds(container)[0]).toBe("old0");
+    expect(scrollerOf(container).scrollTop).toBe(50 * ROW);
+  });
+
+  it("garbage-collects rows above the ceiling without waiting for a scroll", () => {
+    const base = longList(200);
+    setStore({ messages: base });
+    const { container } = mountList();
+
+    // 200 arrivals while pinned to the bottom: the window grows, then the GC
+    // pass trims the top down to the ceiling.
+    setStore({ messages: [...base, ...longList(200, "new")] });
+
+    expect(rows(container).length).toBeLessThanOrEqual(MAX_DOM_MESSAGES);
+    expect(rowIds(container).at(-1)).toBe("new199");
+    const scroller = scrollerOf(container);
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+  });
+
+  it("does not re-render existing rows when 50 messages arrive", () => {
+    const base = longList(200);
+    setStore({ messages: base });
+    mountList();
+    captured.length = 0;
+
+    setStore({ messages: [...base, ...longList(50, "new")] });
+
+    // Only the arrivals rendered: the mounted rows kept their identity, so
+    // React.memo never re-ran their renderer.
+    expect(captured).toHaveLength(50);
+    expect(captured.every((entry) => entry.id.startsWith("new"))).toBe(true);
+  });
+
+  it("re-renders rows when the ambient render version changes", () => {
+    setStore({ messages: [makeMessage("a"), makeMessage("b")] });
+    const { rerender } = render(
+      <MessageList renderMessage={renderMessage} renderVersion={{ pinned: null }} />,
+    );
+    expect(captured).toHaveLength(2);
+
+    captured.length = 0;
+    rerender(<MessageList renderMessage={renderMessage} renderVersion={{ pinned: "a" }} />);
+
+    expect(captured.map((entry) => entry.id)).toEqual(["a", "b"]);
   });
 });

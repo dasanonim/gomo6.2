@@ -46,8 +46,8 @@ export const TAIL_WINDOW: KeyWindow = { first: null, last: null };
  * a very deep window.
  */
 export const MAX_DOM_MESSAGES = 300;
-/** Rows mounted on open (and after a jump-to-bottom resets the window). */
-export const INITIAL_WINDOW = 80;
+/** Rows mounted on open (and whenever the reader returns to the bottom). */
+export const INITIAL_WINDOW = 150;
 /** A jump to the bottom re-seeds the window to the newest N rows. */
 export const RESET_WINDOW = 50;
 /** Rows added per bi-directional expansion step. */
@@ -63,6 +63,20 @@ export const ANCHOR_AFTER = INITIAL_WINDOW - ANCHOR_BEFORE;
 export function tailSlice(length: number, size = INITIAL_WINDOW): MessageSlice {
   const end = Math.max(0, length);
   return { start: Math.max(0, end - size), end };
+}
+
+/**
+ * The tail window expressed in keys: the newest `size` rows, still following
+ * the store tail (`last: null`). Used on open, on a jump to the bottom and
+ * whenever the reader returns to the newest message.
+ */
+export function tailKeyWindow<T extends MessageIdentity>(
+  messages: readonly T[],
+  size = INITIAL_WINDOW,
+): KeyWindow {
+  const slice = tailSlice(messages.length, size);
+  const first = messages[slice.start];
+  return { first: first ? messageKey(first) : null, last: null };
 }
 
 /** A window that mounts `index` with `before` rows above and `after` below. */
