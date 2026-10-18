@@ -159,11 +159,15 @@ export const ChatView = memo(function ChatView({
   // never opened — a marker belongs at its top) from "the server never recorded a
   // read" (a chat that has none — no marker at all).
   const openingUnreadCount = useMessengerStore((s) => s.openingUnreadCount);
-  const unreadBoundaryRef = useRef<{ id: string; at: string | null } | null>(null);
+  const unreadBoundaryRef = useRef<{ id: string; at: string | null | undefined } | null>(null);
   if (conversation && unreadBoundaryRef.current?.id !== conversation.id) {
     unreadBoundaryRef.current = {
       id: conversation.id,
-      at: openingUnreadCount > 0 ? getConversationReadThrough(conversation.id) : null,
+      // No unread ⇒ no marker at all (`undefined` = "the caller says nothing"),
+      // which is different from `null` = "nothing is known to be read" — the
+      // latter is what a chat the reader never opened looks like, and where the
+      // marker belongs at the top.
+      at: openingUnreadCount > 0 ? getConversationReadThrough(conversation.id) : undefined,
     };
   }
   // Switching chats swaps the composer's per-chat state: the draft comes back
@@ -693,7 +697,7 @@ export const ChatView = memo(function ChatView({
             renderMessage={renderMessage}
             renderVersion={renderVersion}
             messagesOverride={visibleMessages}
-            unreadBoundaryAt={unreadBoundaryRef.current?.at ?? null}
+            unreadBoundaryAt={unreadBoundaryRef.current?.at}
           />
         )}
       </div>

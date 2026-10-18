@@ -5,6 +5,11 @@ import { __resetDraftsForTests, readDraft } from "./core/drafts";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
+const { mockReadThrough, mockListProps } = vi.hoisted(() => ({
+  mockReadThrough: { value: null as string | null },
+  mockListProps: {} as any,
+}));
+
 const { mockStore } = vi.hoisted(() => {
   return {
     mockStore: {
@@ -109,11 +114,6 @@ vi.mock("./MessageList", () => ({
 }));
 
 // Composer mock exposes internal props for driving send/edit flows
-const { mockReadThrough, mockListProps } = vi.hoisted(() => ({
-  mockReadThrough: { value: null as string | null },
-  mockListProps: {} as any,
-}));
-
 const { mockComposerProps, mockComposerState } = vi.hoisted(() => ({
   mockComposerProps: {} as any,
   mockComposerState: { mounts: 0, drafts: [] as string[] },
@@ -242,11 +242,22 @@ describe("ChatView", () => {
       expect(mockListProps.unreadBoundaryAt).toBe("2025-06-01T11:00:00Z");
     });
 
-    it("passes no boundary for a chat that had nothing unread", () => {
+    it("passes no boundary at all for a chat that had nothing unread", () => {
       // The server has no read line for this chat (or it is stale), but the chat
-      // is not unread: a marker at its top would be a lie.
+      // is not unread: a marker at its top would be a lie. `undefined` is "the
+      // caller says nothing" — `null` would mean "nothing is known to be read",
+      // which is exactly what puts a marker at the top.
       mockReadThrough.value = null;
       mockStore.openingUnreadCount = 0;
+
+      render(<ChatView {...defaultProps} />);
+
+      expect(mockListProps.unreadBoundaryAt).toBeUndefined();
+    });
+
+    it("passes null (marker at the top) for an unread chat with no known read line", () => {
+      mockReadThrough.value = null;
+      mockStore.openingUnreadCount = 4;
 
       render(<ChatView {...defaultProps} />);
 
