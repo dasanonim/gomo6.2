@@ -340,23 +340,25 @@ npx tsc --noEmit -p apps/docs/tsconfig.json
   crashes if the messenger store is uninitialized. Add a dedicated store action that
   targets an explicit `conversationId` and touches `s.messages` only when that chat is
   open (pattern: `messengerStore.createFavoriteNote`, issue #509).
-- **Chat scrolling is native DOM slicing — no virtualization library.** Messenger
-  `MessageList` and GomoSub `ChannelChat` render normal-flow rows (`.chat-native-row`)
-  and slide a **keyed** window (`messenger/core/slicing.ts`, keys = `messageKey`,
-  never indices). Sentinels (`rootMargin: 600px`) expand; rows below the viewport
-  are GC'd immediately, rows above it only at rest (with a `scrollTop` correction
-  in the same layout pass). Nothing writes `scrollTop` while a finger or a momentum
-  scroll is live — and the "at rest" state is *verified from the position*, not
-  trusted from the event stream (iOS scroll events can go quiet before the coast
-  ends). Rows are memoized on `(message, prev, quoted, peerReceipt, renderVersion)`
-  — a NEW ambient render input must be added to `renderVersion` in `ChatView.tsx`,
-  otherwise mounted rows will not re-render.
-  `content-visibility` on rows is gated on the `has-scroll-anchoring` class on
-  `<html>` (`lib/scrollAnchoring.ts`, detected behaviourally at boot): WebKit has
-  no scroll anchoring, so a row unskipping from its 64px estimate to its real
-  height would move the reader — that is the per-message stutter on iOS. Never
-  gate it on `CSS.supports("overflow-anchor", …)`.
-  See [docs/wiki/MESSENGER_NATIVE_DOM_SLICING.md](docs/wiki/MESSENGER_NATIVE_DOM_SLICING.md).
+- **Chat scrolling is Telegram Web's model — no virtualization library.** The
+  messenger `MessageList` (`apps/web/src/components/messenger/`) keeps the DOM
+  unvirtualized and instead owns one thing: a single `useLayoutEffect` writer that
+  decides the position in a commit and writes it once inside
+  `core/fasterdom.ts` (measure batch → mutate batch → forced reflow). The tree is:
+  first placement → jump glide → arrival glide while following → bottom sentinel
+  pin → anchor compensation. `scrollTop` is NEVER written on scroll, and rows must
+  never get `content-visibility` (an unlaid-out row's estimate moves everything
+  below it; WebKit has no scroll anchoring to absorb it — that was the iOS
+  stutter). "At the bottom" is native scroll-snap (`with-bottom-snap` +
+  `.fab-trigger`), the mounted window is keyed (`core/slicing.ts`, keys =
+  `messageKey`, never indices, `INITIAL_WINDOW`/`WINDOW_STEP`/`MAX_DOM_MESSAGES`),
+  and mounting rows ABOVE the viewport waits for a *position-verified* rest on
+  engines without anchoring (`lib/scrollAnchoring.ts`, detected behaviourally;
+  never trust `CSS.supports("overflow-anchor", …)`). Rows are memoized on
+  `(message, prev, quoted, peerReceipt, renderVersion)` — a NEW ambient render
+  input must be added to `renderVersion` in `ChatView.tsx`, otherwise mounted rows
+  will not re-render. GomoSub `ChannelChat` still runs the previous mechanics.
+  See [docs/wiki/MESSENGER_CHAT_SCROLL.md](docs/wiki/MESSENGER_CHAT_SCROLL.md).
 - **Channel switching**: `channelSlug` must be in the `loadBoard` effect deps in
   `apps/web/src/pages/Board.tsx`. Missing it = stale threads on channel nav.
 - **Releases**: bump `VERSION` and add a `## [X.Y.Z]` section to `CHANGELOG.md`, then
@@ -369,7 +371,7 @@ npx tsc --noEmit -p apps/docs/tsconfig.json
 [DOCKER_SETUP](docs/wiki/DOCKER_SETUP.md) · [SECURITY_AUDIT](docs/wiki/SECURITY_AUDIT.md) ·
 [MESSENGER_SECURITY](docs/wiki/MESSENGER_SECURITY.md) · [OAUTH_API](docs/wiki/OAUTH_API.md) ·
 [PUBLIC_IDS](docs/wiki/PUBLIC_IDS.md) · [BOT_SYSTEM_ARCHITECTURE](docs/wiki/BOT_SYSTEM_ARCHITECTURE.md) ·
-[MESSENGER_NATIVE_DOM_SLICING](docs/wiki/MESSENGER_NATIVE_DOM_SLICING.md) ·
+[MESSENGER_CHAT_SCROLL](docs/wiki/MESSENGER_CHAT_SCROLL.md) ·
 [REALTIME_WEBSOCKET_PATTERN](docs/wiki/REALTIME_WEBSOCKET_PATTERN.md) ·
 [PRESENCE_SYSTEM_DESIGN](docs/wiki/PRESENCE_SYSTEM_DESIGN.md) ·
 [THREAD_ATTACHMENTS_GUIDE](docs/wiki/THREAD_ATTACHMENTS_GUIDE.md).
