@@ -24,6 +24,7 @@ import type { GomoRichEditorHandle } from "@/components/GomoRichEditor";
 import { isMessengerTextEmpty, messengerPlainPreview, messengerTextToCopy } from "./messengerRichTextUtils";
 import type { Attachment, MessageView, UploadingFile } from "./types";
 import { indexById } from "./core/messageModel";
+import { flushDrafts, readDraft, writeDraft } from "./core/drafts";
 
 interface Props {
   onBack: () => void;
@@ -56,7 +57,16 @@ export const ChatView = memo(function ChatView({
   const togglePin = useMessengerStore((s) => s.togglePin);
   const toggleNotesPin = useMessengerStore((s) => s.toggleNotesPin);
 
-  const [draft, setDraft] = useState("");
+  // The draft belongs to the open conversation: `ChatView` is not remounted when
+  // the reader switches chats, so a plain piece of state would carry the text
+  // into the next conversation and lose it on the way back.
+  const [draft, setDraftState] = useState(() => (conversation ? readDraft(conversation.id) : ""));
+  const conversationIdRef = useRef(conversation?.id);
+  const setDraft = useCallback((next: string) => {
+    setDraftState(next);
+    const id = conversationIdRef.current;
+    if (id) writeDraft(id, next);
+  }, []);
   const [pinnedText, setPinnedText] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState<string>("");
@@ -110,6 +120,21 @@ export const ChatView = memo(function ChatView({
     setOrganizeMessage(null);
   }, [conversation?.id]);
 
+  // Switching chats swaps the composer's per-chat state: the draft comes back
+  // for the chat being opened, and the reply/edit/attachment staging of the one
+  // being left must not follow the reader.
+  const activeConversationId = conversation?.id;
+  useEffect(() => {
+    conversationIdRef.current = activeConversationId;
+    if (!activeConversationId) return;
+    flushDrafts();
+    setDraftState(readDraft(activeConversationId));
+    setReplyToMessage(null);
+    setEditingMessageId(null);
+    setEditingContent("");
+    setPendingAttachments([]);
+  }, [activeConversationId]);
+
   // Mark the last received message delivered when new messages arrive. Read
   // marking is handled by MessageList's visibility tracking (a message is read
   // only while it is actually on screen).
@@ -137,6 +162,11 @@ export const ChatView = memo(function ChatView({
 
   // Jump to the pinned message. The list pages older history on demand, so a
   // pin outside the loaded window still resolves.
+  /** Tap on a quote: jump to the quoted message (the list flashes it). */
+  const handleJumpToMessage = useCallback((messageId: string) => {
+    messageListRef.current?.scrollToMessage(messageId);
+  }, []);
+
   const handleJumpToPinned = useCallback(() => {
     const pid = conversation?.pinned_message_id;
     if (pid) messageListRef.current?.scrollToMessage(pid);
@@ -290,7 +320,7 @@ export const ChatView = memo(function ChatView({
       batchSendingRef.current = false;
       setIsBatchSending(false);
     }
-  }, [draft, isSending, sendMessage, replyToMessage, pendingAttachments, uploadingFiles]);
+  }, [draft, isSending, sendMessage, replyToMessage, pendingAttachments, uploadingFiles, setDraft]);
 
   const handleStartEdit = useCallback((msgId: string, content: string) => {
     setEditingMessageId(msgId);
@@ -302,13 +332,13 @@ export const ChatView = memo(function ChatView({
     // The editor re-seeds from the new draft on the next commit (resetKey
     // bump) without losing focus — GomoRichEditor keeps the instance.
     composerRef.current?.focus();
-  }, [composerRef]);
+  }, [composerRef, setDraft]);
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
     setEditingContent("");
     setDraft("");
-  }, []);
+  }, [setDraft]);
 
   const handleSaveEdit = useCallback((msgId: string, content: string) => {
     if (content.trim() && content.trim() !== editingContent) {
@@ -317,7 +347,7 @@ export const ChatView = memo(function ChatView({
     setEditingMessageId(null);
     setEditingContent("");
     setDraft("");
-  }, [editMessage, editingContent]);
+  }, [editMessage, editingContent, setDraft]);
 
   const renderMessage = useCallback(
     (
@@ -389,6 +419,7 @@ export const ChatView = memo(function ChatView({
             onRetry={(m) => sendMessage(m.content, m.client_id)}
             onReply={handleReply}
             onCopy={handleCopy}
+            onJumpToMessage={handleJumpToMessage}
             quotedMessage={quoted}
             peerReadAt={peerReceipt?.read_at ?? null}
             peerDeliveredAt={peerReceipt?.delivered_at ?? null}
@@ -396,7 +427,19 @@ export const ChatView = memo(function ChatView({
         </div>
       );
     },
-    [conversation, me, language, handleStartEdit, deleteMessage, togglePin, toggleNotesPin, sendMessage, handleReply, handleCopy],
+    [
+      conversation,
+      me,
+      language,
+      handleStartEdit,
+      deleteMessage,
+      togglePin,
+      toggleNotesPin,
+      sendMessage,
+      handleReply,
+      handleCopy,
+      handleJumpToMessage,
+    ],
   );
 
   // Identity of the ambient render inputs: pinned id, group/notes flags, the

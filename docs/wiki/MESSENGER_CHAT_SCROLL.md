@@ -434,26 +434,51 @@ Tuning knobs: `FOLLOW_SLACK`, `BOTTOM_SNAP_THRESHOLD`, `HISTORY_TRIGGER_MARGIN`,
 `MAX_DOM_MESSAGES` in `core/slicing.ts`; `SCROLL_*` in `core/animateScroll.ts`.
 None of them need a rebuild to tune locally — they are frontend constants.
 
-## 9. Known gaps
+## 9. Companion behaviours taken from the reference client
 
-Deliberately not in this pass (each is independent and additive):
+Not scroll mechanics, but the same client's answers to the same problems — each
+one independently reversible:
 
-1. **Sticky date pills.** Telegram keeps a floating date at the top of the list
+* **Drafts belong to a conversation** (`core/drafts.ts`, `ChatView`). `ChatView`
+  is not remounted when the reader switches chats, so a plain piece of state
+  carried the text into the next conversation and lost it on the way back. The
+  draft now lives per conversation, is debounced into `localStorage` (a keystroke
+  must not cost a synchronous storage write) and the switch resets the composer's
+  transient state (reply target, edit, staged attachments) — Telegram's rule that
+  the composer belongs to the chat, not to the component.
+* **A quote is a link** (`MessageBubble.onJumpToMessage` → `MessageListHandle.
+  scrollToMessage`). Tapping the quoted block jumps to the message and flashes it,
+  instead of being inert decoration.
+* **The keyboard diagnostics strip is opt-in.** It used to be enabled by
+  `import.meta.env.DEV`, i.e. on for every developer; now
+  `localStorage.setItem("kb-diag", "1")` + reload.
+
+## 10. Known gaps
+
+Deliberately not in this pass (each is independent and additive). Ranked by
+value against the reference client's feature set:
+
+1. **Unread divider and "open at the first unread".** Telegram marks where the
+   new messages begin and opens there; gomo6 always opens at the newest message.
+   Needs a local read marker (the conversation's `last_read_at` is the boundary
+   on open, and `queueMarkRead` advances it while reading) plus one divider row
+   in the list. The biggest remaining behavioural difference for a messenger.
+2. **Sticky date pills.** Telegram keeps a floating date at the top of the list
    while scrolling (`useStickyDates`, `position: sticky` + `body.is-scrolling-
    messages`). gomo6's date separator is a centred rule inside the row, so this
    needs a visual decision, not just plumbing.
-2. **GomoSub `ChannelChat` on the same engine.** It still runs its own copy of the
+3. **GomoSub `ChannelChat` on the same engine.** It still runs its own copy of the
    old settle machinery (document-scrolled, window ≤ ceiling). The engine is now
    small and self-contained; extracting it into a hook and deleting the second
    copy is the natural next step.
-3. **Store-level viewport.** The store keeps every loaded message; the list bounds
+4. **Store-level viewport.** The store keeps every loaded message; the list bounds
    the DOM instead. Telegram bounds the *store* (`MESSAGE_LIST_VIEWPORT_LIMIT`)
    and re-fetches a slice around the reader. gomo6's pagination is
    backward-only, so this needs a forward fetch (`since_event_id`) to be complete.
-4. **Mobile keyboard.** `syncChrome` compensates a scroller that shrinks while the
+5. **Mobile keyboard.** `syncChrome` compensates a scroller that shrinks while the
    reader is glued, but the full mobile behaviour (`lib/mobileKeyboard.ts`, visual
    viewport, `kb-open` class) has not been checked against the new list on a
    device.
-5. **`scrollToMessage` for a very distant target** currently mounts the window
+6. **`scrollToMessage` for a very distant target** currently mounts the window
    around the target and glides; a dedicated "jump over N pages" animation would
    read better on slow networks.

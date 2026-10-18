@@ -1267,12 +1267,27 @@ main.is-messenger-page {
   gap: 6px;
   padding: 6px 8px;
   margin-bottom: 6px;
+  /* Written out fully: this class is used by a <div> and by a <button> (the
+     tappable quote), and a button would otherwise keep its user-agent border. */
+  border: 0;
   border-left: 3px solid oklch(var(--primary));
   background: oklch(var(--primary) / 0.06);
   border-radius: 0 6px 6px 0;
   cursor: default;
   min-width: 0;
   max-width: 100%;
+}
+
+.quoted-message.is-clickable {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.quoted-message.is-clickable:hover {
+  background: oklch(var(--primary) / 0.12);
 }
 
 .quoted-message svg {

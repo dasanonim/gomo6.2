@@ -1,6 +1,7 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ChatView } from "./ChatView";
+import { __resetDraftsForTests } from "./core/drafts";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -201,6 +202,38 @@ afterEach(() => {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("ChatView", () => {
+  describe("composer drafts", () => {
+    beforeEach(() => {
+      __resetDraftsForTests();
+      mockStore.me = { id: "me-1", username: "me" };
+      mockStore.conversations = [mockConversation(), mockConversation({ id: "conv-2", other_username: "bob" })];
+      mockStore.selectedConversationId = "conv-1";
+    });
+
+    it("keeps a draft per conversation instead of carrying it across chats", async () => {
+      const { rerender } = render(<ChatView {...defaultProps} />);
+      expect(screen.getByTestId("composer-draft").textContent).toBe("");
+
+      // Type in the first chat, through the composer's own setter.
+      act(() => mockComposerProps.setDraft("черновик для alice"));
+      expect(screen.getByTestId("composer-draft").textContent).toBe("черновик для alice");
+
+      // Switching chats must not carry the text into the next one.
+      mockStore.selectedConversationId = "conv-2";
+      rerender(<ChatView {...defaultProps} typingUsername="bob" />);
+      await waitFor(() => expect(screen.getByTestId("composer-draft").textContent).toBe(""));
+
+      act(() => mockComposerProps.setDraft("черновик для bob"));
+
+      // …and coming back must not have lost the first one.
+      mockStore.selectedConversationId = "conv-1";
+      rerender(<ChatView {...defaultProps} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("composer-draft").textContent).toBe("черновик для alice"),
+      );
+    });
+  });
+
   it("shows the empty state when no conversation is selected", () => {
     render(<ChatView {...defaultProps} />);
     expect(screen.getByText("Выбери диалог")).toBeInTheDocument();

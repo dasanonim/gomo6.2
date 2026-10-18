@@ -51,6 +51,12 @@ interface Props {
   onReply: (message: MessageView, opts?: { focus?: boolean }) => void;
   onCopy: (text: string) => void;
   quotedMessage?: MessageView | null;
+  /**
+   * Jump to the quoted message when the reader taps the quote (Telegram's
+   * behaviour: the quote is a link, not decoration). Optional — a bubble without
+   * it renders the quote as plain text.
+   */
+  onJumpToMessage?: (messageId: string) => void;
   peerReadAt?: string | null;
   peerDeliveredAt?: string | null;
 }
@@ -71,6 +77,7 @@ export const MessageBubble = memo(function MessageBubble({
   onReply,
   onCopy,
   quotedMessage,
+  onJumpToMessage,
   peerReadAt,
   peerDeliveredAt,
 }: Props) {
@@ -511,17 +518,35 @@ export const MessageBubble = memo(function MessageBubble({
           data-message-id={message.id}
           onContextMenu={(e) => { e.preventDefault(); openMenu(); }}
         >
-          {quotedMessage && (
-            <div className="quoted-message">
-              <CornerDownRight size={12} />
-              <span className="quoted-author">
-                {quotedMessage.sender_user_id === message.sender_user_id ? "Вы" : "Собеседник"}
-              </span>
-              <span className="quoted-text">
-                {quotedMessage.is_deleted ? "Сообщение удалено" : messengerPlainPreview(quotedMessage.content)}
-              </span>
-            </div>
-          )}
+          {quotedMessage && (() => {
+            const quoteContent = (
+              <>
+                <CornerDownRight size={12} />
+                <span className="quoted-author">
+                  {quotedMessage.sender_user_id === message.sender_user_id ? "Вы" : "Собеседник"}
+                </span>
+                <span className="quoted-text">
+                  {quotedMessage.is_deleted ? "Сообщение удалено" : messengerPlainPreview(quotedMessage.content)}
+                </span>
+              </>
+            );
+
+            if (!onJumpToMessage) {
+              return <div className="quoted-message">{quoteContent}</div>;
+            }
+
+            return (
+              <button
+                type="button"
+                className="quoted-message is-clickable"
+                onClick={() => onJumpToMessage(quotedMessage.id)}
+                title="Перейти к сообщению"
+                aria-label="Перейти к сообщению"
+              >
+                {quoteContent}
+              </button>
+            );
+          })()}
 
           {message.localStatus === "failed" && (
             <div className="message-error-header">
