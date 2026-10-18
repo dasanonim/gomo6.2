@@ -153,9 +153,18 @@ export const ChatView = memo(function ChatView({
   // The unread boundary is captured when the conversation is opened: while the
   // reader reads, their own read line advances and would take the marker away
   // under them. The next open recomputes it (Telegram does the same).
+  //
+  // Gated on the unread count the conversation had when it was selected: the
+  // boundary alone cannot tell "nothing is known to be read" (a chat the reader
+  // never opened — a marker belongs at its top) from "the server never recorded a
+  // read" (a chat that has none — no marker at all).
+  const openingUnreadCount = useMessengerStore((s) => s.openingUnreadCount);
   const unreadBoundaryRef = useRef<{ id: string; at: string | null } | null>(null);
   if (conversation && unreadBoundaryRef.current?.id !== conversation.id) {
-    unreadBoundaryRef.current = { id: conversation.id, at: getConversationReadThrough(conversation.id) };
+    unreadBoundaryRef.current = {
+      id: conversation.id,
+      at: openingUnreadCount > 0 ? getConversationReadThrough(conversation.id) : null,
+    };
   }
   // Switching chats swaps the composer's per-chat state: the draft comes back
   // for the chat being opened, and the reply/edit/attachment staging of the one

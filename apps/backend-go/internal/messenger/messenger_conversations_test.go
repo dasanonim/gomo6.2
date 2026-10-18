@@ -28,9 +28,10 @@ func TestListConversations_Success(t *testing.T) {
 
 		"other_id", "other_username", "other_display_name", "other_nickname_emoji_id",
 		"other_avatar_url", "other_account_number", "other_is_online", "other_last_seen_at", "other_last_read_at",
+		"last_read_at",
 	}).
-		AddRow(testConv1, now, "Hello!", testUser2, nil, now, 3, false, false, nil, nil, false, 2, testUser2, "alice", "Alice", "emoji-1", nil, 1001, true, nil, now).
-		AddRow(testConv2, now.Add(-time.Hour), "Hey there", testUser3, nil, now, 0, false, false, nil, nil, false, 2, testUser3, "bob", "Bob", "emoji-2", "avatar.jpg", 1002, false, now.Add(-time.Hour), now.Add(-2*time.Hour))
+		AddRow(testConv1, now, "Hello!", testUser2, nil, now, 3, false, false, nil, nil, false, 2, testUser2, "alice", "Alice", "emoji-1", nil, 1001, true, nil, now, now.Add(-time.Hour)).
+		AddRow(testConv2, now.Add(-time.Hour), "Hey there", testUser3, nil, now, 0, false, false, nil, nil, false, 2, testUser3, "bob", "Bob", "emoji-2", "avatar.jpg", 1002, false, now.Add(-time.Hour), now.Add(-2*time.Hour), nil)
 
 	mock.ExpectQuery(`SELECT.*FROM chat_members cm.*LEFT JOIN`).
 		WithArgs(testUser1).
@@ -49,6 +50,16 @@ func TestListConversations_Success(t *testing.T) {
 	if len(data) != 2 {
 		t.Fatalf("expected 2 conversations, got %d", len(data))
 	}
+	// MY read line must be part of the response: the client places the unread
+	// marker from it (and it was missing — only the peer's was selected).
+	first := data[0].(map[string]interface{})
+	second := data[1].(map[string]interface{})
+	if first["last_read_at"] == nil {
+		t.Fatalf("expected last_read_at on the first conversation, got nil: %v", first)
+	}
+	if second["last_read_at"] != nil {
+		t.Fatalf("expected no last_read_at on the second conversation, got %v", second["last_read_at"])
+	}
 }
 
 func TestListConversations_Empty(t *testing.T) {
@@ -65,6 +76,7 @@ func TestListConversations_Empty(t *testing.T) {
 
 		"other_id", "other_username", "other_display_name", "other_nickname_emoji_id",
 		"other_avatar_url", "other_account_number", "other_is_online", "other_last_seen_at", "other_last_read_at",
+		"last_read_at",
 	})
 
 	mock.ExpectQuery(`SELECT.*FROM chat_members cm.*`).
@@ -112,7 +124,8 @@ func TestListConversations_DecryptionFailureNoCiphertextLeak(t *testing.T) {
 
 		"other_id", "other_username", "other_display_name", "other_nickname_emoji_id",
 		"other_avatar_url", "other_account_number", "other_is_online", "other_last_seen_at", "other_last_read_at",
-	}).AddRow(testConv1, now, "not-a-valid-ciphertext!", testUser2, nil, now, 3, false, false, nil, nil, false, 2, testUser2, "alice", "Alice", "emoji-1", nil, 1001, true, nil, nil)
+		"last_read_at",
+	}).AddRow(testConv1, now, "not-a-valid-ciphertext!", testUser2, nil, now, 3, false, false, nil, nil, false, 2, testUser2, "alice", "Alice", "emoji-1", nil, 1001, true, nil, nil, nil)
 
 	mock.ExpectQuery(`SELECT.*FROM chat_members cm.*`).
 		WithArgs(testUser1).
@@ -406,8 +419,9 @@ func TestListConversations_NotesPreviewPassthrough(t *testing.T) {
 
 		"other_id", "other_username", "other_display_name", "other_nickname_emoji_id",
 		"other_avatar_url", "other_account_number", "other_is_online", "other_last_seen_at", "other_last_read_at",
+		"last_read_at",
 	}).AddRow(testConv1, now, ciphertext, testUser1, nil, now, 0, false, false, nil, nil, true, 1,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	mock.ExpectQuery(`SELECT.*FROM chat_members cm.*`).
 		WithArgs(testUser1).
