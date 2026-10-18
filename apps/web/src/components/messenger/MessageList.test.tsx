@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 import { MessageList, type MessageListHandle, type MessageRenderExtras } from "./MessageList";
 import {
@@ -672,12 +672,14 @@ describe("MessageList — dev counters", () => {
 
     __setScrollDiagnosticsEnabled(true);
     const overlay = await mountList();
-    expect(overlay.container.querySelector(".scroll-debug")).not.toBeNull();
+    // The overlay is loaded on demand (dev-only chunk), so it arrives a tick later.
+    await waitFor(() => expect(overlay.container.querySelector(".scroll-debug")).not.toBeNull());
 
     // The headline claim: the reader's own scrolling writes no position at all.
     await scrollTo(overlay.container, 0);
     await settle();
     await scrollTo(overlay.container, 400);
+    await waitFor(() => expect(overlay.container.querySelector(".scroll-debug-row")).not.toBeNull());
 
     const writesRow = overlay.container.querySelector<HTMLElement>(".scroll-debug-row");
     expect(writesRow?.textContent).toContain("0");
