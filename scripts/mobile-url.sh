@@ -41,22 +41,31 @@ echo "    ${url}"
 echo
 
 # ── Reachability probe ──────────────────────────────────────────────────────
+# curl's `-w` prints "000" itself when it cannot connect, so the exit status must
+# NOT be turned into another "000" on stdout — that is how a working probe ends up
+# reported as "000000".
+http_code() {
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$@" 2>/dev/null)" || true
+  printf '%s' "${code:-000}"
+}
+
 probe() {
   local path="$1" label="$2"
-  if command -v curl >/dev/null 2>&1; then
-    local code
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "${url}${path}" || echo 000)"
-    if [ "$code" = "200" ]; then
-      printf '  \033[0;32m✔\033[0m %-10s %s\n' "$label" "$code"
-    else
-      printf '  \033[1;33m⚠\033[0m %-10s %s\n' "$label" "$code"
-    fi
+  command -v curl >/dev/null 2>&1 || return 0
+  local code
+  code="$(http_code "${url}${path}")"
+  if [ "$code" = "200" ]; then
+    printf '  \033[0;32m✔\033[0m %-10s %s\n' "$label" "$code"
+  else
+    printf '  \033[1;33m⚠\033[0m %-10s %s\n' "$label" "$code"
   fi
 }
 
 echo "Проверка доступности:"
 probe "/" "web"
 probe "/api/v1/feed?limit=1" "api"
+api_code="$(http_code "${url}/api/v1/feed?limit=1")"
 
 # ── WebSocket origin probe ──────────────────────────────────────────────────
 # The hub validates the Origin header (internal/websocket/hub.go). A phone sends
@@ -67,19 +76,38 @@ probe_ws() {
   command -v curl >/dev/null 2>&1 || return 0
   local key code
   key="$(openssl rand -base64 16)"
-  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 \
+  # A successful upgrade makes curl exit non-zero (the "transfer" never ends) —
+  # the status code, not the exit code, is the answer.
+  code="$(http_code \
     -H "Connection: Upgrade" -H "Upgrade: websocket" \
     -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: ${key}" \
-    -H "Origin: ${url}" "${url}/ws" || echo 000)"
-  if [ "$code" = "101" ]; then
-    printf '  \033[0;32m✔\033[0m %-10s %s\n' "realtime" "$code"
-    return 0
-  fi
-  printf '  \033[1;31m✗\033[0m %-10s %s (origin телефона не разрешён)\n' "realtime" "$code"
-  return 1
+    -H "Origin: ${url}" "${url}/ws")"
+  case "$code" in
+    101)
+      printf '  \033[0;32m✔\033[0m %-10s %s\n' "realtime" "$code"
+      return 0
+      ;;
+    403)
+      printf '  \033[1;31m✗\033[0m %-10s %s (origin телефона не в ALLOWED_ORIGINS)\n' "realtime" "$code"
+      return 1
+      ;;
+    000)
+      printf '  \033[1;33m⚠\033[0m %-10s не дотянулся (бэкенд не отвечает / перезапускается)\n' "realtime"
+      return 0
+      ;;
+    *)
+      printf '  \033[1;33m⚠\033[0m %-10s %s\n' "realtime" "$code"
+      return 0
+      ;;
+  esac
 }
 ws_ok=1
 probe_ws || ws_ok=0
+
+if [ "$api_code" != "200" ]; then
+  printf '\n  %b\n' "⚠ api ответил ${api_code} — это не origin'ы: бэкенд либо ещё поднимается"
+  printf '  %b\n' "  после перезапуска, либо упал. Посмотреть: tmux attach -t gomo6-dev → окно backend."
+fi
 
 # ── Repair the allowlist ────────────────────────────────────────────────────
 wanted="$(gomo6_allowed_origins "$PORT" "$MOBILE_WEB_PORT")"
