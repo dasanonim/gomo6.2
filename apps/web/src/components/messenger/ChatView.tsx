@@ -1,18 +1,23 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Folder, Lock, MessageCircle, NotebookPen, Pin, Gift, FileUp } from "lucide-react";
 import { toast } from "sonner";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { UserBadge } from "@/components/UserBadge";
 import { UserAvatar } from "@/components/UserAvatar";
 import { giftImageUrl } from "@/utils/storage";
-import { useMessengerStore, selectSelectedConversation, queueMarkDelivered } from "@/stores/messengerStore";
+import {
+  getConversationReadThrough,
+  queueMarkDelivered,
+  selectSelectedConversation,
+  useMessengerStore,
+} from "@/stores/messengerStore";
 import { useLanguageStore } from "@/stores/languageStore";
 import { formatPresence, getGroupInitials, getInitials, getUserColorClass } from "./utils";
 import { MessageBubble } from "./MessageBubble";
 import { MessageComposer } from "./MessageComposer";
 import { UserInfoPanel } from "./UserInfoPanel";
 import { parseGiftContent, GiftDetailDialog } from "./MessageContent";
-import { MessageList, type MessageListHandle } from "./MessageList";
+import { MessageList, type MessageListHandle, type MessageRenderExtras } from "./MessageList";
 import { NotesSettingsDialog } from "./NotesSettingsDialog";
 import { NotesOrganizeDialog } from "./NotesOrganizeDialog";
 import { hasNotesKey } from "@/utils/notesCrypto";
@@ -24,6 +29,7 @@ import type { GomoRichEditorHandle } from "@/components/GomoRichEditor";
 import { isMessengerTextEmpty, messengerPlainPreview, messengerTextToCopy } from "./messengerRichTextUtils";
 import type { Attachment, MessageView, UploadingFile } from "./types";
 import { indexById } from "./core/messageModel";
+import { flushDrafts, readDraft, writeDraft } from "./core/drafts";
 
 interface Props {
   onBack: () => void;
@@ -47,7 +53,6 @@ export const ChatView = memo(function ChatView({
   const isLoading = useMessengerStore((s) => s.isMessagesLoading);
   const isSending = useMessengerStore((s) => s.isSending);
   const me = useMessengerStore((s) => s.me);
-  const receipts = useMessengerStore((s) => s.receipts);
   const error = useMessengerStore((s) => s.error);
   const setError = useMessengerStore((s) => s.setError);
 
@@ -57,10 +62,44 @@ export const ChatView = memo(function ChatView({
   const togglePin = useMessengerStore((s) => s.togglePin);
   const toggleNotesPin = useMessengerStore((s) => s.toggleNotesPin);
 
-  const [draft, setDraft] = useState("");
   const [pinnedText, setPinnedText] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState<string>("");
+
+  // The draft belongs to the open conversation, and the state says WHICH
+  // conversation it belongs to. That is what makes a switch a single consistent
+  // render: `ChatView` is not remounted when the reader switches chats, so a bare
+  // piece of state would show the previous chat's text for one render — long
+  // enough for the (keyed) composer to mount with it and for its editor to emit
+  // it back into the *new* chat. Deriving the text during render removes that
+  // window entirely.
+  const activeConversationId = conversation?.id ?? null;
+  const [draftState, setDraftState] = useState(() => ({
+    conversationId: conversation?.id ?? null,
+    text: conversation ? readDraft(conversation.id) : "",
+  }));
+  const draft = draftState.conversationId === activeConversationId
+    ? draftState.text
+    : activeConversationId
+      ? readDraft(activeConversationId)
+      : "";
+
+  /**
+   * Put text in the composer. `persist: false` is for text that is NOT the
+   * reader's draft — the body of a message being edited, which would otherwise
+   * overwrite the draft and be lost on cancel (the same for the restore below).
+   */
+  const applyDraft = useCallback((next: string, persist = true) => {
+    setDraftState({ conversationId: activeConversationId, text: next });
+    if (!persist || !activeConversationId) return;
+    writeDraft(activeConversationId, next);
+  }, [activeConversationId]);
+
+  // While editing, the composer's text is the message's body: it must never
+  // reach storage as a draft.
+  const setDraft = useCallback((next: string) => {
+    applyDraft(next, editingMessageId === null);
+  }, [applyDraft, editingMessageId]);
   const [showUserInfo, setShowUserInfo] = useState(false);
   const [showNotesInfo, setShowNotesInfo] = useState(false);
   const [giftDetailId, setGiftDetailId] = useState<string | null>(null);
@@ -70,7 +109,7 @@ export const ChatView = memo(function ChatView({
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [isBatchSending, setIsBatchSending] = useState(false);
   const batchSendingRef = useRef(false);
-  // Virtualized list handle: send-time follow and the pinned-message jump.
+  // Message-list handle: send-time follow and the pinned-message jump.
   const messageListRef = useRef<MessageListHandle>(null);
   // Notes self-chat organization
   const [notesFolderFilter, setNotesFolderFilter] = useState<string | null>(null);
@@ -111,6 +150,45 @@ export const ChatView = memo(function ChatView({
     setOrganizeMessage(null);
   }, [conversation?.id]);
 
+  // The unread boundary is captured when the conversation is opened: while the
+  // reader reads, their own read line advances and would take the marker away
+  // under them. The next open recomputes it (Telegram does the same).
+  //
+  // Gated on the unread count the conversation had when it was selected: the
+  // boundary alone cannot tell "nothing is known to be read" (a chat the reader
+  // never opened — a marker belongs at its top) from "the server never recorded a
+  // read" (a chat that has none — no marker at all).
+  const openingUnreadCount = useMessengerStore((s) => s.openingUnreadCount);
+  const unreadBoundaryRef = useRef<{ id: string; at: string | null | undefined } | null>(null);
+  if (conversation && unreadBoundaryRef.current?.id !== conversation.id) {
+    unreadBoundaryRef.current = {
+      id: conversation.id,
+      // No unread ⇒ no marker at all (`undefined` = "the caller says nothing"),
+      // which is different from `null` = "nothing is known to be read" — the
+      // latter is what a chat the reader never opened looks like, and where the
+      // marker belongs at the top.
+      at: openingUnreadCount > 0 ? getConversationReadThrough(conversation.id) : undefined,
+    };
+  }
+  // Switching chats swaps the composer's per-chat state: the draft comes back
+  // for the chat being opened, and the reply/edit/attachment staging of the one
+  // being left must not follow the reader. A layout effect, so the staging is
+  // gone before the frame paints (the draft itself is already right — it is
+  // derived during render).
+  useLayoutEffect(() => {
+    if (!activeConversationId) return;
+    flushDrafts();
+    setDraftState((current) => (
+      current.conversationId === activeConversationId
+        ? current
+        : { conversationId: activeConversationId, text: readDraft(activeConversationId) }
+    ));
+    setReplyToMessage(null);
+    setEditingMessageId(null);
+    setEditingContent("");
+    setPendingAttachments([]);
+  }, [activeConversationId]);
+
   // Mark the last received message delivered when new messages arrive. Read
   // marking is handled by MessageList's visibility tracking (a message is read
   // only while it is actually on screen).
@@ -138,6 +216,11 @@ export const ChatView = memo(function ChatView({
 
   // Jump to the pinned message. The list pages older history on demand, so a
   // pin outside the loaded window still resolves.
+  /** Tap on a quote: jump to the quoted message (the list flashes it). */
+  const handleJumpToMessage = useCallback((messageId: string) => {
+    messageListRef.current?.scrollToMessage(messageId);
+  }, []);
+
   const handleJumpToPinned = useCallback(() => {
     const pid = conversation?.pinned_message_id;
     if (pid) messageListRef.current?.scrollToMessage(pid);
@@ -291,25 +374,27 @@ export const ChatView = memo(function ChatView({
       batchSendingRef.current = false;
       setIsBatchSending(false);
     }
-  }, [draft, isSending, sendMessage, replyToMessage, pendingAttachments, uploadingFiles]);
+  }, [draft, isSending, sendMessage, replyToMessage, pendingAttachments, uploadingFiles, setDraft]);
 
   const handleStartEdit = useCallback((msgId: string, content: string) => {
     setEditingMessageId(msgId);
     setEditingContent(content);
-    setDraft(content);
+    // The message body, not a draft.
+    applyDraft(content, false);
     // Same synchronous-focus rule as reply: iOS raises the soft keyboard only
     // for a focus that lands in the same event tick as the user gesture (the
     // action-panel click), so a deferred focus silently does nothing there.
     // The editor re-seeds from the new draft on the next commit (resetKey
     // bump) without losing focus — GomoRichEditor keeps the instance.
     composerRef.current?.focus();
-  }, [composerRef]);
+  }, [composerRef, applyDraft]);
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
     setEditingContent("");
-    setDraft("");
-  }, []);
+    // Cancelling an edit brings back whatever the reader was writing.
+    applyDraft(activeConversationId ? readDraft(activeConversationId) : "");
+  }, [activeConversationId, applyDraft]);
 
   const handleSaveEdit = useCallback((msgId: string, content: string) => {
     if (content.trim() && content.trim() !== editingContent) {
@@ -317,23 +402,23 @@ export const ChatView = memo(function ChatView({
     }
     setEditingMessageId(null);
     setEditingContent("");
-    setDraft("");
-  }, [editMessage, editingContent]);
+    // Same as cancel: the draft the reader had before the edit is still theirs.
+    applyDraft(activeConversationId ? readDraft(activeConversationId) : "");
+  }, [activeConversationId, editMessage, editingContent, applyDraft]);
 
   const renderMessage = useCallback(
     (
       msg: MessageView,
       prev: MessageView | null,
-      extras: { dateLabel: string | null; isConsecutive: boolean },
+      extras: MessageRenderExtras,
     ) => {
       void language;
       if (!conversation || !me) return null;
-      const { dateLabel, isConsecutive: isGrouped } = extras;
-      const convReceipts = receipts.get(conversation.id) ?? [];
-      const peerReceipt = convReceipts.find((r) => r.message_id === msg.id && r.user_id !== me.id) ?? null;
-      const quoted = msg.parent_message_id
-        ? (messageById.get(msg.parent_message_id) ?? null)
-        : null;
+      // The reply target and the peer's receipt arrive resolved from the list
+      // (it owns the full history + the receipts map), so this renderer's
+      // identity does not change on every arrival and message rows can be
+      // memoized. `renderVersion` below covers the ambient inputs.
+      const { dateLabel, isConsecutive: isGrouped, quoted, peerReceipt } = extras;
       const giftData = parseGiftContent(msg.content);
 
       if (giftData) {
@@ -391,6 +476,7 @@ export const ChatView = memo(function ChatView({
             onRetry={(m) => sendMessage(m.content, m.client_id)}
             onReply={handleReply}
             onCopy={handleCopy}
+            onJumpToMessage={handleJumpToMessage}
             quotedMessage={quoted}
             peerReadAt={peerReceipt?.read_at ?? null}
             peerDeliveredAt={peerReceipt?.delivered_at ?? null}
@@ -398,7 +484,32 @@ export const ChatView = memo(function ChatView({
         </div>
       );
     },
-    [conversation, me, messageById, receipts, language, handleStartEdit, deleteMessage, togglePin, toggleNotesPin, sendMessage, handleReply, handleCopy],
+    [
+      conversation,
+      me,
+      language,
+      handleStartEdit,
+      deleteMessage,
+      togglePin,
+      toggleNotesPin,
+      sendMessage,
+      handleReply,
+      handleCopy,
+      handleJumpToMessage,
+    ],
+  );
+
+  // Identity of the ambient render inputs: pinned id, group/notes flags, the
+  // reader's own id. Message rows compare it to know whether they must
+  // re-render even though their own message object did not change.
+  const renderVersion = useMemo(
+    () => ({
+      pinned: conversation?.pinned_message_id ?? null,
+      group: conversation?.is_group ?? false,
+      notes: conversation?.is_notes ?? false,
+      me: me?.id ?? null,
+    }),
+    [conversation?.pinned_message_id, conversation?.is_group, conversation?.is_notes, me?.id],
   );
 
   if (!conversation || !me) {
@@ -517,6 +628,10 @@ export const ChatView = memo(function ChatView({
                     {renderMessage(msg, prev, {
                       dateLabel: null,
                       isConsecutive: isConsecutive(prev, msg),
+                      quoted: msg.parent_message_id
+                        ? messageById.get(msg.parent_message_id) ?? null
+                        : null,
+                      peerReceipt: null,
                     })}
                   </div>
                 );
@@ -580,13 +695,20 @@ export const ChatView = memo(function ChatView({
             key={conversation.id}
             ref={messageListRef}
             renderMessage={renderMessage}
+            renderVersion={renderVersion}
             messagesOverride={visibleMessages}
+            unreadBoundaryAt={unreadBoundaryRef.current?.at}
           />
         )}
       </div>
 
       {/* Composer */}
       <MessageComposer
+        // Keyed by conversation: the composer owns an editor instance, an emoji
+        // sheet, a full-mode flag — state that must not survive into another
+        // chat. Remounting is what guarantees it (the editor seeds from the
+        // draft it is mounted with, so the right chat's text is in the box).
+        key={conversation.id}
         draft={draft}
         setDraft={setDraft}
         isSending={isSending || isBatchSending}

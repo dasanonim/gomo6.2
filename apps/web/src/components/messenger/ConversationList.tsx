@@ -1,5 +1,4 @@
-import { memo, useCallback, useState, useMemo, useRef } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { memo, useCallback, useState, useMemo } from "react";
 import { Gift, Link2, MessageCircle, NotebookPen, Search, UserPlus, X } from "lucide-react";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { UserBadge } from "@/components/UserBadge";
@@ -196,7 +195,16 @@ const NotesCard = memo(function NotesCard({
   );
 });
 
-const ConversationVirtualList = memo(function ConversationVirtualList({
+/**
+ * The conversation rows.
+ *
+ * Deliberately NOT virtualized: a sidebar list of a few hundred rows is cheap
+ * once every row carries the native `content-visibility` contract
+ * (`.chat-native-row`) — the browser skips the layout/paint of the rows that
+ * are outside the scrollport, which is all a virtualizer did here. The list
+ * itself (`.conversation-list`) owns the scrolling.
+ */
+const ConversationRows = memo(function ConversationRows({
   conversations,
   selectedId,
   onSelect,
@@ -209,62 +217,26 @@ const ConversationVirtualList = memo(function ConversationVirtualList({
   isCollapsed: boolean;
   myUserId: string | null;
 }) {
-  const parentRef = useRef<HTMLDivElement>(null);
-
-  const virtualizer = useVirtualizer({
-    count: conversations.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 72,
-    overscan: 5,
-  });
-
-  if (conversations.length <= 20) {
-    return (
-      <>
-        {conversations.map((conv) => (
+  return (
+    <>
+      {conversations.map((conv) => (
+        <div
+          key={conv.id}
+          className="conversation-native-row chat-native-row"
+          // Conversation cards are 72px tall (see `.conversation-card`), so the
+          // intrinsic fallback matches instead of the generic 64px.
+          style={{ containIntrinsicSize: "auto 72px" }}
+        >
           <ConversationCard
-            key={conv.id}
             conversation={conv}
             isSelected={conv.id === selectedId}
             onSelect={() => onSelect(conv.id)}
             isCollapsed={isCollapsed}
             myUserId={myUserId}
           />
-        ))}
-      </>
-    );
-  }
-
-  return (
-    <div ref={parentRef} style={{ overflow: 'auto', flex: 1 }}>
-      <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
-        {virtualizer.getVirtualItems().map((virtualRow) => {
-          const conv = conversations[virtualRow.index];
-          return (
-            <div
-              key={conv.id}
-              ref={virtualizer.measureElement}
-              data-index={virtualRow.index}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                transform: `translateY(${virtualRow.start}px)`,
-              }}
-            >
-              <ConversationCard
-                conversation={conv}
-                isSelected={conv.id === selectedId}
-                onSelect={() => onSelect(conv.id)}
-                isCollapsed={isCollapsed}
-                myUserId={myUserId}
-              />
-            </div>
-          );
-        })}
-      </div>
-    </div>
+        </div>
+      ))}
+    </>
   );
 });
 
@@ -398,7 +370,7 @@ export const ConversationList = memo(function ConversationList({
           </div>
         )}
 
-        <ConversationVirtualList
+        <ConversationRows
           conversations={filteredConversations}
           selectedId={selectedId}
           onSelect={handleSelect}

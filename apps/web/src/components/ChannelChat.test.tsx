@@ -50,33 +50,6 @@ vi.mock("@/i18n/dateLocale", () => ({
   useDateLocale: () => undefined,
 }));
 
-// jsdom has no layout: a real useVirtualizer sees clientHeight 0 and renders
-// nothing. The messenger tests use the same minimal stand-in.
-vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: (opts: { count: number; estimateSize: (index: number) => number }) => {
-    const count = opts.count;
-    const sizes = Array.from({ length: count }, (_, i) => opts.estimateSize(i));
-    const offsets = sizes.map((s, i) => sizes.slice(0, i).reduce((a, b) => a + b, 0));
-    return {
-      getVirtualItems: () =>
-        Array.from({ length: count }, (_, i) => ({
-          index: i,
-          key: i,
-          start: offsets[i],
-          size: sizes[i],
-          end: offsets[i] + sizes[i],
-        })),
-      getTotalSize: () => sizes.reduce((a, b) => a + b, 0),
-      getOffsetForIndex: (i: number) => [offsets[i] ?? 0, "start"] as const,
-      measureElement: () => undefined,
-      scrollToIndex: () => {},
-      get isScrolling() {
-        return false;
-      },
-    };
-  },
-}));
-
 const CH = "10000000-0000-0000-0000-000000000001";
 const ME = "20000000-0000-0000-0000-000000000002";
 
@@ -88,11 +61,127 @@ function jsonResponse(data: unknown, ok = true, status = 200) {
   };
 }
 
+// ── Layout stand-in ────────────────────────────────────────────────────────
+// The channel chat scrolls the document, so the geometry that matters is the
+// scrolling element's. jsdom has none: without this every scroll decision sees
+// a 0px viewport and "always at the bottom".
+const ROW = 60;
+const VIEWPORT = 600;
+let scrollTopValue = 0;
+const savedLayout: Array<[string, PropertyDescriptor | undefined]> = [];
+
+// ── IntersectionObserver stand-in ──────────────────────────────────────────
+// jsdom never intersects anything, so the window sentinels are driven
+// explicitly: the contract under test is "a visible sentinel slides the window",
+// not the browser's geometry.
+type IOEntry = { isIntersecting: boolean; target: Element };
+const observers: Array<{ callback: (entries: IOEntry[]) => void; targets: Element[]; rootMargin: string }> = [];
+
+class MockIntersectionObserver {
+  callback: (entries: IOEntry[]) => void;
+  targets: Element[] = [];
+  rootMargin: string;
+  constructor(callback: (entries: IOEntry[]) => void, options?: { rootMargin?: string }) {
+    this.callback = callback;
+    this.rootMargin = options?.rootMargin ?? "";
+    observers.push(this);
+  }
+  observe(target: Element) {
+    this.targets.push(target);
+  }
+  unobserve(target: Element) {
+    this.targets = this.targets.filter((candidate) => candidate !== target);
+  }
+  disconnect() {
+    this.targets = [];
+  }
+  takeRecords() {
+    return [];
+  }
+}
+
+/** Fires the TOP sentinel (the one armed with a top-only rootMargin). */
+const triggerTopSentinel = () => {
+  const observer = observers.find((candidate) => candidate.rootMargin.startsWith("600px"));
+  const target = observer?.targets[0];
+  if (!observer || !target) throw new Error("top sentinel observer not found");
+  act(() => {
+    observer.callback([{ isIntersecting: true, target }]);
+  });
+};
+
+const isScroller = (el: HTMLElement) =>
+  el === document.documentElement || el === document.body || el === document.scrollingElement;
+
+function installLayout() {
+  const proto = HTMLElement.prototype;
+  for (const key of ["clientHeight", "scrollHeight", "scrollTop", "offsetTop", "offsetHeight"]) {
+    savedLayout.push([key, Object.getOwnPropertyDescriptor(proto, key)]);
+  }
+  Object.defineProperty(proto, "clientHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return isScroller(this) ? VIEWPORT : 0;
+    },
+  });
+  Object.defineProperty(proto, "scrollHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      if (!isScroller(this)) return 0;
+      return document.querySelectorAll(".channel-message-row").length * ROW + 2;
+    },
+  });
+  Object.defineProperty(proto, "scrollTop", {
+    configurable: true,
+    get(this: HTMLElement) {
+      const max = Math.max(0, this.scrollHeight - this.clientHeight);
+      if (scrollTopValue > max) scrollTopValue = max;
+      return scrollTopValue;
+    },
+    set(this: HTMLElement, value: number) {
+      const max = Math.max(0, this.scrollHeight - this.clientHeight);
+      scrollTopValue = Number.isFinite(value) ? Math.max(0, Math.min(value, max)) : 0;
+    },
+  });
+  Object.defineProperty(proto, "offsetHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.classList.contains("channel-message-row") ? ROW : 0;
+    },
+  });
+  Object.defineProperty(proto, "offsetTop", {
+    configurable: true,
+    get(this: HTMLElement) {
+      if (!this.classList.contains("channel-message-row")) return 0;
+      let top = 0;
+      let sibling = this.previousElementSibling;
+      while (sibling) {
+        if (sibling.classList.contains("channel-message-row")) top += ROW;
+        sibling = sibling.previousElementSibling;
+      }
+      return top;
+    },
+  });
+}
+
+function restoreLayout() {
+  for (const [key, descriptor] of savedLayout.splice(0)) {
+    if (descriptor) Object.defineProperty(HTMLElement.prototype, key, descriptor);
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key];
+  }
+}
+
 beforeEach(() => {
   wsMock.reset();
+  observers.length = 0;
+  (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
+    MockIntersectionObserver;
+  scrollTopValue = 0;
+  installLayout();
 });
 
 afterEach(() => {
+  restoreLayout();
   vi.unstubAllGlobals();
 });
 
@@ -235,8 +324,88 @@ it("loads an older history page on scroll-to-top", async () => {
   await waitFor(() => expect(screen.getByText("old--49")).toBeInTheDocument());
 });
 
-it("marks deleted messages with a placeholder and blanks the text", async () => {
-  const msg = { id: 3, channel_id: CH, user_id: ME, username: "me", avatar_url: null, content: "привет", created_at: "2026-08-20T09:00:00Z" };
+it("mounts only the windowed slice for a long history", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<ChannelChat channelId={CH} currentUserId={ME} />);
+  await screen.findByPlaceholderText(/Написать/i);
+
+  act(() => {
+    for (let id = 1; id <= 400; id += 1) {
+      wsMock.emit("new_channel_message", {
+        id,
+        channel_id: CH,
+        user_id: "u9",
+        username: "bob",
+        avatar_url: null,
+        content: `msg-${id}`,
+        created_at: "2026-08-20T10:00:00Z",
+      });
+    }
+  });
+
+  await waitFor(() => expect(screen.getByText("msg-400")).toBeInTheDocument());
+
+  // Native DOM slicing: a normal-flow row with the shared content-visibility
+  // contract, and a mounted window bounded well below the history length.
+  const mounted = document.querySelectorAll<HTMLElement>(".channel-message-row");
+  expect(mounted.length).toBeGreaterThan(0);
+  expect(mounted.length).toBeLessThanOrEqual(300);
+  expect(mounted[0].className).toContain("chat-native-row");
+  expect(mounted[0].style.position).toBe("");
+  expect(document.querySelector(".chat-scroll-sentinel")).not.toBeNull();
+});
+
+it("does not touch the list while a finger is on the screen", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ChannelChat channelId={CH} currentUserId={ME} />);
+  await screen.findByPlaceholderText(/Написать/i);
+
+  act(() => {
+    for (let id = 1; id <= 400; id += 1) {
+      wsMock.emit("new_channel_message", {
+        id,
+        channel_id: CH,
+        user_id: "u9",
+        username: "bob",
+        avatar_url: null,
+        content: `msg-${id}`,
+        created_at: "2026-08-20T10:00:00Z",
+      });
+    }
+  });
+  await waitFor(() => expect(screen.getByText("msg-400")).toBeInTheDocument());
+  const list = screen.getByTestId("channel-chat-messages");
+  const before = document.querySelectorAll(".channel-message-row").length;
+
+  // Finger down, then scroll up: nothing may be mounted (WebKit drops the
+  // compensating write under a live gesture).
+  fireEvent.pointerDown(list);
+  act(() => {
+    document.documentElement.scrollTop = 0;
+    window.dispatchEvent(new Event("scroll"));
+  });
+  // The sentinel that would normally slide the window is armed, but the finger
+  // is still down: nothing may be mounted.
+  triggerTopSentinel();
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(document.querySelectorAll(".channel-message-row")).toHaveLength(before);
+
+  // Lifting the finger clears the gate, and the same trigger now mounts the
+  // already-loaded rows above the reader.
+  act(() => {
+    fireEvent.pointerUp(window);
+  });
+  triggerTopSentinel();
+  await waitFor(
+    () => expect(document.querySelectorAll(".channel-message-row").length).toBeGreaterThan(before),
+    { timeout: 3000 },
+  );
+});
+
+it("marks deleted messages with a placeholder and blanks the text", async () => {  const msg = { id: 3, channel_id: CH, user_id: ME, username: "me", avatar_url: null, content: "привет", created_at: "2026-08-20T09:00:00Z" };
   const fetchMock = vi
     .fn()
     .mockResolvedValueOnce(jsonResponse([msg]))

@@ -53,6 +53,7 @@ const { storeMocks, queueMarkDeliveredMock, queueMarkReadMock } = vi.hoisted(() 
 });
 
 vi.mock("@/stores/messengerStore", () => ({
+    getConversationReadThrough: () => null,
   useMessengerStore: {
     getState: vi.fn(() => ({
       ...storeMocks,

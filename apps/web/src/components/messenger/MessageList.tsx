@@ -1,5 +1,7 @@
 import {
+  Suspense,
   forwardRef,
+  lazy,
   memo,
   useCallback,
   useEffect,
@@ -10,101 +12,130 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDown } from "lucide-react";
-import { useMessengerStore, queueMarkRead } from "@/stores/messengerStore";
-import type { MessageView } from "./types";
-import { isConsecutive, getDateSeparator } from "./messageListUtils";
-import { getAttachmentAspectRatio } from "./attachmentMedia";
-import { messageKey } from "./core/messageModel";
-import { BubbleMeasurer, rowHeightFromBubble } from "./core/offscreenMeasure";
+import { queueMarkRead, useMessengerStore } from "@/stores/messengerStore";
+import { hasScrollAnchoring } from "@/lib/scrollAnchoring";
+import type { MessageView, ReceiptRow } from "./types";
+import { getDateSeparator, isConsecutive } from "./messageListUtils";
+import { indexById, messageKey, sentAtMs } from "./core/messageModel";
 import {
   clearMessageScrollAnchor,
   readMessageScrollAnchor,
   writeMessageScrollAnchor,
   type MessageScrollAnchor,
 } from "./core/messageScrollAnchors";
+import {
+  ANCHOR_AFTER,
+  ANCHOR_BEFORE,
+  INITIAL_WINDOW,
+  MAX_DOM_MESSAGES,
+  RESET_WINDOW,
+  WINDOW_STEP,
+  buildKeyIndex,
+  resolveKeyWindow,
+  sameKeyWindow,
+  tailKeyWindow,
+  tailSlice,
+  type KeyWindow,
+  type MessageSlice,
+} from "./core/slicing";
+import {
+  animateScroll,
+  cancelScrollAnimation,
+  isAnimatingScroll,
+  restartCurrentScrollAnimation,
+  type ScrollDirection,
+  type ScrollPosition,
+} from "./core/animateScroll";
+import { requestForcedReflow, requestMeasure } from "./core/fasterdom";
+import {
+  isScrollDiagnosticsEnabled,
+  noteCommitDuration,
+  noteGestureEnd,
+  noteGestureStart,
+  noteMountedRows,
+  notePageRequest,
+  noteScrollTopWrite,
+} from "./core/scrollDiagnostics";
 
-// ── List-local constants ───────────────────────────────────────────────────
-/** Items rendered beyond the viewport. Deliberately small: every mounted row
- *  outside the viewport is a row that will be measured, and each measurement
- *  is a scroll-position correction. The library's own chat example uses 6. */
-const OVERSCAN = 6;
+import {
+  AT_BOTTOM_THRESHOLD,
+  BOTTOM_SNAP_CLASS,
+  getOffsetToContainer,
+  pinToBottom,
+  readContainerScrollTop,
+  setScrollTop,
+} from "./core/scrollGeometry";
+
+// ── Behaviour constants ────────────────────────────────────────────────────
+
 /**
- * How close to the end still counts as "at the bottom". Deliberately small:
- * a wide slack reads as the list tugging the user downwards on every arrival.
- * The virtualizer applies the same number to `followOnAppend` and `isAtEnd()`.
+ * Distance from the newest message that still counts as "the reader is following
+ * the conversation": arrivals keep gliding in, the unread badge stays hidden.
  */
-const SCROLL_END_THRESHOLD = 8;
-/** Gap under the last message so a bubble never touches the composer. It is a
- *  virtualizer `paddingEnd`, so it participates in the scroll math instead of
- *  hiding below the fold as scroller padding would. */
-const BOTTOM_GAP = 12;
-/** Minimum gap between two history page requests (burst guard). */
-const LOAD_COOLDOWN_MS = 500;
-/** How long the scroller must be quiet before a history page is requested.
- *  Longer than the library's `isScrollingResetDelay` (150ms) so the request
- *  never overlaps a live momentum scroll. */
-const LOAD_SETTLE_MS = 220;
-/** Start fetching the next older page this many rows before the top of the
- *  loaded history — a deliberately large runway, so the page is already here
- *  (and already inserted) long before the reader arrives, however fast they
- *  fling. The buffer on top of that holds up to two more pages. */
-const HISTORY_PREFETCH_ROWS = 100;
-/** How many extra pages `scrollToMessage` may fetch while looking for a target. */
-const MAX_JUMP_PAGES = 20;
+const FOLLOW_SLACK = 100;
+/**
+ * The band around the bottom trigger in which native scroll snapping is armed
+ * (Telegram's `BOTTOM_SNAP_THRESHOLD`). Outside it the reader is exploring
+ * history and snapping must not pull them back.
+ */
+const BOTTOM_SNAP_THRESHOLD = 7;
+/** How close to the mounted top/bottom a new page is mounted (Telegram: 750). */
+const HISTORY_TRIGGER_MARGIN = 750;
+/**
+ * Where the *request* for the next page starts. Much earlier than the mount
+ * trigger: a request touches no DOM, so it is safe mid-fling and it takes the
+ * network out of the wait when the reader reaches the mounted top. A phone row
+ * is ~50-90px, so this keeps several pages ahead of a fast fling (the store
+ * buffers two, the rest are cheap no-ops).
+ */
+const PREFETCH_PX = 12000;
+/** Minimum gap between two older-history requests (burst guard). */
+const LOAD_COOLDOWN_MS = 400;
+/**
+ * How long the scroller must be quiet before the work that needs a verified
+ * rest: reading the read line, and — on an engine without native scroll
+ * anchoring — mounting rows above the viewport. A quiet event stream is not
+ * proof of a rest on iOS, so the rest is verified from the position itself: the
+ * position must be unchanged since the last observation, whatever the timer says.
+ *
+ * This is the delay between "the reader stopped" and "the page is mounted" on
+ * WebKit, so it is kept at Telegram Web's debounce scale (~100ms) rather than
+ * generous: the verification, not the timer, is what makes the rest safe.
+ */
+const REST_MS = 80;
+/**
+ * The gap a focused message keeps from the viewport edge (Telegram Web's
+ * `FOCUS_MARGIN` / `BOTTOM_FOCUS_MARGIN`, both in rem there).
+ */
+const FOCUS_MARGIN = 20;
+/**
+ * How much of a jump to the bottom is *animated*. The rest is covered at once:
+ * gliding through thousands of pixels reads as a hang. Telegram Web's
+ * `BOTTOM_FOCUS_OFFSET`, used when the viewport was replaced under the glide
+ * (which is exactly a jump-to-bottom or a jump-to-message here).
+ */
+const BOTTOM_FOCUS_DISTANCE = 500;
+/** Distance the unread divider keeps from the top when a chat opens on it. */
+const UNREAD_DIVIDER_TOP = 12;
 /** Redisplays a jumped-to message for this long. */
 const FLASH_MS = 1400;
+/** How many pages `scrollToMessage` may fetch while looking for its target. */
+const MAX_JUMP_PAGES = 20;
 
-/** Extra heights (kept in sync with messenger.css) that sit INSIDE a virtual
- *  item but are invisible to a content-only estimate. Without them every
- *  message with a date separator / sender name / quote / link preview is
- *  underestimated and gets corrected while the user scrolls, which shifts the
- *  layout mid-gesture. */
-const DATE_SEPARATOR_HEIGHT = 34; // .date-separator — margin 12/6 + line
-const SENDER_NAME_HEIGHT = 18; // .msg-sender-name — group chats, first of author
-const QUOTED_MESSAGE_HEIGHT = 34; // .quoted-message — padding 6/6 + line + mb
-const LINK_PREVIEW_HEIGHT = 60; // .msg-link-panel — loading (40) to loaded (~90)
-const ROW_GAP_HEIGHT = 8; // .bubble-row padding-bottom — gap between messages
-
-// ── Text metrics ───────────────────────────────────────────────────────────
-// The estimate decides the *pre-measurement* offsets of every row. It has to
-// be right, and in particular it has to scale with the column width: at 520px
-// a bubble wraps ~55 characters per line, at a phone's ~220px only ~22. A
-// single hard-coded characters-per-line number is calibrated for one width and
-// then wrong by a factor of two on the other — every row is underestimated by
-// tens of pixels, the virtualizer applies one correction per measured row, and
-// on iOS (where those writes are deferred while the finger and momentum are
-// live) the accumulated corrections land in one batch the moment the scroll
-// stops. That batch is the visible jump.
-//
-// The constants below are fitted against real rendered bubbles at two widths
-// (a 330px column and a 780px one); per-row error is ~4-5px with no systematic
-// bias, against ~36px and a ~1100px accumulated bias before.
-/** Bubble max width, mirroring `messenger.css`. */
-const BUBBLE_MAX_WIDTH = 520;
-/** Share of the scroller's width a text bubble can occupy. The CSS says
- *  `max-width: 88%`, but the row gutter, the avatar column of incoming groups
- *  and the stable scrollbar gutter bring the *text* box to ~0.675 of it. */
-const BUBBLE_WIDTH_FACTOR = 0.675;
-/** Bubble padding + border: the wrap width is the bubble minus this. */
-const BUBBLE_CHROME_X = 22;
-/** Average advance of the 14px messenger font over real (Cyrillic) text. */
-const AVG_CHAR_PX = 9;
-/** Line box of `.message-content` (line-height 20.3px, rounded up). */
-const LINE_HEIGHT = 21;
-/** Vertical bubble chrome (padding + border) around the text lines. */
-const BUBBLE_CHROME_Y = 18;
-
-/** The wrap width a bubble gets in a scroller of this width. */
-function bubbleTextWidth(scrollerWidth: number): number {
-  const bubble = Math.min(scrollerWidth * BUBBLE_WIDTH_FACTOR, BUBBLE_MAX_WIDTH);
-  return Math.max(60, bubble - BUBBLE_CHROME_X);
-}
+// ── Public API ─────────────────────────────────────────────────────────────
 
 export interface MessageRenderExtras {
   dateLabel: string | null;
   isConsecutive: boolean;
+  /**
+   * The reply target, resolved against the FULL loaded history (a reply can
+   * quote a message that is outside the mounted window). Passed through the
+   * renderer so a message item's memo comparator can see a changed quote.
+   */
+  quoted: MessageView | null;
+  /** The other side's receipt row for this message, or null. */
+  peerReceipt: ReceiptRow | null;
 }
 
 export interface MessageListHandle {
@@ -116,126 +147,218 @@ export interface MessageListHandle {
 
 interface MessageListProps {
   renderMessage: (message: MessageView, prev: MessageView | null, extras: MessageRenderExtras) => ReactNode;
+  /**
+   * Identity of the *ambient* render inputs (receipts map, pinned id, group /
+   * notes flags). The list compares it to decide whether mounted rows must be
+   * re-rendered even though their own message did not change.
+   */
+  renderVersion?: unknown;
   /** Notes self-chat: a filtered view of the store messages (folder filter).
    *  When omitted the full store list is used. */
   messagesOverride?: MessageView[];
+  /**
+   * The timestamp the conversation is known to be read up to, captured when the
+   * chat was opened (`getConversationReadThrough`). Read on mount ONLY: the marker
+   * of where the reader left off must not move while they are reading it — it is
+   * recomputed on the next open, exactly like Telegram Web's
+   * `memoUnreadDividerBeforeIdRef`.
+   */
+  unreadBoundaryAt?: string | null;
 }
 
-/**
- * The scroll anchor of a conversation lives in ./core/messageScrollAnchors as a
- * message key plus the pixels of it hidden above the fold. `scrollTop` alone is
- * unusable — it points at a different message as soon as any height above it
- * changes.
- */
-type ScrollAnchor = MessageScrollAnchor;
-
-/** The absolutely-positioned row box the virtualizer places and measures. */
-const VIRTUAL_ROW_STYLE = {
-  position: "absolute",
-  top: 0,
-  left: 0,
-  width: "100%",
-} as const;
+type RenderMessage = MessageListProps["renderMessage"];
 
 /**
- * Height of a message's text at a given wrap width. Explicit newlines are real
- * breaks (the content renders with `white-space: pre-wrap`), so every line of
- * the message is wrapped on its own.
+ * The dev counters overlay is loaded on demand and never in a production build:
+ * `import.meta.env.DEV` folds to `false`, so the dynamic import is dropped
+ * entirely instead of shipping dead bytes (a top-level `memo(...)` call in the
+ * overlay module is enough for a bundler to keep it otherwise).
  */
-function estimateTextHeight(content: string, textWidth: number): number {
-  const charsPerLine = Math.max(8, Math.floor(textWidth / AVG_CHAR_PX));
-  let lines = 0;
-  for (const paragraph of content.split("\n")) {
-    lines += Math.max(1, Math.ceil(paragraph.length / charsPerLine));
+const DevScrollOverlay = import.meta.env.DEV
+  ? lazy(async () => ({ default: (await import("./ScrollDebugOverlay")).ScrollDebugOverlay }))
+  : null;
+
+// ── Message item ───────────────────────────────────────────────────────────
+// A plain, normal-flow row: no position, no transform, no spacer, and no
+// `content-visibility`. Every mounted row IS laid out — a row whose height the
+// engine does not know is a row that moves everything below it the moment it is
+// rendered, which is the stutter this list used to have on WebKit.
+
+interface MessageItemProps {
+  message: MessageView;
+  prev: MessageView | null;
+  extras: MessageRenderExtras;
+  flash: boolean;
+  renderVersion: unknown;
+  render: RenderMessage;
+}
+
+const MessageItem = memo(
+  function MessageItem({ message, prev, extras, flash, render }: MessageItemProps) {
+    return (
+      <div
+        // `.message-row` is kept for the existing long-press/menu host hooks.
+        className={`message-item message-row chat-native-row${flash ? " is-flash" : ""}`}
+        data-message-id={message.id}
+        data-message-key={messageKey(message)}
+      >
+        {render(message, prev, extras)}
+      </div>
+    );
+  },
+  (a, b) =>
+    a.message === b.message &&
+    a.prev === b.prev &&
+    a.flash === b.flash &&
+    a.extras.dateLabel === b.extras.dateLabel &&
+    a.extras.isConsecutive === b.extras.isConsecutive &&
+    a.extras.quoted === b.extras.quoted &&
+    a.extras.peerReceipt === b.extras.peerReceipt &&
+    Object.is(a.renderVersion, b.renderVersion),
+);
+
+// ── DOM helpers ────────────────────────────────────────────────────────────
+
+/** Every mounted row, in document order (row offsets are monotonic). */
+function collectRows(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(".message-item[data-message-key]"));
+}
+
+function findRowByKey(rows: HTMLElement[], key: string): HTMLElement | null {
+  for (const row of rows) {
+    if (row.dataset.messageKey === key) return row;
   }
-  return Math.max(1, lines) * LINE_HEIGHT;
+  return null;
+}
+
+function findRowById(rows: HTMLElement[], id: string): HTMLElement | null {
+  for (const row of rows) {
+    if (row.dataset.messageId === id) return row;
+  }
+  return null;
 }
 
 /**
- * Estimate the rendered height of a message BEFORE it is measured, so virtual
- * offsets don't drift when items are prepended or scrolled into view.
- *  - Media bubbles: the reserved box size is derived from the attachment
- *    aspect ratio (same math as getAttachmentDisplayStyle) and capped by the
- *    bubble's own width, so images never reflow the list.
- *  - Text bubbles: the line count comes from the real wrap width (see the
- *    metrics above).
+ * The newest row that INTERSECTS the viewport (even partially), or -1.
+ *
+ * Deliberately not "the newest row that is fully visible": a message taller than
+ * the viewport is never fully visible, so a read line built on that rule stalls
+ * one message short of the newest one — and the chat then stays unread no matter
+ * how often the reader scrolls to the bottom. Telegram marks read on
+ * intersection (`useMessageObservers` → `markMessageListRead({ maxId })`).
  */
-function estimateMessageHeight(
-  message: MessageView | undefined,
-  prev: MessageView | null = null,
-  isGroup = false,
-  textWidth = bubbleTextWidth(520),
+function findNewestIntersectingRowIndex(
+  rows: HTMLElement[],
+  scrollTop: number,
+  fold: number,
 ): number {
-  if (!message) return 72 + ROW_GAP_HEIGHT;
-  // Shared-post cards (__SHARE__ token) have a deterministic layout: clamped
-  // text lines + a fixed 16:9 thumbnail block. Estimate the full-card height
-  // upfront so the virtualizer never reflows when the entity resolves.
-  if (message.content?.startsWith("__SHARE__")) return 430 + ROW_GAP_HEIGHT;
-  // Gift cards render a fixed standalone card.
-  if (message.content?.startsWith("__GIFT__")) return 190 + ROW_GAP_HEIGHT;
+  let low = 0;
+  let high = rows.length - 1;
+  let candidate = -1;
 
-  // Elements above the bubble that the content estimate cannot see. Kept in
-  // sync with renderMessage: the date separator shows on the first message of
-  // a day, the group sender name on the first message of each author, the
-  // quote strip whenever parent_message_id is set.
-  let extra = 0;
-  if (prev == null || new Date(prev.sent_at).toDateString() !== new Date(message.sent_at).toDateString()) {
-    extra += DATE_SEPARATOR_HEIGHT;
-  }
-  if (isGroup && (prev == null || prev.sender_user_id !== message.sender_user_id)) {
-    extra += SENDER_NAME_HEIGHT;
-  }
-  if (message.parent_message_id) extra += QUOTED_MESSAGE_HEIGHT;
-  if (/https?:\/\//.test(message.content ?? "")) extra += LINK_PREVIEW_HEIGHT;
-
-  const visual = message.attachments?.filter((a) => a.type === "image" || a.type === "video") ?? [];
-  const onlyMedia = visual.length > 0 && (message.attachments?.length ?? 0) === visual.length;
-  if (onlyMedia) {
-    const ratio = getAttachmentAspectRatio(visual[0]);
-    if (Number.isFinite(ratio) && ratio > 0) {
-      // getAttachmentDisplayStyle: boxWidth = min(420, 480 * ratio), further
-      // capped by the bubble's own text box on narrow columns.
-      const boxWidth = Math.min(420, 480 * ratio, textWidth + BUBBLE_CHROME_X);
-      const boxHeight = Math.round(boxWidth / ratio);
-      const captionLines = message.content?.trim()
-        ? Math.max(1, Math.ceil(message.content.length / Math.max(8, Math.floor(textWidth / AVG_CHAR_PX))))
-        : 0;
-      return extra + 14 + boxHeight + captionLines * LINE_HEIGHT + ROW_GAP_HEIGHT;
+  // The last row whose top is above the fold…
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (rows[mid].offsetTop < fold) {
+      candidate = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
     }
   }
-  return extra + BUBBLE_CHROME_Y + estimateTextHeight(message.content ?? "", textWidth) + ROW_GAP_HEIGHT;
+
+  // …walking back over the ones that are entirely above the viewport's top edge.
+  while (candidate >= 0 && rows[candidate].offsetTop + rows[candidate].offsetHeight <= scrollTop) {
+    candidate -= 1;
+  }
+
+  return candidate;
 }
 
 /**
- * Owns the virtualized message list for the open conversation
- * (@tanstack/react-virtual, end-anchored chat mode).
+ * The first loaded message the reader has not read: everything newer than the
+ * read-through boundary, skipping their own.
  *
- * The list keeps the natural order — index 0 = oldest at the top, the newest
- * at the bottom — inside a plain `overflow-y: auto` scroller. There is no
- * inverted transform and no hand-written scroll physics: the virtualizer owns
- * the scroll contract.
+ * `undefined` means the caller said nothing about the boundary (no divider);
+ * `null` means "nothing is known to be read", i.e. everything not the reader's
+ * own is unread — which is what a chat the reader has never opened looks like.
+ */
+function findFirstUnreadKey(
+  messages: readonly MessageView[],
+  boundaryAt: string | null | undefined,
+  ownId: string | undefined,
+): string | null {
+  if (boundaryAt === undefined) return null;
+
+  const boundary = boundaryAt ? Date.parse(boundaryAt) : Number.NEGATIVE_INFINITY;
+
+  for (const message of messages) {
+    if (message.is_deleted) continue;
+    if (ownId && message.sender_user_id === ownId) continue;
+    if (sentAtMs(message) > boundary) return messageKey(message);
+  }
+
+  return null;
+}
+
+// ── Window math ────────────────────────────────────────────────────────────
+
+/** A key window for an explicit `[start, end)` slice. */
+function windowFromSlice(
+  messages: readonly MessageView[],
+  start: number,
+  end: number,
+  followTail: boolean,
+): KeyWindow {
+  const first = messages[start];
+  const last = messages[end - 1];
+  return {
+    first: first ? messageKey(first) : null,
+    last: followTail ? null : last ? messageKey(last) : null,
+  };
+}
+
+/**
+ * The mounted message window for the open conversation.
  *
- *  - **End anchoring** (`anchorTo: 'end'` + stable `messageKey` keys) keeps the
- *    message the user is reading at the same place when an older page is
- *    prepended, and keeps the bottom pinned while late measurements arrive.
- *  - **Follow on append** (`followOnAppend`) pulls in new messages only when
- *    the viewport was already at the end; readers further up are left alone and
- *    get the "N new messages" affordance instead.
- *  - **Sticky open** — until the user takes over the scroller, every layout
- *    change re-issues `scrollToEnd()`. That covers the two-stage open (cached
- *    snapshot, then the network page) and the estimate → measured correction
- *    cascade, which is exactly where a one-shot "scroll to bottom on mount"
- *    leaves a short strip unpainted at the bottom.
- *  - **History loader** — approaching the top fetches the previous page.
- *  - **Read line** — only messages that are actually on screen are reported,
- *    so a scroll burst costs one debounced request instead of one per message.
+ * ## The model (ported from Telegram Web)
  *
- * It is mounted per conversation (`key={conversation.id}` in ChatView), so all
- * refs/state below reset naturally when switching chats.
+ * The DOM is **never virtualized** within the mounted slice: no spacers, no
+ * absolute rows, no `content-visibility`. What is bounded is the *slice of
+ * history that is mounted* ({@link MAX_DOM_MESSAGES} rows), and it slides like a
+ * page of a book: rows are added on the side the reader is moving toward and
+ * dropped on the opposite side, which is off screen by construction. Dropping
+ * rows off the far end and adding rows above it therefore never move what the
+ * reader is looking at — and where the engine has scroll anchoring, adding rows
+ * above does not either.
+ *
+ * ## One writer
+ *
+ * Exactly one `useLayoutEffect` decides the scroll position and writes it in a
+ * single DOM mutation pass (`core/fasterdom`). Its decision tree, in order:
+ *
+ *  1. **First placement** — the restored session anchor, else the newest row.
+ *  2. **A pending jump** — glide to the target and flash it.
+ *  3. **A new tail while following** — glide the arrival in (the "message rises"
+ *     feel of a send).
+ *  4. **The reader was at the bottom** — pin with the sentinel. This single
+ *     write keeps a growing list glued: it clamps to the new maximum whatever
+ *     grew, above or below.
+ *  5. **Otherwise** — compensate the layout change above the reader's anchor,
+ *     plus any movement of the scroller's own top edge (the pinned banner
+ *     appearing above the messages pushes the content down).
+ *
+ * There is no other `scrollTop` writer here. Nothing is written on scroll: every
+ * position change happens in a commit, which is the only moment the DOM changes.
+ *
+ * ## Arrivals while the reader is up in history
+ *
+ * The window freezes (`last` materializes), the arrival is not mounted, nothing
+ * moves, and the badge counts it. Telegram's contract.
  */
 export const MessageList = memo(
   forwardRef<MessageListHandle, MessageListProps>(function MessageList(
-    { renderMessage, messagesOverride },
+    { renderMessage, renderVersion, messagesOverride, unreadBoundaryAt },
     ref,
   ) {
     const conversationId = useMessengerStore((s) => s.selectedConversationId);
@@ -243,433 +366,170 @@ export const MessageList = memo(
     const storeMessages = useMessengerStore((s) => s.messages);
     // Notes self-chat passes a folder-filtered view; regular chats use the full list.
     const messages = messagesOverride ?? storeMessages;
-    const isGroupConversation = useMessengerStore(
-      (s) => s.conversations.find((c) => c.id === s.selectedConversationId)?.is_group ?? false,
-    );
+    const receipts = useMessengerStore((s) => s.receipts);
     const hasMoreMessages = useMessengerStore((s) => s.hasMoreMessages);
     const isLoadingMore = useMessengerStore((s) => s.isLoadingMore);
     const loadMoreMessages = useMessengerStore((s) => s.loadMoreMessages);
     const flushPendingOlderMessages = useMessengerStore((s) => s.flushPendingOlderMessages);
 
     const scrollerRef = useRef<HTMLDivElement | null>(null);
+    const topSentinelRef = useRef<HTMLDivElement | null>(null);
+    const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
+    const bottomTriggerRef = useRef<HTMLDivElement | null>(null);
 
-    const [isAtBottom, setIsAtBottom] = useState(true);
-    const [newMessageCount, setNewMessageCount] = useState(0);
+    // ── Window state ───────────────────────────────────────────────────
+    // Seeded once per mount (the list is keyed by conversation in ChatView):
+    // the saved session anchor when its message is still loaded, the tail
+    // otherwise. The unread marker is frozen here too — it belongs to the moment
+    // the chat was opened, not to the reader's progress through it.
+    const [initial] = useState(() => {
+      const unreadKey = findFirstUnreadKey(messages, unreadBoundaryAt, meId);
+      const saved = conversationId ? readMessageScrollAnchor(conversationId) : undefined;
+      if (saved) {
+        const at = messages.findIndex((message) => messageKey(message) === saved.key);
+        if (at >= 0) {
+          return {
+            window: {
+              first: messageKey(messages[Math.max(0, at - ANCHOR_BEFORE)]),
+              last: messageKey(messages[Math.min(messages.length - 1, at + ANCHOR_AFTER)]),
+            } satisfies KeyWindow,
+            restore: saved as MessageScrollAnchor | null,
+            unreadKey,
+          };
+        }
+      }
+      if (unreadKey) {
+        const at = messages.findIndex((message) => messageKey(message) === unreadKey);
+        if (at >= 0) {
+          return {
+            window: windowFromSlice(
+              messages,
+              at,
+              Math.min(messages.length, at + INITIAL_WINDOW),
+              false,
+            ),
+            restore: null as MessageScrollAnchor | null,
+            unreadKey,
+          };
+        }
+      }
+
+      return {
+        window: tailKeyWindow(messages),
+        restore: null as MessageScrollAnchor | null,
+        unreadKey,
+      };
+    });
+
+    const [window, setWindow] = useState<KeyWindow>(initial.window);
+    const windowRef = useRef(window);
+    windowRef.current = window;
+
+    const followingRef = useRef(initial.restore === null);
+    const [following, setFollowing] = useState(initial.restore === null);
+    const [unread, setUnread] = useState(0);
     const [flashId, setFlashId] = useState<string | null>(null);
-    /** Bumped when the scroller comes to rest, to retry the height priming. */
-    const [primeNonce, setPrimeNonce] = useState(0);
+    const [jumpNonce, setJumpNonce] = useState(0);
 
-    // True while the list follows the newest message. Set when the viewport is
-    // at the end, cleared only by a real scroll-away gesture (never by a timer
-    // and never by a measurement correction).
-    const followingRef = useRef(true);
-    // Set by any input that can start scrolling, and only cleared when the
-    // reader genuinely leaves the end. The scroll pass decides — a pointer-down
-    // on a bubble (long press) or a wheel at the very bottom must not unstick.
-    const gestureRef = useRef(false);
-    // Latest rendered messages, readable from event handlers and cleanup.
-    const messagesRef = useRef<MessageView[]>(messages);
+    // ── Derived slice ──────────────────────────────────────────────────
+    const indexByKey = useMemo(() => buildKeyIndex(messages), [messages]);
+    const indexByKeyRef = useRef(indexByKey);
+    indexByKeyRef.current = indexByKey;
+
+    const messagesRef = useRef(messages);
     messagesRef.current = messages;
-    // Anchor captured on scroll while the user is reading history.
-    const anchorRef = useRef<ScrollAnchor | null>(null);
-    // One history request at a time, plus the cooldown between two pages.
-    const loadInFlightRef = useRef(false);
-    const lastLoadAtRef = useRef(0);
-    /** Pending settle timer for the history loader (see armHistorySettle). */
-    const loadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    // Entry counting for the "N new messages" affordance.
-    const prevCountRef = useRef(0);
-    const prevLastKeyRef = useRef<string | null>(null);
-    // A `scrollToMessage` target that has not been rendered yet.
-    const pendingJumpRef = useRef<{ id: string; attempts: number } | null>(null);
+
+    const unreadIndex = useMemo(() => {
+      if (!initial.unreadKey) return -1;
+      return indexByKey.get(initial.unreadKey) ?? -1;
+    }, [indexByKey, initial.unreadKey]);
+
+    const resolved = resolveKeyWindow(window, indexByKey, messages.length);
+    const windowResolvable = resolved !== null;
+    const derived = resolved ?? tailSlice(messages.length);
+    const derivedRef = useRef<MessageSlice>(derived);
+    derivedRef.current = derived;
+
+    // A full reload (or a notes folder change) invalidates the keys: re-seed to
+    // the tail window.
+    useLayoutEffect(() => {
+      if (windowResolvable) return;
+      const next = tailKeyWindow(messagesRef.current);
+      setWindow((current) => (sameKeyWindow(current, next) ? current : next));
+    }, [windowResolvable, messages]);
+
+    // ── Latest store values, readable from event handlers ──────────────
+    const hasMoreRef = useRef(hasMoreMessages);
+    hasMoreRef.current = hasMoreMessages;
+    const loadingMoreRef = useRef(isLoadingMore);
+    loadingMoreRef.current = isLoadingMore;
+    const conversationIdRef = useRef(conversationId);
+    conversationIdRef.current = conversationId;
+    const rowsRef = useRef<HTMLElement[]>([]);
+
+    /**
+     * What the last commit left behind. A commit is the only moment the DOM
+     * changes, so this is the reader's position as the DOM knew it — including
+     * the anchor's *scroll coordinate*, which survives the reader scrolling and
+     * only moves when the layout above the anchor changes.
+     */
+    const prevCommitRef = useRef<{
+      anchorKey: string | null;
+      anchorCoord: number;
+      containerTop: number;
+      clientHeight: number;
+      /** Distance from the top to the bottom of the content, after the write. */
+      bottomOffset: number;
+      tailKey: string | null;
+      /** The mounted window this commit left behind (for the dev counters). */
+      sliceStart: number;
+      sliceEnd: number;
+    } | null>(null);
+
     const didInitialPositionRef = useRef(false);
+    const pendingJumpRef = useRef<{ id: string; attempts: number } | null>(null);
+    /** A "take me to the newest message" request the commit has to serve. */
+    const pendingBottomGlideRef = useRef(false);
+    const pendingTopMountRef = useRef(false);
+    const pinnedTailRef = useRef<string | null>(null);
+    const lastReadKeyRef = useRef<string | null>(null);
+    const lastRequestAtRef = useRef(0);
+    const olderBusyRef = useRef(false);
+    /** A pointer is on the list: nothing may move content under it (WebKit). */
+    const pointerDownRef = useRef(false);
+    /** The position moved and has not been verified at rest yet. */
+    const coastingRef = useRef(false);
+    /**
+     * The next scroll event is the echo of our own `scrollTop` write, not the
+     * reader scrolling (Telegram Web: `isScrollTopJustUpdatedRef`). Treating it
+     * as the reader would re-arm the rest pass, which on WebKit defers the next
+     * page mount by another rest window — the wall the reader feels.
+     */
+    const justWrotePositionRef = useRef(false);
+    /**
+     * A programmatic position replace is in flight. Safari delivers stale
+     * `IntersectionObserver` entries between the DOM mutation and the scroll
+     * restore, and acting on one would mount a page from a position that no
+     * longer exists (Telegram Web: `isReplacingHistoryRef`).
+     */
+    const replacingHistoryRef = useRef(false);
+    const bestPositionRef = useRef(0);
+    const restTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const scrollRafRef = useRef<number | null>(null);
 
-    // Wrap width of the message column. The estimate has to know it (see the
-    // text metrics above); it is refreshed from the scroller's *tracked* width
-    // — no DOM read on the scroll path. Before the first measurement the
-    // window width is a close enough stand-in for a chat column.
-    const scrollerWidthRef = useRef(
-      typeof window === "undefined" ? 1200 : window.innerWidth,
-    );
-
-    // Stable identities matter: the virtualizer keys its measurement memo on
-    // these functions, so a fresh arrow each render would force an O(count)
-    // measurement pass on every scroll frame. The width is read through a ref
-    // so a resize does not change the identity either.
-    const estimateSize = useCallback(
-      (index: number) =>
-        estimateMessageHeight(
-          messages[index],
-          messages[index - 1] ?? null,
-          isGroupConversation,
-          bubbleTextWidth(scrollerWidthRef.current),
-        ),
-      [messages, isGroupConversation],
-    );
-    const getItemKey = useCallback(
-      (index: number) => {
-        const message = messages[index];
-        // The canonical identity (client_id || id) — an optimistic row keeps
-        // its slot when the server twin replaces it, and prepends stay stable.
-        return message ? messageKey(message) : `index-${index}`;
-      },
-      [messages],
-    );
-
-    const virtualizer = useVirtualizer({
-      count: messages.length,
-      getScrollElement: () => scrollerRef.current,
-      estimateSize,
-      getItemKey,
-      overscan: OVERSCAN,
-      anchorTo: "end",
-      followOnAppend: true,
-      scrollEndThreshold: SCROLL_END_THRESHOLD,
-      paddingEnd: BOTTOM_GAP,
-      // Skip React re-renders for scroll-only updates: the virtualizer writes
-      // row positions and the spacer height straight to the DOM and only
-      // re-renders when the visible range changes. On iOS the main thread is
-      // the scarce resource during a momentum scroll, and a React commit per
-      // scroll event is exactly what makes it stutter.
-      // Contract: rows are `position: absolute` and carry no main-axis
-      // position in their style, and the spacer receives `containerRef` and
-      // sets no height — the virtualizer owns both.
-      directDomUpdates: true,
-    });
-
-    const totalSize = virtualizer.getTotalSize();
-
-    // Keep the wrap width the estimates use in sync with the real column. The
-    // value comes from the scroller's tracked rect, so a phone rotation or a
-    // keyboard-driven resize costs nothing on the scroll path.
-    useLayoutEffect(() => {
-      const width = virtualizer.scrollRect?.width;
-      if (width && width > 0) scrollerWidthRef.current = width;
-    }, [virtualizer.scrollRect?.width]);
-
-    // ── Scroll metrics from the virtualizer's own tracking ───────────────
-    // Everything below reads the *tracked* offset and viewport height instead
-    // of `scrollTop`/`clientHeight`/`scrollHeight` on the element. Those reads
-    // force a layout flush, and on iOS Safari the element's values are
-    // deferred behind the compositor while a finger and the momentum are on
-    // screen — measuring there is what makes momentum scroll stutter.
-    const readScrollMetrics = useCallback(() => {
-      const offset = virtualizer.scrollOffset ?? 0;
-      const viewport = virtualizer.scrollRect?.height ?? 0;
-      return { offset, viewport, distanceFromEnd: Math.max(virtualizer.getTotalSize() - viewport - offset, 0) };
-    }, [virtualizer]);
-
-    /** The message currently at the top of the viewport, and its offset. */
-    const captureAnchor = useCallback((): ScrollAnchor | null => {
-      const { offset } = readScrollMetrics();
-      const items = virtualizer.getVirtualItems();
-      for (const item of items) {
-        const message = messagesRef.current[item.index];
-        if (!message) continue;
-        // The first item whose bottom edge is below the fold top is the one
-        // straddling the viewport's upper boundary.
-        if (item.end > offset + 1) {
-          return { key: messageKey(message), offset: item.start - offset };
-        }
+    // ── Rendering inputs ───────────────────────────────────────────────
+    const messageById = useMemo(() => indexById(messages), [messages]);
+    const peerReceiptByMessage = useMemo(() => {
+      const map = new Map<string, ReceiptRow>();
+      for (const receipt of receipts.get(conversationId ?? "") ?? []) {
+        if (receipt.user_id === meId) continue;
+        map.set(receipt.message_id, receipt);
       }
-      return null;
-    }, [virtualizer, readScrollMetrics]);
+      return map;
+    }, [receipts, conversationId, meId]);
 
-    // ── History paging ──────────────────────────────────────────────────
-    // Two separate decisions, because they have different constraints:
-    //  * the *request* may happen at any time — it touches no DOM, and it has
-    //    to start early so the page is already here when the reader arrives.
-    //    A request gated on "the scroller is at rest" never fires during a
-    //    fling at all, which is why the history used to arrive too late.
-    //  * the *insert* moves the scroll position, so it waits for a rest. A page
-    //    inserted mid-momentum shifts the content under the reader (the
-    //    compensation for it is deferred on iOS until the coast ends) — that is
-    //    the "thrown thousands of pixels" behaviour.
-    const requestHistoryPage = useCallback(() => {
-      if (!conversationId) return;
-      if (!hasMoreMessages || isLoadingMore || loadInFlightRef.current) return;
-      const range = virtualizer.range;
-      // A null range means the scroller has not been measured yet — never
-      // treat "unknown" as "at the top".
-      if (!range || range.startIndex > HISTORY_PREFETCH_ROWS) return;
-      const now = Date.now();
-      if (now - lastLoadAtRef.current < LOAD_COOLDOWN_MS) return;
-      lastLoadAtRef.current = now;
-      loadInFlightRef.current = true;
-      void loadMoreMessages(conversationId, { postpone: true }).finally(() => {
-        loadInFlightRef.current = false;
-      });
-    }, [conversationId, hasMoreMessages, isLoadingMore, loadMoreMessages, virtualizer]);
-
-    const flushHistoryPage = useCallback(() => {
-      if (!conversationId || virtualizer.isScrolling) return;
-      flushPendingOlderMessages(conversationId);
-    }, [conversationId, virtualizer, flushPendingOlderMessages]);
-
-    /** Insert whatever is buffered once the scroller has come to rest, then
-     *  top the runway back up. Never inserts while the coast is live. */
-    const armHistorySettle = useCallback(() => {
-      const schedule = () => {
-        if (loadDebounceRef.current !== null) clearTimeout(loadDebounceRef.current);
-        loadDebounceRef.current = setTimeout(() => {
-          loadDebounceRef.current = null;
-          // Still moving (the library's own isScrolling stays true for a moment
-          // after the last scroll event): wait for the next quiet moment.
-          if (virtualizer.isScrolling) {
-            schedule();
-            return;
-          }
-          flushHistoryPage();
-          requestHistoryPage();
-          // Retry the exact-height priming that was skipped while moving.
-          setPrimeNonce((nonce) => nonce + 1);
-        }, LOAD_SETTLE_MS);
-      };
-      schedule();
-    }, [virtualizer, flushHistoryPage, requestHistoryPage]);
-
-    // ── Read receipts: the "read line" (Telegram-style) ─────────────────
-    // The UI reports exactly ONE message per pass: the newest message fully
-    // visible on screen. Everything above it was read; everything below the
-    // fold stays unread. The store debounces and the backend marks the whole
-    // prefix up to that message, so a scroll burst costs a single request
-    // instead of one per message.
-    const reportVisibleReads = useCallback(() => {
-      if (!conversationId || !meId) return;
-      const { offset, viewport } = readScrollMetrics();
-      const viewportBottom = offset + viewport;
-      let readLine: MessageView | null = null;
-      for (const item of virtualizer.getVirtualItems()) {
-        const message = messagesRef.current[item.index];
-        if (!message) continue;
-        if (message.sender_user_id === meId || message.is_deleted) continue;
-        if (item.end <= viewportBottom) {
-          readLine = message;
-        } else {
-          // Everything newer sits even lower — stop scanning.
-          break;
-        }
-      }
-      if (readLine) queueMarkRead(conversationId, readLine.id, readLine.sent_at);
-    }, [conversationId, meId, virtualizer, readScrollMetrics]);
-
-    // ── Scroll handling ─────────────────────────────────────────────────
-    // One pass per frame, all of it pure arithmetic on the virtualizer's own
-    // numbers — no DOM measurement, no writes while a gesture is in flight.
-    const runScrollWork = useCallback(() => {
-      const atEnd = readScrollMetrics().distanceFromEnd <= SCROLL_END_THRESHOLD;
-      if (atEnd) {
-        // Back at the newest message: follow again and clear the affordance.
-        // `gestureRef` is deliberately NOT cleared here: during an iOS momentum
-        // scroll the tracked offset lags, so an "at the end" sample can still
-        // arrive after the reader has genuinely left the bottom. Clearing the
-        // gesture there used to leave `followingRef` stuck true, and the settle
-        // pass below then re-pinned the list to the bottom mid-flick — the
-        // "jitters while it coasts, teleports when it stops" behaviour.
-        anchorRef.current = null;
-        followingRef.current = true;
-        setIsAtBottom(true);
-        setNewMessageCount((count) => (count === 0 ? count : 0));
-      } else if (gestureRef.current) {
-        // The reader scrolled away from the end on purpose.
-        gestureRef.current = false;
-        followingRef.current = false;
-        setIsAtBottom(false);
-        anchorRef.current = captureAnchor();
-      } else if (!followingRef.current) {
-        // Keep the saved anchor fresh while reading history (measurements and
-        // prepends move it, but the message under the reader must not).
-        anchorRef.current = captureAnchor();
-      }
-      reportVisibleReads();
-      // Ask for the next page right away (never gated on being at rest), and
-      // arm the settle timer that will insert it once the coast ends.
-      requestHistoryPage();
-      armHistorySettle();
-    }, [readScrollMetrics, captureAnchor, reportVisibleReads, requestHistoryPage, armHistorySettle]);
-
-    const handleScroll = useCallback(() => {
-      if (scrollRafRef.current !== null) return;
-      scrollRafRef.current = requestAnimationFrame(() => {
-        scrollRafRef.current = null;
-        runScrollWork();
-      });
-    }, [runScrollWork]);
-
-    /** Any input that may start a scroll. The scroll handler decides whether
-     *  the viewport actually left the end. */
-    const markGestureIntent = useCallback(() => {
-      gestureRef.current = true;
-    }, []);
-
-    const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
-      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
-        gestureRef.current = true;
-      }
-    }, []);
-
-    useEffect(() => {
-      return () => {
-        if (scrollRafRef.current !== null) {
-          cancelAnimationFrame(scrollRafRef.current);
-          scrollRafRef.current = null;
-        }
-        if (flashTimerRef.current !== null) clearTimeout(flashTimerRef.current);
-        if (loadDebounceRef.current !== null) {
-          clearTimeout(loadDebounceRef.current);
-          loadDebounceRef.current = null;
-        }
-      };
-    }, []);
-
-    // ── Prime exact heights before a row is ever rendered ───────────────
-    // WebKit drops `scrollTop` writes during a momentum scroll (WebKit bug
-    // 187449), so every measurement correction the virtualizer makes while the
-    // reader is coasting is deferred and replayed in ONE write when the scroll
-    // settles — that batched write is the jump: the view moves by the sum of
-    // (measured − estimated) over the rows that scrolled into view.
-    //
-    // The way out is to have the exact height *before* the row is ever
-    // rendered; then there is no correction to defer. A rendered row already
-    // has its exact height, so one clone of a real row is used as a template
-    // and every not-yet-measured message is measured in it off-screen. This
-    // runs when the data changes (a page arrives at a rest, or the chat opens),
-    // never on the scroll path.
-    const measurerRef = useRef<BubbleMeasurer | null>(null);
-    useLayoutEffect(() => {
-      const scroller = scrollerRef.current;
-      if (!scroller || messages.length === 0) return;
-      // Corrections produced while the reader is coasting are the ones WebKit
-      // defers (and the flush is the jump), so prime only from a rest. The
-      // settle timer bumps `primeNonce` to retry after the coast ends.
-      if (virtualizer.isScrolling) return;
-      const cache = virtualizer.itemSizeCache;
-      const pending: number[] = [];
-      for (let index = 0; index < messages.length; index += 1) {
-        if (!cache.has(getItemKey(index))) pending.push(index);
-      }
-      if (pending.length === 0) return;
-      if (measurerRef.current === null) {
-        measurerRef.current = new BubbleMeasurer(
-          () => scroller.closest(".chat-messages-area") ?? scroller.parentElement,
-        );
-      }
-      const measurer = measurerRef.current;
-      if (!measurer.canMeasure()) return;
-      const heights = measurer.measure(
-        pending.map((index) => messages[index]),
-        scroller.clientWidth,
-      );
-      for (let slot = 0; slot < pending.length; slot += 1) {
-        const bubbleHeight = heights[slot];
-        if (bubbleHeight === null) continue;
-        const index = pending[slot];
-        const message = messages[index];
-        const prev = index > 0 ? messages[index - 1] : null;
-        const crossesDay =
-          prev == null || new Date(prev.sent_at).toDateString() !== new Date(message.sent_at).toDateString();
-        const startsSenderBlock =
-          isGroupConversation && (prev == null || prev.sender_user_id !== message.sender_user_id);
-        virtualizer.resizeItem(index, rowHeightFromBubble(bubbleHeight, crossesDay, startsSenderBlock));
-      }
-    }, [messages, isGroupConversation, virtualizer, getItemKey, primeNonce]);
-
-    // ── Keep the cache honest for rows that render without a measurement ──
-    // (media, share cards, rich text). Reading a mounted row's real height here
-    // is cheap and only ever touches rows the cache has never seen.
-    useLayoutEffect(() => {
-      const scroller = scrollerRef.current;
-      if (!scroller) return;
-      const rows = scroller.querySelectorAll<HTMLElement>(".message-row[data-index]");
-      if (rows.length === 0) return;
-      const sizes: Array<{ index: number; size: number }> = [];
-      for (const row of rows) {
-        const index = Number(row.dataset.index);
-        if (!Number.isInteger(index) || index < 0 || index >= messages.length) continue;
-        if (virtualizer.itemSizeCache.has(getItemKey(index))) continue;
-        // `offsetHeight` is the integer the library's own DOM fallback uses.
-        const size = row.offsetHeight;
-        if (size > 0) sizes.push({ index, size });
-      }
-      // Every read happens above, every write below: interleaving them would
-      // thrash the layout once per row.
-      for (const item of sizes) virtualizer.resizeItem(item.index, item.size);
-    }, [messages, virtualizer, getItemKey]);
-
-    // ── Initial position: restored anchor, else the newest message ───────
-    useLayoutEffect(() => {
-      if (didInitialPositionRef.current || messages.length === 0) return;
-      didInitialPositionRef.current = true;
-      const saved = conversationId ? readMessageScrollAnchor(conversationId) : undefined;
-      if (saved) {
-        const index = messages.findIndex((message) => messageKey(message) === saved.key);
-        if (index >= 0) {
-          const target = virtualizer.getOffsetForIndex(index, "start");
-          if (target) {
-            followingRef.current = false;
-            anchorRef.current = saved;
-            virtualizer.scrollToOffset(Math.max(0, target[0] - saved.offset), { align: "start" });
-            return;
-          }
-        }
-      }
-      virtualizer.scrollToEnd();
-    }, [conversationId, messages, virtualizer]);
-
-    // Settle the open: until the reader touches the scroller, every layout
-    // change re-pins the bottom (estimate → measured heights, cached page →
-    // network page). The `gestureRef` gate is what keeps this from ever
-    // writing a scroll position under a finger or a momentum scroll — that is
-    // the whole reason it is allowed to exist. Declared AFTER the restore
-    // effect so a restored anchor wins.
-    useLayoutEffect(() => {
-      if (!followingRef.current || gestureRef.current || messages.length === 0) return;
-      virtualizer.scrollToEnd();
-    }, [messages, totalSize, virtualizer]);
-
-    // ── "N new messages" + unread affordance ────────────────────────────
-    useEffect(() => {
-      const last = messages[messages.length - 1];
-      const lastKey = last ? messageKey(last) : null;
-      // Only a NEW TAIL counts. A prepended history page also grows the array,
-      // but leaves the last key untouched.
-      const arrived = messages.length - prevCountRef.current;
-      const grew = arrived > 0 && lastKey !== prevLastKeyRef.current;
-      // The delta is captured eagerly: a lazy updater would read the ref after
-      // it has already been advanced below and always add zero.
-      if (grew && !followingRef.current) {
-        setNewMessageCount((count) => count + arrived);
-      }
-      prevCountRef.current = messages.length;
-      prevLastKeyRef.current = lastKey;
-    }, [messages]);
-
-    // The virtual window is up to date after every commit; report the read
-    // line, insert a buffered page when the scroller is at rest, and keep the
-    // history runway topped up — all from the rendered range, so they work even
-    // when no scroll event fires (open, prepend, restored placement).
-    useLayoutEffect(() => {
-      reportVisibleReads();
-      // Insert immediately when we are already at rest; otherwise the settle
-      // timer below retries until the coast ends. Without arming it here, a
-      // page that arrives while the reader is idle would wait for the next
-      // scroll event before it is ever shown.
-      flushHistoryPage();
-      requestHistoryPage();
-      armHistorySettle();
-    }, [
-      totalSize,
-      messages,
-      virtualizer.scrollRect?.height,
-      reportVisibleReads,
-      flushHistoryPage,
-      requestHistoryPage,
-      armHistorySettle,
-    ]);
-
-    // ── Jump to a message (pinned banner, quoted reply) ─────────────────
+    // ── Flash a jumped-to message ──────────────────────────────────────
     const flashMessage = useCallback((id: string) => {
       setFlashId(id);
       if (flashTimerRef.current !== null) clearTimeout(flashTimerRef.current);
@@ -679,69 +539,813 @@ export const MessageList = memo(
       }, FLASH_MS);
     }, []);
 
+    /**
+     * Is it safe to add rows ABOVE the viewport right now? With native scroll
+     * anchoring the engine moves the position for us, so it always is. Without
+     * it (WebKit) the added rows would shift the reader's content, and the write
+     * that compensates is dropped while a gesture or a coast is live — which is
+     * exactly the observed "it teleports me twice". So there: a verified rest.
+     */
+    const canMountAboveNow = useCallback(
+      () => hasScrollAnchoring() || (!coastingRef.current && !pointerDownRef.current),
+      [],
+    );
+
+    // ── Mounted window: slide it like a page ───────────────────────────
+    /**
+     * Extend the mounted window toward one side, dropping the far side when it
+     * goes over the ceiling. The reader is moving *away* from the far side, so
+     * the dropped rows are off screen.
+     */
+    const enlargeWindow = useCallback((side: "top" | "bottom") => {
+      const { start, end } = derivedRef.current;
+      const messages = messagesRef.current;
+      const current = windowRef.current;
+      let nextStart = start;
+      let nextEnd = end;
+
+      if (side === "top") nextStart = Math.max(0, start - WINDOW_STEP);
+      else nextEnd = Math.min(messages.length, end + WINDOW_STEP);
+
+      if (nextStart === start && nextEnd === end) return false;
+
+      // A window that still follows the tail owns the newest rows and must never
+      // lose them; a frozen one (the reader is in history) may drop the bottom.
+      const overflow = nextEnd - nextStart - MAX_DOM_MESSAGES;
+      if (overflow > 0) {
+        if (side === "top" && current.last !== null) nextEnd -= overflow;
+        else if (side === "bottom" && current.first !== null) nextStart += overflow;
+      }
+
+      // A frozen window stays frozen: "the window ends at the array end" is not
+      // the same as "the window follows the tail" (the reader may have scrolled
+      // up to the newest mounted row, which is the array end).
+      const next = windowFromSlice(messages, nextStart, nextEnd, current.last === null);
+      setWindow((prev) => (sameKeyWindow(prev, next) ? prev : next));
+      return true;
+    }, []);
+
+    // ── Older history ──────────────────────────────────────────────────
+    /** Mount the page the store buffered, if there is one. */
+    const flushBufferedPage = useCallback(() => {
+      const id = conversationIdRef.current;
+      if (!id) return false;
+      pendingTopMountRef.current = false;
+      if (!flushPendingOlderMessages(id)) return false;
+      const next = useMessengerStore.getState().messages;
+      if (next.length === 0) return true;
+      setWindow((current) => {
+        const index = buildKeyIndex(next);
+        const resolvedLast =
+          current.last === null ? next.length : (index.get(current.last) ?? next.length - 1) + 1;
+        const end = Math.max(1, Math.min(next.length, resolvedLast));
+        const start = Math.max(0, end - MAX_DOM_MESSAGES);
+        return windowFromSlice(next, start, end, current.last === null);
+      });
+      return true;
+    }, [flushPendingOlderMessages]);
+
+    /**
+     * Fetch the previous page into the store's buffer. `postpone` keeps the
+     * *request* away from the DOM: it runs mid-fling, so the network round trip
+     * is not part of the wait when the reader reaches the mounted top.
+     */
+    const requestOlderPage = useCallback(async () => {
+      const id = conversationIdRef.current;
+      if (!id || !hasMoreRef.current || loadingMoreRef.current || olderBusyRef.current) return false;
+      const now = Date.now();
+      if (now - lastRequestAtRef.current < LOAD_COOLDOWN_MS) return false;
+      lastRequestAtRef.current = now;
+      olderBusyRef.current = true;
+      notePageRequest();
+      try {
+        await loadMoreMessages(id, { postpone: true });
+      } finally {
+        olderBusyRef.current = false;
+      }
+      if (canMountAboveNow()) flushBufferedPage();
+      else pendingTopMountRef.current = true;
+      return true;    }, [loadMoreMessages, flushBufferedPage, canMountAboveNow]);
+
+    /** One older step: already-mounted rows first, then a page, then a request. */
+    const expandOlderNow = useCallback(() => {
+      if (followingRef.current) return;
+      if (!canMountAboveNow()) {
+        pendingTopMountRef.current = true;
+        return;
+      }
+      if (enlargeWindow("top")) return;
+      if (flushBufferedPage()) return;
+      void requestOlderPage();
+    }, [canMountAboveNow, enlargeWindow, flushBufferedPage, requestOlderPage]);
+
+    /** Keep the next page buffered while the reader is anywhere near the top. */
+    const prefetchOlder = useCallback(() => {
+      if (followingRef.current) return;
+      const scroller = scrollerRef.current;
+      if (!scroller || readContainerScrollTop(scroller) > PREFETCH_PX) return;
+      void requestOlderPage();
+    }, [requestOlderPage]);
+
+    // ── Read line: the read receipts the reader generates ──────────────
+    /**
+     * Reports exactly ONE message per pass: the newest message that is fully
+     * visible and was not sent by the reader. Everything above it was read.
+     * Runs only at a verified rest, and only when the answer changed.
+     */
+    const reportVisibleReads = useCallback(() => {
+      const id = conversationIdRef.current;
+      const scroller = scrollerRef.current;
+      if (!id || !scroller) return;
+
+      const rows = rowsRef.current;
+      if (rows.length === 0) return;
+
+      const scrollTop = readContainerScrollTop(scroller);
+      const fold = scrollTop + scroller.clientHeight;
+      // At the bottom of the list everything on screen has been seen — including
+      // a message taller than the viewport, and including the reader's own (which
+      // is what lets the read marker reach the newest message at all).
+      const atBottom = scroller.scrollHeight - scrollTop - scroller.clientHeight <= AT_BOTTOM_THRESHOLD;
+      let at = atBottom ? rows.length - 1 : findNewestIntersectingRowIndex(rows, scrollTop, fold);
+
+      while (at >= 0) {
+        const key = rows[at].dataset.messageKey;
+        const index = key === undefined ? undefined : indexByKeyRef.current.get(key);
+        const message = index === undefined ? undefined : messagesRef.current[index];
+        // A deleted message cannot carry a read marker; the prefix rule covers it.
+        if (message && !message.is_deleted) {
+          if (key != null && key !== lastReadKeyRef.current) {
+            lastReadKeyRef.current = key;
+            queueMarkRead(id, message.id, message.sent_at);
+          }
+          return;
+        }
+        at -= 1;
+      }
+    }, []);
+
+    /**
+     * Remember where the reader is, for the next open of this conversation — and,
+     * because the anchor also goes to `sessionStorage`, for the next *load* of the
+     * app (core/messageScrollAnchors). Written at rest, never on scroll: the row
+     * offsets it reads are only meaningful once the layout has settled.
+     */
+    const persistAnchor = useCallback(() => {
+      const id = conversationIdRef.current;
+      const scroller = scrollerRef.current;
+      if (!id || !scroller) return;
+      if (followingRef.current) {
+        // At the newest message there is nothing to remember — and a stale
+        // mid-history anchor must not survive into the next load.
+        clearMessageScrollAnchor(id);
+        return;
+      }
+
+      const scrollTop = readContainerScrollTop(scroller);
+      for (const row of rowsRef.current) {
+        if (row.offsetTop + row.offsetHeight <= scrollTop + 1) continue;
+        const key = row.dataset.messageKey;
+        if (!key) return;
+        writeMessageScrollAnchor(id, { key, offset: Math.max(0, row.offsetTop - scrollTop) });
+        return;
+      }
+    }, []);
+
+    // ── The verified rest ──────────────────────────────────────────────
+    /**
+     * Everything that must not run under a live gesture or a coast. A quiet
+     * event stream is not proof of a rest (iOS), so the rest is verified from
+     * the position itself: if it moved since the last observation, re-arm
+     * instead of touching the DOM.
+     */
+    const handleRest = useCallback(
+      function handleRest() {
+        if (pointerDownRef.current) return;
+        const scroller = scrollerRef.current;
+        if (!scroller) return;
+
+        const scrollTop = readContainerScrollTop(scroller);
+        if (Math.abs(scrollTop - bestPositionRef.current) > 1) {
+          bestPositionRef.current = scrollTop;
+          if (restTimerRef.current !== null) clearTimeout(restTimerRef.current);
+          restTimerRef.current = setTimeout(() => {
+            restTimerRef.current = null;
+            handleRest();
+          }, REST_MS);
+          return;
+        }
+
+        coastingRef.current = false;
+        restTimerRef.current = null;
+        noteGestureEnd();
+
+        // Work the gate deferred: a page that was fetched mid-coast is mounted
+        // now — otherwise the window slides into rows that are already loaded.
+        if (pendingTopMountRef.current) {
+          pendingTopMountRef.current = false;
+          if (!flushBufferedPage()) expandOlderNow();
+        }
+        // A layout read (the binary search over row offsets) belongs in a
+        // measure pass, not in an arbitrary timer task.
+        requestMeasure(() => {
+          reportVisibleReads();
+          persistAnchor();
+        });
+      },
+      [flushBufferedPage, expandOlderNow, reportVisibleReads, persistAnchor],
+    );
+    const restRef = useRef(handleRest);
+    restRef.current = handleRest;
+
+    const armRest = useCallback(() => {
+      if (restTimerRef.current !== null) clearTimeout(restTimerRef.current);
+      restTimerRef.current = setTimeout(() => {
+        restTimerRef.current = null;
+        restRef.current();
+      }, REST_MS);
+    }, []);
+
+    // ── Bottom stickiness ──────────────────────────────────────────────
+    /**
+     * Arms native scroll snapping while the reader is within the band around the
+     * bottom trigger, and disarms it the moment they leave. Snapping is what
+     * makes "at the bottom" survive a growing list without a single `scrollTop`
+     * write; disarming it is what lets the reader leave.
+     */
+    const syncBottomSnap = useCallback(() => {
+      const scroller = scrollerRef.current;
+      const trigger = bottomTriggerRef.current;
+      if (!scroller || !trigger) return;
+
+      const isArmed = scroller.classList.contains(BOTTOM_SNAP_CLASS);
+      if (isAnimatingScroll(scroller)) {
+        if (isArmed) scroller.classList.remove(BOTTOM_SNAP_CLASS);
+        return;
+      }
+
+      const viewportBottom = readContainerScrollTop(scroller) + scroller.clientHeight;
+      const triggerBottom = getOffsetToContainer(trigger, scroller) + trigger.offsetHeight;
+      const shouldArm =
+        triggerBottom - BOTTOM_SNAP_THRESHOLD <= viewportBottom &&
+        viewportBottom <= triggerBottom + BOTTOM_SNAP_THRESHOLD * 2;
+
+      if (shouldArm === isArmed) return;
+      scroller.classList.toggle(BOTTOM_SNAP_CLASS, shouldArm);
+    }, []);
+
+    /**
+     * Re-evaluates "the reader is following the conversation" from the element's
+     * own geometry. Only the transition is applied, so an ordinary scroll pass
+     * costs one read pair and no React work.
+     */
+    const updateFollowing = useCallback(() => {
+      const scroller = scrollerRef.current;
+      if (!scroller) return;
+      const isFollowing =
+        scroller.scrollHeight - readContainerScrollTop(scroller) - scroller.clientHeight <= FOLLOW_SLACK;
+      if (isFollowing === followingRef.current) return;
+
+      if (isFollowing) {
+        followingRef.current = true;
+        setFollowing(true);
+        setUnread(0);
+        // Back at the newest message: re-seed the window to the tail. Every row
+        // that leaves is above the viewport, so nothing the reader sees moves.
+        const next = tailKeyWindow(messagesRef.current);
+        setWindow((current) => (sameKeyWindow(current, next) ? current : next));
+      } else {
+        followingRef.current = false;
+        setFollowing(false);
+        // Freeze the window on the mounted rows: an arrival must not pull the
+        // reader down, it only raises the badge.
+        const { start, end } = derivedRef.current;
+        const list = messagesRef.current;
+        const first = list[start];
+        const newest = list[end - 1];
+        setWindow((current) => ({
+          first: current.first ?? (first ? messageKey(first) : null),
+          last: newest ? messageKey(newest) : current.last,
+        }));
+      }
+    }, []);
+
+    // ── Scroll pass ────────────────────────────────────────────────────
+    const handleScroll = useCallback(() => {
+      if (justWrotePositionRef.current) {
+        justWrotePositionRef.current = false;
+        return;
+      }
+      const scroller = scrollerRef.current;
+      // A glide owns the position for its duration; its per-frame writes are no
+      // more "the reader scrolling" than the echo above.
+      if (scroller && isAnimatingScroll(scroller)) return;
+
+      coastingRef.current = true;
+      noteGestureStart();
+      armRest();
+      if (scrollRafRef.current !== null) return;
+      scrollRafRef.current = requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        const scroller = scrollerRef.current;
+        if (!scroller) return;
+        bestPositionRef.current = readContainerScrollTop(scroller);
+        updateFollowing();
+        syncBottomSnap();
+        prefetchOlder();
+      });
+    }, [armRest, updateFollowing, syncBottomSnap, prefetchOlder]);
+
+    // ── Pointer/touch gate ─────────────────────────────────────────────
+    // A release can happen outside the list (a flick that ends off-screen), so
+    // the clearing listeners live on the window. Lifting the finger also arms
+    // the rest, so the work the gate deferred happens right away.
+    const markPointerDown = useCallback(() => {
+      // Only the mount gate: a finger on the list is not yet a scroll gesture,
+      // and a tap on the "to the newest message" button must not be counted as
+      // one (its glide writes on purpose, see the counters' contract).
+      pointerDownRef.current = true;
+      // Telegram cancels a glide a new focus supersedes; the reader touching the
+      // list is the strongest version of that — the position is theirs again.
+      const scroller = scrollerRef.current;
+      if (scroller) cancelScrollAnimation(scroller);
+    }, []);
+    const clearPointerDown = useCallback(() => {
+      if (!pointerDownRef.current) return;
+      pointerDownRef.current = false;
+      armRest();
+    }, [armRest]);
+
+    useEffect(() => {
+      // `window` is the mounted-window state in this component, so the global is
+      // addressed explicitly.
+      const target = globalThis;
+      target.addEventListener("pointerup", clearPointerDown, true);
+      target.addEventListener("pointercancel", clearPointerDown, true);
+      target.addEventListener("touchend", clearPointerDown, true);
+      target.addEventListener("touchcancel", clearPointerDown, true);
+      return () => {
+        target.removeEventListener("pointerup", clearPointerDown, true);
+        target.removeEventListener("pointercancel", clearPointerDown, true);
+        target.removeEventListener("touchend", clearPointerDown, true);
+        target.removeEventListener("touchcancel", clearPointerDown, true);
+      };
+    }, [clearPointerDown]);
+
+    // ── History triggers ───────────────────────────────────────────────
+    // Two 1px sentinels arm the slide into a new page. They only *request*: the
+    // mount happens in a commit (or at a verified rest), so a trigger firing
+    // mid-coast can never move the reader.
+    const hasMessages = messages.length > 0;
+    useEffect(() => {
+      const scroller = scrollerRef.current;
+      const top = topSentinelRef.current;
+      const bottom = bottomSentinelRef.current;
+      if (!scroller || typeof IntersectionObserver === "undefined" || (!top && !bottom)) return;
+
+      const topObserver = top
+        ? new IntersectionObserver(
+            (entries) => {
+              if (replacingHistoryRef.current) return;
+              if (!entries.some((entry) => entry.isIntersecting)) return;
+              expandOlderNow();
+            },
+            { root: scroller, rootMargin: `${HISTORY_TRIGGER_MARGIN}px 0px 0px 0px` },
+          )
+        : null;
+      const bottomObserver = bottom
+        ? new IntersectionObserver(
+            (entries) => {
+              if (replacingHistoryRef.current) return;
+              if (!entries.some((entry) => entry.isIntersecting)) return;
+              if (followingRef.current) return;
+              enlargeWindow("bottom");
+            },
+            { root: scroller, rootMargin: `0px 0px ${HISTORY_TRIGGER_MARGIN}px 0px` },
+          )
+        : null;
+
+      if (topObserver && top) topObserver.observe(top);
+      if (bottomObserver && bottom) bottomObserver.observe(bottom);
+      return () => {
+        topObserver?.disconnect();
+        bottomObserver?.disconnect();
+      };
+    }, [expandOlderNow, enlargeWindow, hasMessages]);
+
+    // ── Unread counter for arrivals below a frozen window ──────────────
+    const tail = messages.length > 0 ? messages[messages.length - 1] : null;
+    const tailKey = tail ? messageKey(tail) : null;
+    const prevLenRef = useRef(messages.length);
+    const prevTailKeyRef = useRef<string | null>(tailKey);
+    useEffect(() => {
+      const prevLen = prevLenRef.current;
+      const prevTail = prevTailKeyRef.current;
+      prevLenRef.current = messages.length;
+      prevTailKeyRef.current = tailKey;
+      // Only a NEW TAIL counts: a prepended page also grows the array but the
+      // tail key is untouched. The delta is captured eagerly — a lazy updater
+      // would read the ref after it has already been advanced.
+      if (prevTail !== null && tailKey !== prevTail && messages.length > prevLen && !followingRef.current) {
+        setUnread((count) => count + (messages.length - prevLen));
+      }
+    }, [messages, tailKey]);
+
+    // ── The single writer ──────────────────────────────────────────────
+    // One commit, one decision, one `scrollTop` write — inside one forced reflow
+    // so the read and the write never interleave with anything else.
+    useLayoutEffect(() => {
+      const scroller = scrollerRef.current;
+      if (!scroller) return;
+
+      const rows = collectRows(scroller);
+      rowsRef.current = rows;
+      const previous = prevCommitRef.current;
+      const isFirstCommit = !didInitialPositionRef.current;
+      const pendingJump = pendingJumpRef.current;
+      const restore = initial.restore;
+      // Consumed unconditionally: an explicit "to the bottom" from the same
+      // commit as a new arrival is served by the arrival glide below.
+      const pendingBottomGlide = pendingBottomGlideRef.current;
+      pendingBottomGlideRef.current = false;
+
+      const commitStartedAt = performance.now();
+
+      requestForcedReflow(() => {
+        const scrollTop = readContainerScrollTop(scroller);
+        const scrollHeight = scroller.scrollHeight;
+        const clientHeight = scroller.clientHeight;
+        const containerTop = scroller.getBoundingClientRect().top;
+        const bottomOffset = scrollHeight - scrollTop;
+
+        // `scrollHeight - scrollTop` grew by exactly what was added below while
+        // the reader did not move, so comparing it against the PREVIOUS viewport
+        // height judges the reader's position as it was before this commit —
+        // with no stored `scrollTop`, and therefore never stale after the reader
+        // scrolled in between.
+        const wasAtBottom = previous !== null
+          && bottomOffset - previous.clientHeight <= AT_BOTTOM_THRESHOLD;
+        const isAtBottomNow = bottomOffset - clientHeight <= AT_BOTTOM_THRESHOLD;
+        const tailMoved = previous !== null && tailKey !== previous.tailKey;
+
+        // The reader's anchor: a row whose scroll coordinate (content offset of
+        // its top) is invariant under scrolling, so the delta it moved by IS the
+        // layout change above the reader's place.
+        //
+        // Deliberately NOT the very first visible row: that one may change
+        // height when older messages are mounted (a date separator moves to an
+        // older message, a grouped bubble loses its header). Anchoring one row
+        // lower keeps the reader immune to that — the same reason Telegram Web
+        // anchors on `preservedItemElements[1]`.
+        let firstVisible = -1;
+        for (let at = 0; at < rows.length; at += 1) {
+          if (rows[at].offsetTop + rows[at].offsetHeight > scrollTop + 1) {
+            firstVisible = at;
+            break;
+          }
+        }
+        const anchorRow = firstVisible >= 0 ? rows[Math.min(firstVisible + 1, rows.length - 1)] : null;
+        const anchorKey = anchorRow?.dataset.messageKey ?? null;
+        const anchor = anchorKey
+          ? { key: anchorKey, coord: anchorRow.getBoundingClientRect().top - containerTop + scrollTop }
+          : null;
+
+        const nextCommit = {
+          anchorKey: anchor?.key ?? null,
+          anchorCoord: anchor?.coord ?? 0,
+          containerTop,
+          clientHeight,
+          tailKey,
+          sliceStart: derived.start,
+          sliceEnd: derived.end,
+        };
+
+        let nextScrollTop: number | null = null;
+        let pin = false;
+        let glideTarget: HTMLElement | null = null;
+        let glidePosition: ScrollPosition = "end";
+        let glideMargin = 0;
+        let glideMaxDistance: number | undefined;
+        let glideDirection: ScrollDirection | undefined;
+
+        if (isFirstCommit) {
+          didInitialPositionRef.current = true;
+          const row = restore ? findRowByKey(rows, restore.key) : null;
+          if (row && restore) {
+            nextScrollTop = Math.max(0, row.offsetTop - restore.offset);
+            // Not at the newest message: the state has to agree with the ref, or
+            // the "to the newest" button would not be offered until the reader
+            // scrolls (which is exactly the state they are already in).
+            followingRef.current = false;
+            setFollowing(false);
+          } else {
+            // Where the unread messages begin is a better place to open than the
+            // bottom: the reader sees what is new, and the newest messages are
+            // one FAB press away (Telegram opens at the first unread).
+            const divider = scroller.querySelector<HTMLElement>(".chat-unread-divider");
+            if (divider) {
+              nextScrollTop = Math.max(0, divider.offsetTop - UNREAD_DIVIDER_TOP);
+              followingRef.current = false;
+              setFollowing(false);
+            } else {
+              pin = true;
+            }
+          }
+        } else if (pendingJump) {
+          const row = findRowById(rows, pendingJump.id);
+          if (row) {
+            pendingJumpRef.current = null;
+            if (isAtBottomNow && row === rows[rows.length - 1]) pin = true;
+            else {
+              // `centerOrTop`: centre a target that fits the viewport, align a
+              // taller one to the top — Telegram Web's default for a focus.
+              glideTarget = row;
+              glidePosition = "centerOrTop";
+              glideMargin = FOCUS_MARGIN;
+            }
+            flashMessage(pendingJump.id);
+          }
+        } else if (isAnimatingScroll(scroller)) {
+          // A glide owns the position for its duration. A commit that lands in
+          // the middle of it (a message arrived, a row resized) must not fight
+          // it for the position — it retargets it, so the glide still lands
+          // where it was aiming (Telegram Web: `restartCurrentScrollAnimation`).
+          restartCurrentScrollAnimation(scroller);
+        } else if (tailMoved && followingRef.current) {
+          // The reader is following the tail and it moved: glide the arrival in.
+          // The trigger after the content is the target, so the glide lands on
+          // the real bottom (the row's own end leaves the sentinels below it).
+          if (pinnedTailRef.current !== tailKey) {
+            pinnedTailRef.current = tailKey;
+            glideTarget = bottomTriggerRef.current ?? (rows.length > 0 ? rows[rows.length - 1] : null);
+          }
+        } else if (pendingBottomGlide) {
+          // Telegram Web's scroll-to-bottom button: cover everything the reader
+          // cannot see at once, then glide the last stretch down.
+          if (bottomTriggerRef.current) {
+            glideTarget = bottomTriggerRef.current;
+            glideMaxDistance = BOTTOM_FOCUS_DISTANCE;
+            glideDirection = "down";
+            glideMargin = 0;
+          } else {
+            pin = true;
+          }
+        } else if (wasAtBottom) {
+          if (!isAtBottomNow || tailMoved) pin = true;
+        } else if (previous?.anchorKey && anchor) {
+          const previousRow = findRowByKey(rows, previous.anchorKey);
+          if (previousRow) {
+            const coord = previousRow.getBoundingClientRect().top - containerTop + scrollTop;
+            const growth = coord - previous.anchorCoord;
+            const topDelta = containerTop - previous.containerTop;
+
+            // Where the engine anchors scroll for us, content inserted or grown
+            // ABOVE the viewport already moved `scrollTop` by exactly `growth`,
+            // and writing it again would throw the reader a full growth further
+            // down. (With anchoring: the anchor's rect stays put while
+            // `scrollTop` grows by the inserted height, so the coordinate delta
+            // IS the growth — measured, not assumed.) Without anchoring the
+            // write is the compensation. A container whose top edge moved is
+            // never the engine's business, so that part is always ours.
+            const contentCompensation = hasScrollAnchoring() ? 0 : growth;
+            const target = scrollTop + contentCompensation - topDelta;
+            if (Math.abs(target - scrollTop) > 0.5) nextScrollTop = target;
+          }
+        }
+
+        const mutation = glideTarget
+          ? animateScroll({
+              container: scroller,
+              element: glideTarget,
+              position: glidePosition,
+              margin: glideMargin,
+              maxDistance: glideMaxDistance,
+              forceDirection: glideDirection,
+              shouldReturnMutationFn: true,
+            }) ?? null
+          : null;
+
+        const wrotePosition = Boolean(mutation) || pin || nextScrollTop !== null;
+
+        return () => {
+          if (mutation) {
+            noteScrollTopWrite("glide");
+            mutation();
+          } else if (pin) {
+            noteScrollTopWrite("pin");
+            pinToBottom(scroller);
+          } else if (nextScrollTop !== null) {
+            noteScrollTopWrite(isFirstCommit ? "initial" : "anchor");
+            setScrollTop(scroller, nextScrollTop);
+          }
+          if (wrotePosition) {
+            justWrotePositionRef.current = true;
+            requestMeasure(() => {
+              justWrotePositionRef.current = false;
+            });
+          }
+          // After the write: "is the reader at the bottom" is a property of the
+          // new position, and snapping is armed from it.
+          syncBottomSnap();
+          bestPositionRef.current = readContainerScrollTop(scroller);
+          prevCommitRef.current = {
+            ...nextCommit,
+            bottomOffset: scroller.scrollHeight - bestPositionRef.current,
+          };
+          // The restore has landed; triggers may fire again.
+          requestMeasure(() => {
+            replacingHistoryRef.current = false;
+          });
+          if (previous) {
+            noteMountedRows(
+              Math.max(0, previous.sliceStart - derived.start) + Math.max(0, derived.end - previous.sliceEnd),
+              Math.max(0, derived.start - previous.sliceStart) + Math.max(0, previous.sliceEnd - derived.end),
+              derived.end - derived.start,
+            );
+          } else {
+            noteMountedRows(derived.end - derived.start, 0, derived.end - derived.start);
+          }
+          noteCommitDuration(performance.now() - commitStartedAt);
+        };
+      });
+
+      // Read receipts and the mounts a gesture deferred land at the verified
+      // rest, never during the commit itself.
+      armRest();
+    }, [
+      messages,
+      derived.start,
+      derived.end,
+      tailKey,
+      following,
+      initial.restore,
+      flashMessage,
+      syncBottomSnap,
+      armRest,
+    ]);
+
+    // ── Jump to a message (pinned banner, quoted reply) ────────────────
     useLayoutEffect(() => {
       const pending = pendingJumpRef.current;
       if (!pending) return;
-      const index = messages.findIndex((message) => message.id === pending.id);
-      if (index >= 0) {
-        pendingJumpRef.current = null;
-        followingRef.current = false;
-        virtualizer.scrollToIndex(index, { align: "center" });
-        flashMessage(pending.id);
-        return;
-      }
-      if (hasMoreMessages && !isLoadingMore && pending.attempts < MAX_JUMP_PAGES && conversationId) {
-        pending.attempts += 1;
-        void loadMoreMessages(conversationId);
-        return;
-      }
-      // The target is not reachable (deleted, or beyond the loaded history).
-      pendingJumpRef.current = null;
-    }, [messages, hasMoreMessages, isLoadingMore, conversationId, loadMoreMessages, virtualizer, flashMessage]);
+      const list = messagesRef.current;
+      const at = list.findIndex((message) => message.id === pending.id);
 
-    // ── Session anchor: keep it fresh, persist it on unmount ────────────
+      if (at < 0) {
+        if (
+          hasMoreRef.current &&
+          !loadingMoreRef.current &&
+          pending.attempts < MAX_JUMP_PAGES &&
+          conversationIdRef.current
+        ) {
+          pending.attempts += 1;
+          void loadMoreMessages(conversationIdRef.current);
+          return;
+        }
+        pendingJumpRef.current = null;
+        return;
+      }
+
+      // Mount the target before the glide: the writer above can only glide to a
+      // row that is in the DOM. A window that already covers it is left alone.
+      if (at >= derived.start && at < derived.end) return;
+      const next: KeyWindow = {
+        first: messageKey(list[Math.max(0, at - ANCHOR_BEFORE)]),
+        last: messageKey(list[Math.min(list.length - 1, at + ANCHOR_AFTER)]),
+      };
+      setWindow((current) => (sameKeyWindow(current, next) ? current : next));
+      setJumpNonce((nonce) => nonce + 1);
+    }, [jumpNonce, messages, derived.start, derived.end, loadMoreMessages]);
+
+    // ── Chrome: a size change no commit covers ─────────────────────────
+    /**
+     * The scroller's own box can change without a single message changing: the
+     * pinned banner appears above the messages (pushing the content down), the
+     * composer grows a line, the mobile keyboard opens, the window is resized.
+     * None of those produce a commit *in this component*, so the writer above
+     * never sees them — and the browser keeps `scrollTop` on its own, which
+     * moves the reader.
+     *
+     * This is the only second writer, and it is deliberately narrow: it runs on
+     * a `ResizeObserver` of the scroller, uses the same "the reader was glued"
+     * derivation as the commit path, and records what it did in `prevCommitRef`
+     * so the next commit's arithmetic stays coherent. Telegram Web has the same
+     * split (the panes/player hooks compensate the top reserve).
+     */
+    const syncChrome = useCallback(() => {
+      const scroller = scrollerRef.current;
+      const previous = prevCommitRef.current;
+      if (!scroller || !previous) return;
+
+      const clientHeight = scroller.clientHeight;
+      const containerTop = scroller.getBoundingClientRect().top;
+      const scrollTop = readContainerScrollTop(scroller);
+      const wasGlued = previous.bottomOffset - previous.clientHeight <= AT_BOTTOM_THRESHOLD;
+
+      let wrote = false;
+      if (followingRef.current && wasGlued) {
+        noteScrollTopWrite("chrome:pin");
+        pinToBottom(scroller);
+        wrote = true;
+      } else {
+        // A container that grew downward does not move the content; one whose
+        // top edge moved down (a banner) does — by exactly that delta.
+        const topDelta = containerTop - previous.containerTop;
+        if (Math.abs(topDelta) > 0.5) {
+          noteScrollTopWrite("chrome:top");
+          setScrollTop(scroller, scrollTop - topDelta);
+          wrote = true;
+        }
+      }
+
+      prevCommitRef.current = {
+        ...previous,
+        clientHeight,
+        containerTop,
+        bottomOffset: scroller.scrollHeight - readContainerScrollTop(scroller),
+      };
+      if (wrote) {
+        justWrotePositionRef.current = true;
+        requestMeasure(() => {
+          justWrotePositionRef.current = false;
+        });
+      }
+      requestMeasure(() => syncBottomSnap());
+    }, [syncBottomSnap]);
+
     useEffect(() => {
+      const scroller = scrollerRef.current;
+      if (!scroller || typeof ResizeObserver === "undefined") return;
+      const observer = new ResizeObserver(() => syncChrome());
+      observer.observe(scroller);
+      return () => observer.disconnect();
+    }, [hasMessages, syncChrome]);
+
+    // ── Session anchor: persist the reader's place on unmount ──────────
+    useEffect(() => {
+      // Captured at mount: by the time the cleanup runs React may have already
+      // detached the refs it owns.
+      const scroller = scrollerRef.current;
       return () => {
-        if (!conversationId) return;
-        const anchor = followingRef.current ? null : anchorRef.current;
-        if (anchor) writeMessageScrollAnchor(conversationId, anchor);
-        else clearMessageScrollAnchor(conversationId);
+        if (!conversationId || !scroller) return;
+        if (followingRef.current) {
+          clearMessageScrollAnchor(conversationId);
+          return;
+        }
+        const scrollTop = readContainerScrollTop(scroller);
+        for (const row of rowsRef.current) {
+          if (row.offsetTop + row.offsetHeight <= scrollTop + 1) continue;
+          const key = row.dataset.messageKey;
+          if (!key) continue;
+          writeMessageScrollAnchor(conversationId, { key, offset: Math.max(0, row.offsetTop - scrollTop) });
+          return;
+        }
       };
     }, [conversationId]);
 
-    // ── Imperative API (ChatView) ───────────────────────────────────────
-    const jumpToLatest = useCallback(() => {
-      gestureRef.current = false;
-      followingRef.current = true;
-      anchorRef.current = null;
-      setNewMessageCount(0);
-      setIsAtBottom(true);
-      // A long smooth scroll across thousands of pixels reads as a hang; only
-      // animate when the target is genuinely close.
-      const shortHop = virtualizer.getDistanceFromEnd() < 2 * (virtualizer.scrollRect?.height ?? 0);
-      virtualizer.scrollToEnd({ behavior: shortHop ? "smooth" : "auto" });
-    }, [virtualizer]);
+    // ── Timer/listener cleanup ─────────────────────────────────────────
+    useEffect(() => {
+      return () => {
+        if (restTimerRef.current !== null) clearTimeout(restTimerRef.current);
+        if (flashTimerRef.current !== null) clearTimeout(flashTimerRef.current);
+        if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+      };
+    }, []);
 
-    const jumpToMessage = useCallback(
-      (messageId: string) => {
+    // ── Imperative API (ChatView) ──────────────────────────────────────
+    const jumpToLatest = useCallback(() => {
+      const list = messagesRef.current;
+      if (list.length === 0) return;
+      followingRef.current = true;
+      setFollowing(true);
+      setUnread(0);
+      pendingJumpRef.current = null;
+      pinnedTailRef.current = null;
+      pendingBottomGlideRef.current = true;
+      // A glide across thousands of pixels reads as a hang: the window is
+      // re-seeded to the newest rows and the position lands in one frame.
+      setWindow(tailKeyWindow(list, RESET_WINDOW));
+    }, []);
+
+    const jumpToMessage = useCallback((messageId: string) => {
+      const list = messagesRef.current;
+      followingRef.current = false;
+      setFollowing(false);
+      pinnedTailRef.current = null;
+      const at = list.findIndex((message) => message.id === messageId);
+      if (at >= 0) {
+        const next: KeyWindow = {
+          first: messageKey(list[Math.max(0, at - ANCHOR_BEFORE)]),
+          last: messageKey(list[Math.min(list.length - 1, at + ANCHOR_AFTER)]),
+        };
+        setWindow((current) => (sameKeyWindow(current, next) ? current : next));
         pendingJumpRef.current = { id: messageId, attempts: 0 };
-        followingRef.current = false;
-        gestureRef.current = false;
-        setIsAtBottom(false);
-        // Kick the attempt immediately for the already-loaded case; otherwise
-        // the layout effect continues it as history pages arrive.
-        const index = messagesRef.current.findIndex((message) => message.id === messageId);
-        if (index >= 0) {
-          pendingJumpRef.current = null;
-          virtualizer.scrollToIndex(index, { align: "center" });
-          flashMessage(messageId);
-        } else if (conversationId) {
-          pendingJumpRef.current.attempts = 1;
-          void loadMoreMessages(conversationId);
-        }
-      },
-      [virtualizer, conversationId, loadMoreMessages, flashMessage],
-    );
+      } else if (conversationIdRef.current) {
+        pendingJumpRef.current = { id: messageId, attempts: 1 };
+        void loadMoreMessages(conversationIdRef.current);
+      }
+      setJumpNonce((nonce) => nonce + 1);
+    }, [loadMoreMessages]);
 
     useImperativeHandle(
       ref,
@@ -749,53 +1353,58 @@ export const MessageList = memo(
       [jumpToLatest, jumpToMessage],
     );
 
-    const virtualItems = virtualizer.getVirtualItems();
+    // ── Render ─────────────────────────────────────────────────────────
+    const rows: ReactNode[] = [];
+    for (let at = derived.start; at < derived.end; at += 1) {
+      const message = messages[at];
+      if (!message) continue;
 
-    const renderedRows = useMemo(
-      () =>
-        virtualItems.map((item) => {
-          const message = messages[item.index];
-          if (!message) return null;
-          const prev = item.index > 0 ? messages[item.index - 1] : null;
-          return (
-            <div
-              key={item.key}
-              data-index={item.index}
-              data-message-id={message.id}
-              ref={virtualizer.measureElement}
-              className={`message-row${flashId === message.id ? " is-flash" : ""}`}
-              // No transform here: with `directDomUpdates` the virtualizer owns
-              // the main-axis position and writes it directly (see the
-              // virtualizer options above).
-              style={VIRTUAL_ROW_STYLE}
-            >
-              {renderMessage(message, prev, {
-                dateLabel: getDateSeparator(prev, message),
-                isConsecutive: isConsecutive(prev, message),
-              })}
-            </div>
-          );
-        }),
-      [virtualItems, messages, renderMessage, flashId, virtualizer],
-    );
+      if (at === unreadIndex) {
+        // Not a `.message-item`: the anchor and the read-line search must never
+        // treat this marker as a message row.
+        rows.push(
+          <div key="unread-divider" className="chat-unread-divider" aria-hidden="true">
+            <span>Непрочитанные сообщения</span>
+          </div>,
+        );
+      }
+      const prev = at > 0 ? messages[at - 1] : null;
+      rows.push(
+        <MessageItem
+          key={messageKey(message)}
+          message={message}
+          prev={prev}
+          flash={flashId === message.id}
+          renderVersion={renderVersion}
+          render={renderMessage}
+          extras={{
+            dateLabel: getDateSeparator(prev, message),
+            isConsecutive: isConsecutive(prev, message),
+            quoted:
+              message.parent_message_id != null
+                ? messageById.get(message.parent_message_id) ?? null
+                : null,
+            peerReceipt: peerReceiptByMessage.get(message.id) ?? null,
+          }}
+        />,
+      );
+    }
 
     if (messages.length === 0) return null;
 
     return (
-      // Gesture intent lives on the wrapper, not on the scroller: these events
-      // bubble up from the scroll container, and the container's `role="log"`
-      // must stay a plain content region. They are passive observers — nothing
-      // consumes the gesture, so the wrapper needs no interactive role.
-      // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- passive touch/wheel/key observers, they do not take over the gesture
+      // The pointer handlers are passive observers that open/close the "a
+      // finger is on the list" gate — they never take over the gesture and the
+      // wrapper is not an interactive control.
+      // eslint-disable-next-line jsx-a11y/no-static-element-interactions
       <div
         className="message-scroll-wrap"
-        onPointerDown={markGestureIntent}
-        onWheel={markGestureIntent}
-        onTouchStart={markGestureIntent}
-        onKeyDown={handleKeyDown}
+        onPointerDown={markPointerDown}
+        onTouchStart={markPointerDown}
+        onMouseDown={markPointerDown}
       >
         {/* Loader floats over the list — it must not take part in the scroll
-            math, or arming it would shift the content it is loading. */}
+            math, and it is explicitly excluded from scroll anchoring. */}
         {isLoadingMore && hasMoreMessages && (
           <div className="msg-history-loader" aria-hidden="true">
             <span className="msg-history-loader-spinner" />
@@ -808,44 +1417,52 @@ export const MessageList = memo(
           className="message-scroll"
           role="log"
           aria-label="Сообщения"
-          // role="log" implies a polite live region. With virtualization every
-          // scroll mounts and unmounts rows, which would make a screen reader
-          // re-read the history on every window change. New messages are
-          // announced through the dedicated status region below instead.
+          // role="log" implies a polite live region. Rows mount/unmount as the
+          // window slides, which would make a screen reader re-read the whole
+          // history; new messages are announced through the status region below.
           aria-live="off"
           onScroll={handleScroll}
         >
-          {/* The spacer height is written by the virtualizer through
-              `containerRef` (see `directDomUpdates`); setting it here would be
-              overwritten and would fight the end-anchored scroll sync. */}
-          <div className="message-virtual-list" ref={virtualizer.containerRef}>
-            {renderedRows}
+          <div className="message-list">
+            {/* The sentinels arm the slide into a new page; the bottom trigger
+                is the scroll-snap target "at the bottom" clings to. None of them
+                may ever be picked as a scroll anchor. */}
+            <div ref={topSentinelRef} className="chat-scroll-sentinel scroll-sentinel-top" aria-hidden="true" />
+            {rows}
+            <div ref={bottomSentinelRef} className="chat-scroll-sentinel scroll-sentinel-bottom" aria-hidden="true" />
+            <div ref={bottomTriggerRef} className="fab-trigger" aria-hidden="true" />
           </div>
         </div>
 
-        {!isAtBottom && (
+        {!following && (
           <button
             type="button"
-            className={`scroll-to-bottom-btn${newMessageCount > 0 ? " has-new" : ""}`}
+            className={`scroll-to-bottom-btn${unread > 0 ? " has-new" : ""}`}
             onClick={jumpToLatest}
             aria-label={
-              newMessageCount > 0
-                ? `Новые сообщения: ${newMessageCount}. Перейти к последним`
+              unread > 0
+                ? `Новые сообщения: ${unread}. Перейти к последним`
                 : "Перейти к последним сообщениям"
             }
           >
-            {newMessageCount > 0 && (
-              <span className="scroll-to-bottom-badge" aria-hidden="true">{newMessageCount}</span>
+            {unread > 0 && (
+              <span className="scroll-to-bottom-badge" aria-hidden="true">{unread}</span>
             )}
             <ChevronDown size={16} aria-hidden="true" />
           </button>
         )}
 
+        {DevScrollOverlay && isScrollDiagnosticsEnabled() && (
+          <Suspense fallback={null}>
+            <DevScrollOverlay />
+          </Suspense>
+        )}
+
         {/* Announcements are throttled to the pill's own state so scrolling
             never replays the history. */}
         <div className="sr-only" role="status" aria-live="polite">
-          {!isAtBottom && newMessageCount > 0
-            ? `${newMessageCount} ${newMessageCount === 1 ? "новое сообщение" : "новых сообщений"}`
+          {!following && unread > 0
+            ? `${unread} ${unread === 1 ? "новое сообщение" : "новых сообщений"}`
             : ""}
         </div>
       </div>

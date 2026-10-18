@@ -1122,17 +1122,20 @@ export const MessageComposer = memo(function MessageComposer({
     return () => cancelAnimationFrame(raf);
   }, [isTouch, swap.open]);
 
-  // DEV-only diagnostics strip: live keyboard-geometry numbers pinned to the
-  // screen (visualViewport vs state vs the composer's local lift). The whole
+  // Keyboard-geometry diagnostics strip: live numbers pinned to the screen
+  // (visualViewport vs state vs the composer's local lift). The whole
   // sheet↔keyboard choreography depends on values that cannot be reproduced in
-  // jsdom — on-device recordings with these numbers show exactly what the
-  // engine reports at the moment of a jump. Visible in dev builds, and on any
-  // build when localStorage "kb-diag" === "1" (set it from the console, or via
-  // Safari → Develop → device → Firefox, then reload).
+  // jsdom — on-device recordings with these numbers show exactly what the engine
+  // reports at the moment of a jump.
+  //
+  // Opt-in only: the strip used to appear in every dev build, which put a green
+  // panel over the chat for anyone running the dev stack (it is not something a
+  // messenger user should have to ignore). Enable it when debugging:
+  //   localStorage.setItem("kb-diag", "1")  + reload
+  // and remove the key (or clear site data) to get rid of it.
   useEffect(() => {
     const enabled =
-      import.meta.env.DEV ||
-      (typeof localStorage !== "undefined" && localStorage.getItem("kb-diag") === "1");
+      typeof localStorage !== "undefined" && localStorage.getItem("kb-diag") === "1";
     if (!enabled) return;
     const strip = document.createElement("div");
     strip.id = "kb-diag";

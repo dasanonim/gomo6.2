@@ -96,6 +96,7 @@ vi.mock("@/services/messengerWebSocket", () => ({
   messengerWs: { connect: vi.fn(), disconnect: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn() },
 }));
 vi.mock("@/stores/messengerStore", () => ({
+    getConversationReadThrough: () => null,
   useMessengerStore: Object.assign(vi.fn((selector: any) => selector?.({
     conversations: [],
     selectedConversationId: null,

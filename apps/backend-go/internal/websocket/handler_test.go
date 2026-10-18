@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -101,8 +102,42 @@ func TestPreAuthLimiter_ResetsAfterWindow(t *testing.T) {
 	}
 }
 
-func TestPreAuthLimiter_NilRedis_Allows(t *testing.T) {
-	// A nil Redis client (tests/dev, no Redis configured) fails open.
+// A counter left behind without a TTL (a lost Expire, an older build) must be
+// repaired on the next attempt instead of locking the IP out forever. Seen in
+// dev as `ratelimit:ws-pre:::1` at four digits with `ttl=-1`: every upgrade
+// through the Vite proxy (all clients look like ::1) answered 429 forever.
+func TestPreAuthLimiter_RepairsMissingTTL(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+
+	ctx := context.Background()
+	key := "ratelimit:ws-pre:203.0.113.7"
+	if err := rdb.Set(ctx, key, 5000, 0).Err(); err != nil {
+		t.Fatalf("seed stuck counter: %v", err)
+	}
+	if ttl := rdb.TTL(ctx, key).Val(); ttl >= 0 {
+		t.Fatalf("seeded key must have no TTL, got %v", ttl)
+	}
+
+	limiter := NewPreAuthLimiter(rdb, 20, time.Minute)
+	// The budget is exhausted, so the attempt is rejected...
+	if limiter.Allow("203.0.113.7") {
+		t.Fatal("a counter above the budget must still be rejected")
+	}
+	// ...but the key must now expire, so the IP is not locked out forever.
+	if ttl := rdb.TTL(ctx, key).Val(); ttl <= 0 {
+		t.Fatalf("the counter must get a TTL, got %v", ttl)
+	}
+
+	mr.FastForward(61 * time.Second)
+	time.Sleep(20 * time.Millisecond)
+	if !limiter.Allow("203.0.113.7") {
+		t.Fatal("the IP must be admitted again once the repaired window expires")
+	}
+}
+
+func TestPreAuthLimiter_NilRedis_Allows(t *testing.T) { // A nil Redis client (tests/dev, no Redis configured) fails open.
 	limiter := NewPreAuthLimiter(nil, 2, time.Minute)
 	for i := 0; i < 5; i++ {
 		if !limiter.Allow("198.51.100.20") {

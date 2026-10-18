@@ -1,13 +1,20 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ChatView } from "./ChatView";
+import { __resetDraftsForTests, readDraft } from "./core/drafts";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
+
+const { mockReadThrough, mockListProps } = vi.hoisted(() => ({
+  mockReadThrough: { value: null as string | null },
+  mockListProps: {} as any,
+}));
 
 const { mockStore } = vi.hoisted(() => {
   return {
     mockStore: {
       conversations: [] as any[],
+      openingUnreadCount: 0,
       selectedConversationId: null,
       messages: [] as any[],
       isMessagesLoading: false,
@@ -26,6 +33,7 @@ const { mockStore } = vi.hoisted(() => {
 });
 
 vi.mock("@/stores/messengerStore", () => ({
+    getConversationReadThrough: () => mockReadThrough.value,
   useMessengerStore: (selector: any) => selector(mockStore),
   selectSelectedConversation: (s: any) =>
     s.conversations.find((c: any) => c.id === s.selectedConversationId) ?? null,
@@ -86,7 +94,10 @@ vi.mock("./UserInfoPanel", () => ({
 }));
 
 vi.mock("./MessageList", () => ({
-  MessageList: ({ messagesOverride, renderMessage }: any) => (
+  MessageList: (props: any) => {
+    Object.assign(mockListProps, props);
+    const { messagesOverride, renderMessage } = props;
+    return (
     <div data-testid="message-list">
       {messagesOverride.map((msg: any, index: number) => (
         <div key={msg.id} data-testid="message-item">
@@ -98,21 +109,28 @@ vi.mock("./MessageList", () => ({
         </div>
       ))}
     </div>
-  ),
+    );
+  },
 }));
 
 // Composer mock exposes internal props for driving send/edit flows
-const { mockComposerProps } = vi.hoisted(() => ({ mockComposerProps: {} as any }));
+const { mockComposerProps, mockComposerState } = vi.hoisted(() => ({
+  mockComposerProps: {} as any,
+  mockComposerState: { mounts: 0, drafts: [] as string[] },
+}));
 
 vi.mock("./MessageComposer", () => ({
   MessageComposer: (props: any) => {
     Object.assign(mockComposerProps, props);
+    mockComposerState.mounts += 1;
+    mockComposerState.drafts.push(props.draft);
     return (
       <div data-testid="composer">
         <span data-testid="composer-draft">{props.draft}</span>
         <button onClick={() => props.onSend()}>send</button>
         <button onClick={() => props.setDraft("hello")}>set-draft</button>
         <button onClick={() => props.onSaveEdit("m1", "edited")}>save-edit</button>
+        <button onClick={() => props.onCancelEdit()}>cancel-edit</button>
       </div>
     );
   },
@@ -192,6 +210,11 @@ beforeEach(() => {
   mockStore.error = null;
   mockStore.receipts = new Map();
   Object.keys(mockComposerProps).forEach((k) => delete mockComposerProps[k]);
+  mockComposerState.mounts = 0;
+  mockComposerState.drafts = [];
+  mockReadThrough.value = null;
+  Object.keys(mockListProps).forEach((k) => delete mockListProps[k]);
+  __resetDraftsForTests();
 });
 
 afterEach(() => {
@@ -201,6 +224,117 @@ afterEach(() => {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("ChatView", () => {
+  describe("unread marker", () => {
+    beforeEach(() => {
+      mockStore.me = { id: "me-1", username: "me" };
+      mockStore.conversations = [mockConversation()];
+      mockStore.selectedConversationId = "conv-1";
+      // The list only renders when there is something to render.
+      mockStore.messages = [mockMessage()];
+    });
+
+    it("passes the read line as the boundary only when the chat had unread", () => {
+      mockReadThrough.value = "2025-06-01T11:00:00Z";
+      mockStore.openingUnreadCount = 3;
+
+      render(<ChatView {...defaultProps} />);
+
+      expect(mockListProps.unreadBoundaryAt).toBe("2025-06-01T11:00:00Z");
+    });
+
+    it("passes no boundary at all for a chat that had nothing unread", () => {
+      // The server has no read line for this chat (or it is stale), but the chat
+      // is not unread: a marker at its top would be a lie. `undefined` is "the
+      // caller says nothing" — `null` would mean "nothing is known to be read",
+      // which is exactly what puts a marker at the top.
+      mockReadThrough.value = null;
+      mockStore.openingUnreadCount = 0;
+
+      render(<ChatView {...defaultProps} />);
+
+      expect(mockListProps.unreadBoundaryAt).toBeUndefined();
+    });
+
+    it("passes null (marker at the top) for an unread chat with no known read line", () => {
+      mockReadThrough.value = null;
+      mockStore.openingUnreadCount = 4;
+
+      render(<ChatView {...defaultProps} />);
+
+      expect(mockListProps.unreadBoundaryAt).toBeNull();
+    });
+  });
+
+  describe("composer drafts", () => {
+    beforeEach(() => {
+      mockStore.me = { id: "me-1", username: "me" };
+      mockStore.conversations = [mockConversation(), mockConversation({ id: "conv-2", other_username: "bob" })];
+      mockStore.selectedConversationId = "conv-1";
+    });
+
+    it("does not let an edit overwrite the draft, and gives it back on cancel", async () => {
+      mockStore.messages = [mockMessage()];
+      render(<ChatView {...defaultProps} />);
+      act(() => mockComposerProps.setDraft("мой черновик"));
+      expect(readDraft("conv-1")).toBe("мой черновик");
+
+      // Start editing a message: the composer shows the message body…
+      fireEvent.click(screen.getByText("edit"));
+      await waitFor(() => expect(mockComposerProps.draft).toBe("Привет"));
+      // …and the reader's draft is untouched.
+      expect(readDraft("conv-1")).toBe("мой черновик");
+
+      // Cancelling the edit gives the draft back.
+      fireEvent.click(screen.getByText("cancel-edit"));
+      await waitFor(() => expect(mockComposerProps.draft).toBe("мой черновик"));
+      expect(readDraft("conv-1")).toBe("мой черновик");
+    });
+
+    it("never hands one chat's draft to the composer of another", async () => {
+      const { rerender } = render(<ChatView {...defaultProps} />);
+      act(() => mockComposerProps.setDraft("черновик для alice"));
+      expect(mockComposerProps.draft).toBe("черновик для alice");
+
+      const mountsBefore = mockComposerState.mounts;
+      mockComposerState.drafts = [];
+
+      // Switch chats. The composer is keyed by the conversation, so it must be
+      // mounted fresh — and never mounted or rendered with the text left behind.
+      mockStore.selectedConversationId = "conv-2";
+      rerender(<ChatView {...defaultProps} typingUsername="bob" />);
+      await waitFor(() => expect(screen.getByTestId("composer-draft").textContent).toBe(""));
+
+      expect(mockComposerState.mounts).toBeGreaterThan(mountsBefore);
+      expect(mockComposerState.drafts).not.toContain("черновик для alice");
+      expect(mockComposerProps.draft).toBe("");
+      expect(readDraft("conv-1")).toBe("черновик для alice");
+      expect(readDraft("conv-2")).toBe("");
+    });
+
+    it("keeps a draft per conversation instead of carrying it across chats", async () => {
+      const { rerender } = render(<ChatView {...defaultProps} />);
+      expect(screen.getByTestId("composer-draft").textContent).toBe("");
+
+      // Type in the first chat, through the composer's own setter.
+      act(() => mockComposerProps.setDraft("черновик для alice"));
+      expect(screen.getByTestId("composer-draft").textContent).toBe("черновик для alice");
+
+      // Switching chats must not carry the text into the next one.
+      mockStore.selectedConversationId = "conv-2";
+      rerender(<ChatView {...defaultProps} typingUsername="bob" />);
+      await waitFor(() => expect(screen.getByTestId("composer-draft").textContent).toBe(""));
+
+      act(() => mockComposerProps.setDraft("черновик для bob"));
+
+      // …and coming back must not have lost the first one.
+      mockStore.selectedConversationId = "conv-1";
+      rerender(<ChatView {...defaultProps} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("composer-draft").textContent).toBe("черновик для alice"),
+      );
+    });
+  });
+
   it("shows the empty state when no conversation is selected", () => {
     render(<ChatView {...defaultProps} />);
     expect(screen.getByText("Выбери диалог")).toBeInTheDocument();

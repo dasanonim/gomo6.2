@@ -6,6 +6,7 @@ const createFavoriteNote = vi.fn();
 const deleteFavoriteNote = vi.fn();
 
 vi.mock("@/stores/messengerStore", () => ({
+    getConversationReadThrough: () => null,
   useMessengerStore: {
     getState: () => ({ createFavoriteNote, deleteFavoriteNote }),
   },

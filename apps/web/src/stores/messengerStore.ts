@@ -162,8 +162,12 @@ const pendingReadLine = new Map<string, PendingReceipt>();
 const lastSentReadLine = new Map<string, PendingReceipt>();
 const localReadThrough = new Map<string, string>(); // convId → newest locally read sent_at
 
+
+
 let readFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const READ_FLUSH_DELAY_MS = 400;
+/** A failed read line is retried (reading is monotonic, so it never goes back). */
+const READ_RETRY_DELAY_MS = 3000;
 
 function isLaterReceipt(candidate: PendingReceipt, current?: PendingReceipt): boolean {
   if (!current) return true;
@@ -268,9 +272,9 @@ export function queueMarkRead(conversationId: string, messageId: string, sentAt?
   scheduleReadFlush();
 }
 
-function scheduleReadFlush(): void {
+function scheduleReadFlush(delay = READ_FLUSH_DELAY_MS): void {
   if (readFlushTimer) clearTimeout(readFlushTimer);
-  readFlushTimer = setTimeout(flushPendingReads, READ_FLUSH_DELAY_MS);
+  readFlushTimer = setTimeout(flushPendingReads, delay);
 }
 
 function flushPendingReads(): void {
@@ -286,8 +290,14 @@ function flushPendingReads(): void {
     if (!isLaterReceipt(receipt, lastSentReadLine.get(convId))) continue;
     lastSentReadLine.set(convId, receipt);
     messengerApi.markRead(convId, receipt.messageId).catch(() => {
-      // Drop the confirmed marker so the next visibility pass retries.
+      // Drop the confirmed marker so the next attempt is allowed…
       if (sameReceipt(lastSentReadLine.get(convId), receipt)) lastSentReadLine.delete(convId);
+      // …and put the line back, so a failed request cannot leave a chat unread
+      // until the reader happens to scroll again. A newer line queued in the
+      // meantime subsumes this one (the marker is monotonic).
+      const pending = pendingReadLine.get(convId);
+      if (!pending || isLaterReceipt(receipt, pending)) pendingReadLine.set(convId, receipt);
+      scheduleReadFlush(READ_RETRY_DELAY_MS);
     });
   }
 }
@@ -1251,3 +1261,22 @@ export const selectSelectedConversation = (s: MessengerStore) =>
 
 export const selectTotalUnread = (s: MessengerStore) =>
   s.conversations.reduce((sum, c) => sum + (c.unread_count ?? 0), 0);
+
+/**
+ * The boundary of "unread" for a conversation: the newest timestamp that is known
+ * to have been read. The local marker wins when it is later than the server's
+ * `last_read_at`, because reading advances locally long before the server
+ * confirms it. The unread marker is captured from this value when a chat is
+ * opened and stays put for that session (Telegram's rule): it belongs to the
+ * moment the reader left off, and the next open — with the read line advanced —
+ * simply has no marker to place.
+ *
+ * Returns `null` when nothing is known to be read (everything is unread).
+ */
+export function getConversationReadThrough(conversationId: string): string | null {
+  const local = localReadThrough.get(conversationId) ?? null;
+  const fromServer = useMessengerStore.getState().conversations
+    .find((c) => c.id === conversationId)?.last_read_at ?? null;
+  if (local && fromServer) return Date.parse(local) >= Date.parse(fromServer) ? local : fromServer;
+  return local ?? fromServer;
+}

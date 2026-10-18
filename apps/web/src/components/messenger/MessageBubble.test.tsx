@@ -53,6 +53,38 @@ const defaultProps = {
 };
 
 describe("MessageBubble", () => {
+  it("jumps to the quoted message when the quote is tapped", () => {
+    const onJumpToMessage = vi.fn();
+    const quoted = createMessage({ id: "quoted-1", content: "оригинал" });
+
+    render(
+      <MessageBubble
+        message={createMessage({ parent_message_id: "quoted-1" })}
+        {...defaultProps}
+        quotedMessage={quoted}
+        onJumpToMessage={onJumpToMessage}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Перейти к сообщению" }));
+    expect(onJumpToMessage).toHaveBeenCalledWith("quoted-1");
+  });
+
+  it("renders the quote as plain text when the bubble cannot jump", () => {
+    const quoted = createMessage({ id: "quoted-1", content: "оригинал" });
+
+    render(
+      <MessageBubble
+        message={createMessage({ parent_message_id: "quoted-1" })}
+        {...defaultProps}
+        quotedMessage={quoted}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Перейти к сообщению" })).toBeNull();
+    expect(screen.getByText("оригинал")).toBeInTheDocument();
+  });
+
   it("renders message text", () => {
     render(<MessageBubble message={createMessage()} {...defaultProps} />);
     expect(screen.getByText("Hello, world!")).toBeInTheDocument();

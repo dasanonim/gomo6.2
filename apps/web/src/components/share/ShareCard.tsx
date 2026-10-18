@@ -92,7 +92,7 @@ interface ShareCardProps {
  * sees what the API allows them to (RLS), and deleted/inaccessible posts fall
  * back to a muted placeholder instead of breaking the message.
  *
- * Sizing contract with the virtualizer: the card uses a fixed-height 16:9
+ * Sizing contract with the list: the card uses a fixed-height 16:9
  * thumbnail (object-cover) and clamped text lines, so its rendered height is
  * deterministic — MessageList estimates it with a constant before the entity
  * is fetched, and the measured height matches it almost exactly.
@@ -175,8 +175,8 @@ export const ShareCard = ({ target }: ShareCardProps) => {
   }, [data]);
 
   if (!card) {
-    // Loading skeleton or unresolvable share: keep a fixed-height placeholder
-    // so the virtualizer's estimate holds while the entity is fetched.
+    // Loading skeleton or unresolvable share: a fixed-height placeholder that
+    // reserves its own space while the entity is fetched.
     const unavailable = !isLoading && (isError || !data);
     return (
       <button

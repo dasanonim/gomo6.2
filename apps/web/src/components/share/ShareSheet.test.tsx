@@ -29,6 +29,7 @@ const h = vi.hoisted(() => {
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
 vi.mock("@/stores/messengerStore", () => ({
+    getConversationReadThrough: () => null,
   useMessengerStore: h.useMessengerStore,
 }));
 

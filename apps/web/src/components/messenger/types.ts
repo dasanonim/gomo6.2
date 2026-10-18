@@ -17,6 +17,13 @@ export type ConversationView = {
   pinned_message_id: string | null;
   updated_at: string;
   unread_count: number;
+  /**
+   * MY read line (`chat_members.last_read_at`) as the server knows it. The
+   * boundary of "unread": everything newer than this is unread. Local reading
+   * advances it faster (see `queueMarkRead`), so consumers take the later of the
+   * two.
+   */
+  last_read_at?: string | null;
   is_muted: boolean;
   // 1:1 fields (null for groups)
   other_user_id: string | null;

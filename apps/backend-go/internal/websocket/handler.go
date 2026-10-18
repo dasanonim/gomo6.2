@@ -50,6 +50,14 @@ func NewPreAuthLimiter(redisClient *redis.Client, maxAttempts int, windowLength 
 // Allow admits one upgrade attempt and returns false after the per-IP budget
 // is exhausted. Redis TTL expires the window automatically; no manual pruning
 // is needed.
+//
+// The INCR and the EXPIRE run in one Lua script, exactly like
+// RateLimiter.Allow: the counter must never be left without a TTL. A key that
+// exists without one (a lost Expire, an older build, a flushed-and-restored
+// dataset) would otherwise be incremented forever and lock that IP out of the
+// WebSocket permanently — observed in dev as `ratelimit:ws-pre:::1` sitting at
+// four digits with `ttl=-1`, which made every upgrade through the Vite proxy
+// (all clients appear as ::1) fail with 429.
 func (l *PreAuthLimiter) Allow(ip string) bool {
 	if l == nil {
 		return true // nil limiter: allow
@@ -66,12 +74,9 @@ func (l *PreAuthLimiter) Allow(ip string) bool {
 	defer cancel()
 
 	key := fmt.Sprintf("ratelimit:ws-pre:%s", ip)
-	count, err := l.redis.Incr(ctx, key).Result()
+	count, err := incrWithTTLRedis(ctx, l.redis, key, l.windowLength)
 	if err != nil {
 		return false // fail CLOSED on Redis errors: do not disable the pre-auth throttle
-	}
-	if count == 1 {
-		l.redis.Expire(ctx, key, l.windowLength)
 	}
 
 	return count <= int64(l.maxAttempts)

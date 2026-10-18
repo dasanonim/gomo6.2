@@ -801,6 +801,40 @@ html.perf-lite .profile-tabbar--stuck .profile-tabbar__bg {
     -webkit-backdrop-filter: blur(var(--surface-blur, 0px)) saturate(var(--surface-saturate, 100%));
     backdrop-filter: blur(var(--surface-blur, 0px)) saturate(var(--surface-saturate, 100%));
   }
+
+  /* ── Native chat rows ──
+     One mounted message in a normal-flow list: real layout, real height, and
+     `overflow-anchor: auto` so the engine's own scroll anchoring holds the
+     reader's message when content above it changes. There is deliberately NO
+     `content-visibility` on messenger rows: a row the engine has not laid out
+     contributes an estimate, and replacing that estimate with the real height
+     moves everything below it — the per-message stutter on WebKit, which has no
+     scroll anchoring to absorb it. The mounted window is what bounds the cost.
+
+     `content-visibility` stays available for the GomoSub channel chat, which
+     scrolls the DOCUMENT and keeps a much larger window mounted.
+
+     `content-visibility` is also gated on the behavioural anchoring flag
+     (`has-scroll-anchoring`, set in lib/scrollAnchoring.ts), never on
+     `CSS.supports`. */
+  .chat-native-row {
+    contain: layout style;
+    overflow-anchor: auto;
+  }
+
+  .has-scroll-anchoring .channel-message-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 64px;
+  }
+
+  /* Window sentinels (top/bottom of the mounted slice): 1px of dead space that
+     must NEVER be picked as a scroll anchor. */
+  .chat-scroll-sentinel {
+    width: 100%;
+    height: 1px;
+    overflow-anchor: none;
+    pointer-events: none;
+  }
 }
 
 /* Indeterminate segment for the header loading bar (components/TopLoadingBar). */

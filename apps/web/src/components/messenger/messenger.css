@@ -703,9 +703,9 @@ main.is-messenger-page {
 }
 
 /* ── Message scroll area ──
-   The virtualizer owns the scroll contract: a plain `overflow-y: auto` scroller
-   holds a positioned spacer of the full content height, and only the visible
-   rows are mounted inside it. */
+   A plain native scroll container holding a normal-flow list. The browser owns
+   the scroll (compositor thread, momentum, rubber-banding); the list only
+   decides which slice of the history is mounted. See MessageList.tsx. */
 
 .message-scroll-wrap {
   min-width: 0;
@@ -727,27 +727,130 @@ main.is-messenger-page {
   overflow-x: clip;
   padding: 0;
   position: relative;
-  /* The virtualizer places rows from measurements it owns; the browser's own
-     scroll anchoring would second-guess those writes. */
-  overflow-anchor: none;
+  /* Native flow list: let the engine's own scroll anchoring hold the reader's
+     message in place when an older page is prepended above it. */
+  overflow-anchor: auto;
   overscroll-behavior-y: contain;
   scrollbar-gutter: stable;
   -webkit-overflow-scrolling: touch;
+  /* NEVER `scroll-behavior: smooth` here: every programmatic position write
+     must land in the same frame (a smooth scroll through thousands of pixels
+     also reads as a hang). */
+  scroll-behavior: auto;
+  /* The list is a flex column so a short history can be pushed to the bottom
+     by `margin-top: auto` on `.message-list` without breaking scrolling once
+     it overflows. */
+  display: flex;
+  flex-direction: column;
 }
 
-/* Positioned spacer of the full content height. Rows are absolutely placed
-   inside it from `virtualItem.start`. */
-.message-virtual-list {
+.message-list {
   /* Side inset of every message row. Kept to a hairline: bubbles should reach
      the edge, with just enough so a shadow/border is not clipped. */
   --message-gutter: 2px;
-  position: relative;
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
   max-width: 100%;
+  flex: 0 0 auto;
+  /* Few messages: stick them to the bottom (chats read bottom-up). Taller than
+     the viewport: the auto margin collapses to zero and normal flow takes over.
+     Deliberately NOT positioned: rows must be offset from the scroller itself,
+     so their `offsetTop` is a scroll coordinate (read line, jump, anchor). */
+  margin-top: auto;
 }
 
+/* ── "At the bottom" ──
+   While the reader is within the band around the bottom trigger the list is a
+   snap container, and the zero-height trigger after the newest row is its snap
+   point. That is what keeps a growing list glued to the bottom with no
+   `scrollTop` write at all — the browser holds the position, on the compositor
+   thread. Left in history the class is removed, so snapping can never pull the
+   reader back. (Telegram Web: `with-bottom-snap` + `.fab-trigger`.) */
+.message-scroll.with-bottom-snap {
+  scroll-snap-type: y proximity;
+}
+
+.message-list .fab-trigger {
+  width: 100%;
+  height: 0;
+  overflow-anchor: none;
+  pointer-events: none;
+  scroll-snap-align: end;
+}
+
+/* ── Dev overlay: chat scroll counters ──
+   Fixed (out of flow, so it can never take part in the scroll math), visible
+   only with `?scrolldebug=1` in a dev build. See core/scrollDiagnostics.ts. */
+.scroll-debug {
+  position: fixed;
+  z-index: 60;
+  bottom: 12px;
+  left: 12px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  min-width: 260px;
+  padding: 8px 10px;
+  border: 1px solid oklch(var(--border) / 0.7);
+  border-radius: 10px;
+
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  color: oklch(var(--foreground) / 0.9);
+
+  background: oklch(var(--background) / 0.92);
+  backdrop-filter: blur(6px);
+
+  pointer-events: auto;
+  user-select: text;
+}
+
+.scroll-debug-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  color: oklch(var(--muted-foreground));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.scroll-debug-head button {
+  padding: 1px 6px;
+  border: 1px solid oklch(var(--border) / 0.7);
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.scroll-debug-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.scroll-debug-row b {
+  font-variant-numeric: tabular-nums;
+}
+
+.scroll-debug-row.is-bad {
+  color: oklch(var(--destructive, 0.62 0.22 25));
+}
+
+.scroll-debug-note {
+  margin-top: 4px;
+  color: oklch(var(--muted-foreground));
+}
+
+/* One mounted message. The row contract (content-visibility where the engine
+   can anchor, plus `overflow-anchor`) lives in the shared `.chat-native-row`
+   utility — see src/index.css. */
 .message-row {
   box-sizing: border-box;
   width: 100%;
@@ -757,7 +860,7 @@ main.is-messenger-page {
 }
 
 /* `scrollToMessage` briefly rings the message it jumped to. Transform/outline
-   only — never layout — so it cannot disturb the virtual measurements. */
+   only — never layout — so it cannot move anything else in the list. */
 .message-row.is-flash .message-bubble {
   animation: message-flash 1.4s ease-out;
 }
@@ -787,6 +890,35 @@ main.is-messenger-page {
 
 .chat-messages-area > .inline-loader {
   flex: 1 1 auto;
+}
+
+/* ── Unread marker ──
+   Telegram's "Unread messages" divider: where the messages the reader has not
+   seen begin. Rendered while the chat is open (the boundary is captured on open
+   and does not move), and never part of the row contract — it is not a
+   `.message-item`, so the anchor compensation and the read-line search ignore it. */
+.chat-unread-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 100%;
+  margin: 10px 0;
+  padding-inline: var(--message-gutter);
+
+  overflow-anchor: none;
+  pointer-events: none;
+  user-select: none;
+}
+
+.chat-unread-divider span {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: lowercase;
+  color: oklch(var(--primary-foreground));
+  background: oklch(var(--primary) / 0.85);
 }
 
 /* ── Date separator ── */
@@ -828,10 +960,9 @@ main.is-messenger-page {
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
-  /* Vertical gap between messages. Padding (not margin) — the virtualizer
-     measures border-box and ignores margins, so a margin gap would not take
-     part in the layout and messages would overlap. Consecutive (same-sender)
-     rows get a tighter pad below. */
+  /* Vertical gap between messages. Padding (not margin) so it is part of the
+     row's own box and never collapses with a neighbour. Consecutive
+     (same-sender) rows get a tighter pad below. */
   padding-bottom: 8px;
 }
 
@@ -1165,12 +1296,27 @@ main.is-messenger-page {
   gap: 6px;
   padding: 6px 8px;
   margin-bottom: 6px;
+  /* Written out fully: this class is used by a <div> and by a <button> (the
+     tappable quote), and a button would otherwise keep its user-agent border. */
+  border: 0;
   border-left: 3px solid oklch(var(--primary));
   background: oklch(var(--primary) / 0.06);
   border-radius: 0 6px 6px 0;
   cursor: default;
   min-width: 0;
   max-width: 100%;
+}
+
+.quoted-message.is-clickable {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.quoted-message.is-clickable:hover {
+  background: oklch(var(--primary) / 0.12);
 }
 
 .quoted-message svg {
@@ -2838,6 +2984,8 @@ main.is-messenger-page {
   cursor: pointer;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
   z-index: 5;
+  /* Never a scroll anchor: it is a control, not content. */
+  overflow-anchor: none;
   transition: background-color 0.15s ease;
 }
 
@@ -2887,6 +3035,8 @@ main.is-messenger-page {
   color: oklch(var(--muted-foreground));
   z-index: 5;
   pointer-events: none;
+  /* A loader must never be the element the engine anchors to. */
+  overflow-anchor: none;
   animation: msg-history-fade-in 0.15s ease-out;
 }
 
@@ -3317,7 +3467,7 @@ main.is-messenger-page {
     height: 32px;
   }
 
-  .message-virtual-list {
+  .message-list {
     --message-gutter: 2px;
   }
 
@@ -3584,7 +3734,7 @@ main.is-messenger-page {
 
 /* ── Notes organization: pinned section, folder filter, quick pin, chips ── */
 
-/* Pinned notes section — compact non-virtualized list above the main list */
+/* Pinned notes section — compact, always-mounted list above the main list */
 .notes-pinned-section {
   flex-shrink: 0;
   max-height: 38vh;
@@ -3753,10 +3903,12 @@ main.is-messenger-page {
    is never clipped by media bubbles' overflow. Notes are a self-chat (the
    bubble always sits at the row's right edge), so right:2px lands the button
    exactly on the bubble's top-right corner. Revealed on hover, always visible
-   when pinned. */
+   when pinned. It sits INSIDE the message box: where `content-visibility`
+   applies (engines with scroll anchoring) the row also gets paint containment,
+   so ink that escapes the row — a negative `top` — would be clipped. */
 .notes-quick-pin {
   position: absolute;
-  top: -8px;
+  top: 0;
   right: 2px;
   z-index: 4;
   display: inline-flex;
@@ -4100,7 +4252,7 @@ main.is-messenger-page {
    bubble's own background, border and radius — so a shared post reads exactly
    like any other message bubble, not as a panel floating inside one.
    The layout stays deterministic (clamped text lines + fixed 16:9 thumbnail)
-   so MessageList can estimate the height upfront for the virtualizer. */
+   so a share card never reflows the list after it resolves. */
 .msg-share-card {
   display: flex;
   flex-direction: column;

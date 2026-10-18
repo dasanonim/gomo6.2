@@ -123,6 +123,16 @@ the backend + Docker infra can stay up across restarts.
   curl -s -o /dev/null -w "api:%{http_code}\n"  "http://localhost:8081/api/v1/feed?limit=1"
   curl -s -o /dev/null -w "health:%{http_code}\n" http://localhost:8080/health
   ```
+- **Phone testing (`make dev` + `make mobile`)**: web binds to `::` and proxies
+  everything, so a phone on the same Wi-Fi uses the app as-is. Two traps:
+  (1) the WebSocket hub validates the request's `Origin` against
+  `ALLOWED_ORIGINS` (`internal/websocket/hub.go`), and the phone's origin is not
+  localhost — a phone the list does not know loads the app, works over REST and
+  **silently never connects realtime** (no messages, no typing). `scripts/dev.sh`
+  now writes the LAN origins via `scripts/lan-origins.sh`; for a stack started
+  before that, `FIX=1 make mobile` repairs `.dev.env` and respawns the backend
+  window. (2) HTTP is not a secure context on a phone: «Заметки» (WebCrypto),
+  PWA install and push need HTTPS — `make mobile` says so.
 - **Sandbox note**: the agent's Bash sandbox refuses `listen` on any local port
   (EPERM) and denies the Docker/tmux sockets, so it cannot start or restart the dev
   stack itself. Drive those steps through the Terminal panel (runs on the host):
@@ -340,6 +350,25 @@ npx tsc --noEmit -p apps/docs/tsconfig.json
   crashes if the messenger store is uninitialized. Add a dedicated store action that
   targets an explicit `conversationId` and touches `s.messages` only when that chat is
   open (pattern: `messengerStore.createFavoriteNote`, issue #509).
+- **Chat scrolling is Telegram Web's model — no virtualization library.** The
+  messenger `MessageList` (`apps/web/src/components/messenger/`) keeps the DOM
+  unvirtualized and instead owns one thing: a single `useLayoutEffect` writer that
+  decides the position in a commit and writes it once inside
+  `core/fasterdom.ts` (measure batch → mutate batch → forced reflow). The tree is:
+  first placement → jump glide → arrival glide while following → bottom sentinel
+  pin → anchor compensation. `scrollTop` is NEVER written on scroll, and rows must
+  never get `content-visibility` (an unlaid-out row's estimate moves everything
+  below it; WebKit has no scroll anchoring to absorb it — that was the iOS
+  stutter). "At the bottom" is native scroll-snap (`with-bottom-snap` +
+  `.fab-trigger`), the mounted window is keyed (`core/slicing.ts`, keys =
+  `messageKey`, never indices, `INITIAL_WINDOW`/`WINDOW_STEP`/`MAX_DOM_MESSAGES`),
+  and mounting rows ABOVE the viewport waits for a *position-verified* rest on
+  engines without anchoring (`lib/scrollAnchoring.ts`, detected behaviourally;
+  never trust `CSS.supports("overflow-anchor", …)`). Rows are memoized on
+  `(message, prev, quoted, peerReceipt, renderVersion)` — a NEW ambient render
+  input must be added to `renderVersion` in `ChatView.tsx`, otherwise mounted rows
+  will not re-render. GomoSub `ChannelChat` still runs the previous mechanics.
+  See [docs/wiki/MESSENGER_CHAT_SCROLL.md](docs/wiki/MESSENGER_CHAT_SCROLL.md).
 - **Channel switching**: `channelSlug` must be in the `loadBoard` effect deps in
   `apps/web/src/pages/Board.tsx`. Missing it = stale threads on channel nav.
 - **Releases**: bump `VERSION` and add a `## [X.Y.Z]` section to `CHANGELOG.md`, then
@@ -352,6 +381,7 @@ npx tsc --noEmit -p apps/docs/tsconfig.json
 [DOCKER_SETUP](docs/wiki/DOCKER_SETUP.md) · [SECURITY_AUDIT](docs/wiki/SECURITY_AUDIT.md) ·
 [MESSENGER_SECURITY](docs/wiki/MESSENGER_SECURITY.md) · [OAUTH_API](docs/wiki/OAUTH_API.md) ·
 [PUBLIC_IDS](docs/wiki/PUBLIC_IDS.md) · [BOT_SYSTEM_ARCHITECTURE](docs/wiki/BOT_SYSTEM_ARCHITECTURE.md) ·
+[MESSENGER_CHAT_SCROLL](docs/wiki/MESSENGER_CHAT_SCROLL.md) ·
 [REALTIME_WEBSOCKET_PATTERN](docs/wiki/REALTIME_WEBSOCKET_PATTERN.md) ·
 [PRESENCE_SYSTEM_DESIGN](docs/wiki/PRESENCE_SYSTEM_DESIGN.md) ·
 [THREAD_ATTACHMENTS_GUIDE](docs/wiki/THREAD_ATTACHMENTS_GUIDE.md).
