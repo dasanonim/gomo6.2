@@ -1,5 +1,7 @@
 import {
+  Suspense,
   forwardRef,
+  lazy,
   memo,
   useCallback,
   useEffect,
@@ -36,8 +38,23 @@ import {
   type KeyWindow,
   type MessageSlice,
 } from "./core/slicing";
-import { animateScroll, isAnimatingScroll } from "./core/animateScroll";
+import {
+  animateScroll,
+  isAnimatingScroll,
+  type ScrollDirection,
+  type ScrollPosition,
+} from "./core/animateScroll";
 import { requestForcedReflow, requestMeasure } from "./core/fasterdom";
+import {
+  isScrollDiagnosticsEnabled,
+  noteCommitDuration,
+  noteGestureEnd,
+  noteGestureStart,
+  noteMountedRows,
+  notePageRequest,
+  noteScrollTopWrite,
+} from "./core/scrollDiagnostics";
+
 import {
   AT_BOTTOM_THRESHOLD,
   BOTTOM_SNAP_CLASS,
@@ -77,6 +94,18 @@ const LOAD_COOLDOWN_MS = 400;
  * proof of a rest on iOS, so the rest is verified from the position itself.
  */
 const REST_MS = 150;
+/**
+ * The gap a focused message keeps from the viewport edge (Telegram Web's
+ * `FOCUS_MARGIN` / `BOTTOM_FOCUS_MARGIN`, both in rem there).
+ */
+const FOCUS_MARGIN = 20;
+/**
+ * How much of a jump to the bottom is *animated*. The rest is covered at once:
+ * gliding through thousands of pixels reads as a hang. Telegram Web's
+ * `BOTTOM_FOCUS_OFFSET`, used when the viewport was replaced under the glide
+ * (which is exactly a jump-to-bottom or a jump-to-message here).
+ */
+const BOTTOM_FOCUS_DISTANCE = 500;
 /** Redisplays a jumped-to message for this long. */
 const FLASH_MS = 1400;
 /** How many pages `scrollToMessage` may fetch while looking for its target. */
@@ -118,6 +147,16 @@ interface MessageListProps {
 }
 
 type RenderMessage = MessageListProps["renderMessage"];
+
+/**
+ * The dev counters overlay is loaded on demand and never in a production build:
+ * `import.meta.env.DEV` folds to `false`, so the dynamic import is dropped
+ * entirely instead of shipping dead bytes (a top-level `memo(...)` call in the
+ * overlay module is enough for a bundler to keep it otherwise).
+ */
+const DevScrollOverlay = import.meta.env.DEV
+  ? lazy(async () => ({ default: (await import("./ScrollDebugOverlay")).ScrollDebugOverlay }))
+  : null;
 
 // ── Message item ───────────────────────────────────────────────────────────
 // A plain, normal-flow row: no position, no transform, no spacer, and no
@@ -352,11 +391,15 @@ export const MessageList = memo(
       /** Distance from the top to the bottom of the content, after the write. */
       bottomOffset: number;
       tailKey: string | null;
+      /** The mounted window this commit left behind (for the dev counters). */
+      sliceStart: number;
+      sliceEnd: number;
     } | null>(null);
 
     const didInitialPositionRef = useRef(false);
     const pendingJumpRef = useRef<{ id: string; attempts: number } | null>(null);
-    const pendingBottomPinRef = useRef(false);
+    /** A "take me to the newest message" request the commit has to serve. */
+    const pendingBottomGlideRef = useRef(false);
     const pendingTopMountRef = useRef(false);
     const pinnedTailRef = useRef<string | null>(null);
     const lastReadKeyRef = useRef<string | null>(null);
@@ -366,6 +409,13 @@ export const MessageList = memo(
     const pointerDownRef = useRef(false);
     /** The position moved and has not been verified at rest yet. */
     const coastingRef = useRef(false);
+    /**
+     * A programmatic position replace is in flight. Safari delivers stale
+     * `IntersectionObserver` entries between the DOM mutation and the scroll
+     * restore, and acting on one would mount a page from a position that no
+     * longer exists (Telegram Web: `isReplacingHistoryRef`).
+     */
+    const replacingHistoryRef = useRef(false);
     const bestPositionRef = useRef(0);
     const restTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -470,6 +520,7 @@ export const MessageList = memo(
       if (now - lastRequestAtRef.current < LOAD_COOLDOWN_MS) return false;
       lastRequestAtRef.current = now;
       olderBusyRef.current = true;
+      notePageRequest();
       try {
         await loadMoreMessages(id, { postpone: true });
       } finally {
@@ -556,6 +607,7 @@ export const MessageList = memo(
 
         coastingRef.current = false;
         restTimerRef.current = null;
+        noteGestureEnd();
 
         // Work the gate deferred: a page that was fetched mid-coast is mounted
         // now — otherwise the window slides into rows that are already loaded.
@@ -647,6 +699,7 @@ export const MessageList = memo(
     // ── Scroll pass ────────────────────────────────────────────────────
     const handleScroll = useCallback(() => {
       coastingRef.current = true;
+      noteGestureStart();
       armRest();
       if (scrollRafRef.current !== null) return;
       scrollRafRef.current = requestAnimationFrame(() => {
@@ -665,6 +718,7 @@ export const MessageList = memo(
     // the rest, so the work the gate deferred happens right away.
     const markPointerDown = useCallback(() => {
       pointerDownRef.current = true;
+      noteGestureStart();
     }, []);
     const clearPointerDown = useCallback(() => {
       if (!pointerDownRef.current) return;
@@ -702,6 +756,7 @@ export const MessageList = memo(
       const topObserver = top
         ? new IntersectionObserver(
             (entries) => {
+              if (replacingHistoryRef.current) return;
               if (!entries.some((entry) => entry.isIntersecting)) return;
               expandOlderNow();
             },
@@ -711,6 +766,7 @@ export const MessageList = memo(
       const bottomObserver = bottom
         ? new IntersectionObserver(
             (entries) => {
+              if (replacingHistoryRef.current) return;
               if (!entries.some((entry) => entry.isIntersecting)) return;
               if (followingRef.current) return;
               enlargeWindow("bottom");
@@ -758,10 +814,12 @@ export const MessageList = memo(
       const isFirstCommit = !didInitialPositionRef.current;
       const pendingJump = pendingJumpRef.current;
       const restore = initial.restore;
-      // Consumed unconditionally: a FAB press that found the tail unchanged has
-      // already had its pin applied by the branch below.
-      const pendingBottomPin = pendingBottomPinRef.current;
-      pendingBottomPinRef.current = false;
+      // Consumed unconditionally: an explicit "to the bottom" from the same
+      // commit as a new arrival is served by the arrival glide below.
+      const pendingBottomGlide = pendingBottomGlideRef.current;
+      pendingBottomGlideRef.current = false;
+
+      const commitStartedAt = performance.now();
 
       requestForcedReflow(() => {
         const scrollTop = readContainerScrollTop(scroller);
@@ -808,11 +866,17 @@ export const MessageList = memo(
           containerTop,
           clientHeight,
           tailKey,
+          sliceStart: derived.start,
+          sliceEnd: derived.end,
         };
 
         let nextScrollTop: number | null = null;
         let pin = false;
         let glideTarget: HTMLElement | null = null;
+        let glidePosition: ScrollPosition = "end";
+        let glideMargin = 0;
+        let glideMaxDistance: number | undefined;
+        let glideDirection: ScrollDirection | undefined;
 
         if (isFirstCommit) {
           didInitialPositionRef.current = true;
@@ -828,7 +892,13 @@ export const MessageList = memo(
           if (row) {
             pendingJumpRef.current = null;
             if (isAtBottomNow && row === rows[rows.length - 1]) pin = true;
-            else glideTarget = row;
+            else {
+              // `centerOrTop`: centre a target that fits the viewport, align a
+              // taller one to the top — Telegram Web's default for a focus.
+              glideTarget = row;
+              glidePosition = "centerOrTop";
+              glideMargin = FOCUS_MARGIN;
+            }
             flashMessage(pendingJump.id);
           }
         } else if (tailMoved && followingRef.current) {
@@ -839,8 +909,17 @@ export const MessageList = memo(
             pinnedTailRef.current = tailKey;
             glideTarget = bottomTriggerRef.current ?? (rows.length > 0 ? rows[rows.length - 1] : null);
           }
-        } else if (pendingBottomPin) {
-          pin = true;
+        } else if (pendingBottomGlide) {
+          // Telegram Web's scroll-to-bottom button: cover everything the reader
+          // cannot see at once, then glide the last stretch down.
+          if (bottomTriggerRef.current) {
+            glideTarget = bottomTriggerRef.current;
+            glideMaxDistance = BOTTOM_FOCUS_DISTANCE;
+            glideDirection = "down";
+            glideMargin = 0;
+          } else {
+            pin = true;
+          }
         } else if (wasAtBottom) {
           if (!isAtBottomNow || tailMoved) pin = true;
         } else if (previous?.anchorKey && anchor) {
@@ -858,18 +937,23 @@ export const MessageList = memo(
           ? animateScroll({
               container: scroller,
               element: glideTarget,
-              position: "end",
-              maxDistance: Number.MAX_SAFE_INTEGER,
+              position: glidePosition,
+              margin: glideMargin,
+              maxDistance: glideMaxDistance,
+              forceDirection: glideDirection,
               shouldReturnMutationFn: true,
             }) ?? null
           : null;
 
         return () => {
           if (mutation) {
+            noteScrollTopWrite("glide");
             mutation();
           } else if (pin) {
+            noteScrollTopWrite("pin");
             pinToBottom(scroller);
           } else if (nextScrollTop !== null) {
+            noteScrollTopWrite(isFirstCommit ? "initial" : "anchor");
             setScrollTop(scroller, nextScrollTop);
           }
           // After the write: "is the reader at the bottom" is a property of the
@@ -880,6 +964,20 @@ export const MessageList = memo(
             ...nextCommit,
             bottomOffset: scroller.scrollHeight - bestPositionRef.current,
           };
+          // The restore has landed; triggers may fire again.
+          requestMeasure(() => {
+            replacingHistoryRef.current = false;
+          });
+          if (previous) {
+            noteMountedRows(
+              Math.max(0, previous.sliceStart - derived.start) + Math.max(0, derived.end - previous.sliceEnd),
+              Math.max(0, derived.start - previous.sliceStart) + Math.max(0, previous.sliceEnd - derived.end),
+              derived.end - derived.start,
+            );
+          } else {
+            noteMountedRows(derived.end - derived.start, 0, derived.end - derived.start);
+          }
+          noteCommitDuration(performance.now() - commitStartedAt);
         };
       });
 
@@ -957,12 +1055,16 @@ export const MessageList = memo(
       const wasGlued = previous.bottomOffset - previous.clientHeight <= AT_BOTTOM_THRESHOLD;
 
       if (followingRef.current && wasGlued) {
+        noteScrollTopWrite("chrome:pin");
         pinToBottom(scroller);
       } else {
         // A container that grew downward does not move the content; one whose
         // top edge moved down (a banner) does — by exactly that delta.
         const topDelta = containerTop - previous.containerTop;
-        if (Math.abs(topDelta) > 0.5) setScrollTop(scroller, scrollTop - topDelta);
+        if (Math.abs(topDelta) > 0.5) {
+          noteScrollTopWrite("chrome:top");
+          setScrollTop(scroller, scrollTop - topDelta);
+        }
       }
 
       prevCommitRef.current = {
@@ -1022,7 +1124,7 @@ export const MessageList = memo(
       setUnread(0);
       pendingJumpRef.current = null;
       pinnedTailRef.current = null;
-      pendingBottomPinRef.current = true;
+      pendingBottomGlideRef.current = true;
       // A glide across thousands of pixels reads as a hang: the window is
       // re-seeded to the newest rows and the position lands in one frame.
       setWindow(tailKeyWindow(list, RESET_WINDOW));
@@ -1141,6 +1243,12 @@ export const MessageList = memo(
             )}
             <ChevronDown size={16} aria-hidden="true" />
           </button>
+        )}
+
+        {DevScrollOverlay && isScrollDiagnosticsEnabled() && (
+          <Suspense fallback={null}>
+            <DevScrollOverlay />
+          </Suspense>
         )}
 
         {/* Announcements are throttled to the pill's own state so scrolling

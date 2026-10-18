@@ -20,7 +20,14 @@
 
 import { getOffsetToContainer, readContainerScrollTop } from "./scrollGeometry";
 
-export type ScrollPosition = "start" | "end" | "center";
+export type ScrollPosition = "start" | "end" | "center" | "centerOrTop";
+/**
+ * Which way the glide is allowed to travel. With a direction the animation
+ * starts at most `maxDistance` away from the target *in that direction*, so the
+ * distance the reader cannot see is covered at once — Telegram Web's
+ * `forceDirection` (used when the viewport was replaced under the glide).
+ */
+export type ScrollDirection = "up" | "down";
 
 export interface AnimateScrollArgs {
   container: HTMLElement;
@@ -37,6 +44,8 @@ export interface AnimateScrollArgs {
   bottomReserve?: number;
   /** How far from the current position the glide may start. */
   maxDistance?: number;
+  /** Anchor the glide to a side even if the current position is elsewhere. */
+  forceDirection?: ScrollDirection;
   /** 0 = jump into place with no animation. */
   forceDuration?: number;
   /**
@@ -124,6 +133,7 @@ function createMutationFn(args: AnimateScrollArgs): () => void {
     topReserve = 0,
     bottomReserve = 0,
     maxDistance = SCROLL_MAX_DISTANCE,
+    forceDirection,
   } = args;
 
   let forceDuration = args.forceDuration;
@@ -141,7 +151,11 @@ function createMutationFn(args: AnimateScrollArgs): () => void {
       case "start":
         target = elementTop - margin;
         break;
-      case "center": {
+      case "center":
+      case "centerOrTop": {
+        // `centerOrTop`: an element that fits the visible band is centred, one
+        // that is taller than it is aligned to the top (centring it would hide
+        // its beginning). Telegram Web's default for a focused message.
         const visibleHeight = Math.max(0, containerHeight - topReserve - bottomReserve);
         target =
           elementHeight < visibleHeight
@@ -156,7 +170,7 @@ function createMutationFn(args: AnimateScrollArgs): () => void {
     }
   }
 
-  const from = clampStart(container, target, maxDistance);
+  const from = clampStart(container, target, maxDistance, forceDirection);
   let path = target - from;
 
   // Never animate into the rubber-band: the glide stops at the real edges.
@@ -241,11 +255,23 @@ function releaseSnap(container: HTMLElement): void {
   container.style.scrollSnapType = held;
 }
 
-/** Where the glide starts: capped to `maxDistance` away from the target. */
-function clampStart(container: HTMLElement, target: number, maxDistance: number): number {
+/**
+ * Where the glide starts. With no direction it is capped to `maxDistance` away
+ * from the current position; with one, it is anchored that far from the target
+ * on the *opposite* side, so the glide always approaches from the right side.
+ */
+function clampStart(
+  container: HTMLElement,
+  target: number,
+  maxDistance: number,
+  forceDirection?: ScrollDirection,
+): number {
   const scrollTop = readContainerScrollTop(container);
-  const offset = target - scrollTop;
 
+  if (forceDirection === "down") return Math.max(0, target - maxDistance);
+  if (forceDirection === "up") return target + maxDistance;
+
+  const offset = target - scrollTop;
   if (offset < -maxDistance) return scrollTop + (offset + maxDistance);
   if (offset > maxDistance) return scrollTop + (offset - maxDistance);
   return scrollTop;

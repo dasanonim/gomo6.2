@@ -8,6 +8,7 @@ import {
 } from "./core/messageScrollAnchors";
 import { INITIAL_WINDOW, MAX_DOM_MESSAGES, RESET_WINDOW, WINDOW_STEP } from "./core/slicing";
 import { __resetFasterdomForTests } from "./core/fasterdom";
+import { __setScrollDiagnosticsEnabled } from "./core/scrollDiagnostics";
 import type { MessageView } from "./types";
 
 // ── Store mock ─────────────────────────────────────────────────────────────
@@ -302,6 +303,7 @@ beforeEach(() => {
   h.queueMarkRead.mockClear();
   __resetMessageScrollAnchorsForTests();
   __resetFasterdomForTests();
+  __setScrollDiagnosticsEnabled(false);
   document.documentElement.classList.remove("has-scroll-anchoring");
   (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
     MockIntersectionObserver;
@@ -645,8 +647,8 @@ describe("MessageList — jump", () => {
     const row = container.querySelector<HTMLElement>('.message-item[data-message-id="m100"]')!;
     expect(row).not.toBeNull();
     expect(row.classList.contains("is-flash")).toBe(true);
-    // Aligned to the end of the viewport.
-    expect(scrollerOf(container).scrollTop).toBe(row.offsetTop + ROW - VIEWPORT);
+    // `centerOrTop`: the message fits the viewport, so it is centred in it.
+    expect(scrollerOf(container).scrollTop).toBe(row.offsetTop + ROW / 2 - VIEWPORT / 2);
   });
 
   it("pages older history when the target is not loaded", async () => {
@@ -658,6 +660,29 @@ describe("MessageList — jump", () => {
     await flushCommit();
 
     expect(h.loadMoreMessages).toHaveBeenCalled();
+  });
+});
+
+describe("MessageList — dev counters", () => {
+  it("renders the overlay only when the flag is on, and stays at zero writes per gesture", async () => {
+    setStore({ messages: longList(200) });
+    const { container, unmount } = await mountList();
+    expect(container.querySelector(".scroll-debug")).toBeNull();
+    unmount();
+
+    __setScrollDiagnosticsEnabled(true);
+    const overlay = await mountList();
+    expect(overlay.container.querySelector(".scroll-debug")).not.toBeNull();
+
+    // The headline claim: the reader's own scrolling writes no position at all.
+    await scrollTo(overlay.container, 0);
+    await settle();
+    await scrollTo(overlay.container, 400);
+
+    const writesRow = overlay.container.querySelector<HTMLElement>(".scroll-debug-row");
+    expect(writesRow?.textContent).toContain("0");
+    expect(writesRow?.classList.contains("is-bad")).toBe(false);
+    __setScrollDiagnosticsEnabled(false);
   });
 });
 

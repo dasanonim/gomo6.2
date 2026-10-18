@@ -160,3 +160,68 @@ describe("animateScroll", () => {
     expect(scroller.scrollTop).toBe(400);
   });
 });
+
+describe("animateScroll — positions and direction", () => {
+  let raf: ManualRaf;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    raf = installManualRaf();
+    __resetAnimateScrollForTests();
+  });
+
+  afterEach(() => {
+    __resetAnimateScrollForTests();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("centre-or-top centres a message that fits the visible band", () => {
+    const scroller = makeScroller(2000, 600);
+    const row = makeRow(scroller.el, { offsetTop: 1000, offsetHeight: 60 });
+
+    animateScroll({ container: scroller.el, element: row, position: "centerOrTop", forceDuration: 0 });
+
+    expect(scroller.scrollTop).toBe(1000 + 30 - 300);
+  });
+
+  it("centre-or-top aligns a message taller than the band to the top", () => {
+    const scroller = makeScroller(4000, 600);
+    const tall = makeRow(scroller.el, { offsetTop: 1000, offsetHeight: 900 });
+    scroller.setScrollTop(2000);
+
+    animateScroll({
+      container: scroller.el,
+      element: tall,
+      position: "centerOrTop",
+      margin: 20,
+      forceDuration: 0,
+    });
+
+    expect(scroller.scrollTop).toBe(1000 - 20);
+  });
+
+  it("anchors a down-glide to the target, whatever the current position", async () => {
+    const scroller = makeScroller(6000, 600);
+    const target = makeRow(scroller.el, { offsetTop: 4000, offsetHeight: 0 });
+    scroller.setScrollTop(0);
+
+    animateScroll({
+      container: scroller.el,
+      element: target,
+      position: "end",
+      maxDistance: 500,
+      forceDirection: "down",
+      forceDuration: 400,
+    });
+
+    // The glide begins at most 500px above the target — the rest is covered at
+    // once (Telegram Web's scroll-to-bottom button).
+    await raf.frame(FRAME_MS);
+    const firstFrame = scroller.scrollTop;
+    expect(firstFrame).toBeGreaterThanOrEqual(4000 + 0 - 600 - 500 - 1);
+
+    await raf.advanceFrames(400);
+    expect(scroller.scrollTop).toBe(4000 + 0 - 600);
+  });
+});
