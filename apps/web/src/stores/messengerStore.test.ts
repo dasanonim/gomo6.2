@@ -411,6 +411,33 @@ describe("messengerStore", () => {
       }
     });
 
+    it("retries a failed read line instead of leaving the chat unread", async () => {
+      vi.useFakeTimers();
+      try {
+        useMessengerStore.setState({
+          conversations: [mockConv({ id: "conv-1", unread_count: 5 })],
+        });
+        vi.mocked(messengerApi.markRead).mockRejectedValueOnce(new Error("offline"));
+
+        queueMarkRead("conv-1", "00000000-0000-0000-0000-000000000004", "2025-06-01T12:04:00Z");
+        await vi.advanceTimersByTimeAsync(500);
+        expect(messengerApi.markRead).toHaveBeenCalledTimes(1);
+
+        // The request failed; the line must come back and be tried again, not be
+        // dropped until the reader happens to scroll once more.
+        vi.mocked(messengerApi.markRead).mockResolvedValue({ ok: true });
+        await vi.advanceTimersByTimeAsync(3500);
+
+        expect(messengerApi.markRead).toHaveBeenCalledTimes(2);
+        expect(messengerApi.markRead).toHaveBeenLastCalledWith(
+          "conv-1",
+          "00000000-0000-0000-0000-000000000004",
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("never sends a read line older than the last confirmed one (scrolling up)", async () => {
       vi.useFakeTimers();
       try {

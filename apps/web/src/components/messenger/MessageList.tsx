@@ -238,23 +238,41 @@ function findRowById(rows: HTMLElement[], id: string): HTMLElement | null {
   return null;
 }
 
-/** The last row that is FULLY above the fold, or -1. */
-function findLastVisibleRowIndex(rows: HTMLElement[], fold: number): number {
+/**
+ * The newest row that INTERSECTS the viewport (even partially), or -1.
+ *
+ * Deliberately not "the newest row that is fully visible": a message taller than
+ * the viewport is never fully visible, so a read line built on that rule stalls
+ * one message short of the newest one — and the chat then stays unread no matter
+ * how often the reader scrolls to the bottom. Telegram marks read on
+ * intersection (`useMessageObservers` → `markMessageListRead({ maxId })`).
+ */
+function findNewestIntersectingRowIndex(
+  rows: HTMLElement[],
+  scrollTop: number,
+  fold: number,
+): number {
   let low = 0;
   let high = rows.length - 1;
-  let visible = -1;
+  let candidate = -1;
 
+  // The last row whose top is above the fold…
   while (low <= high) {
     const mid = (low + high) >> 1;
-    if (rows[mid].offsetTop + rows[mid].offsetHeight <= fold + 1) {
-      visible = mid;
+    if (rows[mid].offsetTop < fold) {
+      candidate = mid;
       low = mid + 1;
     } else {
       high = mid - 1;
     }
   }
 
-  return visible;
+  // …walking back over the ones that are entirely above the viewport's top edge.
+  while (candidate >= 0 && rows[candidate].offsetTop + rows[candidate].offsetHeight <= scrollTop) {
+    candidate -= 1;
+  }
+
+  return candidate;
 }
 
 /**
@@ -447,8 +465,6 @@ export const MessageList = memo(
     loadingMoreRef.current = isLoadingMore;
     const conversationIdRef = useRef(conversationId);
     conversationIdRef.current = conversationId;
-    const ownIdRef = useRef(meId);
-    ownIdRef.current = meId;
     const rowsRef = useRef<HTMLElement[]>([]);
 
     /**
@@ -639,21 +655,28 @@ export const MessageList = memo(
      */
     const reportVisibleReads = useCallback(() => {
       const id = conversationIdRef.current;
-      const ownId = ownIdRef.current;
       const scroller = scrollerRef.current;
       if (!id || !scroller) return;
 
       const rows = rowsRef.current;
-      const fold = readContainerScrollTop(scroller) + scroller.clientHeight;
-      let at = findLastVisibleRowIndex(rows, fold);
+      if (rows.length === 0) return;
+
+      const scrollTop = readContainerScrollTop(scroller);
+      const fold = scrollTop + scroller.clientHeight;
+      // At the bottom of the list everything on screen has been seen — including
+      // a message taller than the viewport, and including the reader's own (which
+      // is what lets the read marker reach the newest message at all).
+      const atBottom = scroller.scrollHeight - scrollTop - scroller.clientHeight <= AT_BOTTOM_THRESHOLD;
+      let at = atBottom ? rows.length - 1 : findNewestIntersectingRowIndex(rows, scrollTop, fold);
 
       while (at >= 0) {
         const key = rows[at].dataset.messageKey;
         const index = key === undefined ? undefined : indexByKeyRef.current.get(key);
         const message = index === undefined ? undefined : messagesRef.current[index];
-        if (message && message.sender_user_id !== ownId && !message.is_deleted) {
-          if (key !== null && key !== lastReadKeyRef.current) {
-            lastReadKeyRef.current = key ?? null;
+        // A deleted message cannot carry a read marker; the prefix rule covers it.
+        if (message && !message.is_deleted) {
+          if (key != null && key !== lastReadKeyRef.current) {
+            lastReadKeyRef.current = key;
             queueMarkRead(id, message.id, message.sent_at);
           }
           return;

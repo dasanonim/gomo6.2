@@ -309,10 +309,26 @@ nothing while it is set. Safari delivers `IntersectionObserver` entries between
 the DOM mutation and the scroll restore; acting on one would mount a page for a
 position that no longer exists (Telegram Web: `isReplacingHistoryRef`).
 
-**Read line.** The newest fully visible message that is not the reader's own,
-found by binary search over the mounted rows (`offsetTop` is monotonic in
-document order) at a verified rest, and reported only when the answer changed.
-No row-by-row scan, no IntersectionObserver per row.
+**Read line.** The newest message the reader has actually seen, found by binary
+search over the mounted rows (`offsetTop` is monotonic in document order) at a
+verified rest, and reported only when the answer changed. No row-by-row scan, no
+IntersectionObserver per row. Two rules make it reach the end of a chat:
+
+* **Intersection, not full visibility.** A message taller than the viewport is
+  never "fully visible", so a read line built on that rule stops one message short
+  of the newest one — and the chat stays unread however often the reader scrolls to
+  the bottom. Telegram marks on intersection (`useMessageObservers` →
+  `markMessageListRead({ maxId })`).
+* **At the bottom, the newest message is the line — the reader's own included.**
+  Filtering own messages out is the same trap from the other side: if the newest
+  message is the reader's (which is what sending a message produces), the line can
+  never advance past it, and both the local count and the server's stay put. The
+  backend marks the whole *prefix* up to the reported message, so reporting one's
+  own message is exactly the right thing to say.
+
+A failed request is retried (3s, monotonic — a newer line subsumes the older one)
+and the pending line is flushed on `pagehide` / `visibilitychange`, so a chat
+cannot be left unread by a lost request or a closed tab.
 
 **Following.** `FOLLOW_SLACK` (100px) decides whether the reader is "with" the
 conversation: while following, the window follows the tail and arrivals glide in;

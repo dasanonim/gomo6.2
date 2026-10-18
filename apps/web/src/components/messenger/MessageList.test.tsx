@@ -902,7 +902,7 @@ describe("MessageList — chrome changes", () => {
 });
 
 describe("MessageList — read line", () => {
-  it("reports the newest fully visible message that is not the reader's own", async () => {
+  it("reaches the newest message at the bottom, the reader's own included", async () => {
     setStore({
       messages: [
         ...longList(30, "a"),
@@ -916,11 +916,28 @@ describe("MessageList — read line", () => {
 
     expect(h.queueMarkRead).toHaveBeenCalledTimes(1);
     const [, messageId] = h.queueMarkRead.mock.calls[0] as [string, string];
-    // The last two rows are not eligible: one is deleted, one is the reader's.
+    // Marking read up to the reader's OWN newest message is what lets the read
+    // marker reach the end of the chat at all: filtering own messages out leaves
+    // the line one message short, and the conversation stays unread forever.
+    expect(messageId).toBe("mine");
+  });
+
+  it("skips a deleted newest message", async () => {
+    setStore({
+      messages: [
+        ...longList(30, "a"),
+        makeMessage("deleted", { sender_user_id: "u2", is_deleted: true }),
+      ],
+    });
+
+    await mountList();
+    await settle();
+
+    const [, messageId] = h.queueMarkRead.mock.calls[0] as [string, string];
     expect(messageId).toBe("a29");
   });
 
-  it("stops at the fold: a message that is not fully visible is not read", async () => {
+  it("marks up to the newest message that intersects the viewport", async () => {
     setStore({ messages: longList(60) });
 
     const { container } = await mountList();
@@ -929,9 +946,9 @@ describe("MessageList — read line", () => {
 
     expect(h.queueMarkRead).toHaveBeenCalled();
     const [, messageId] = h.queueMarkRead.mock.calls.at(-1) as [string, string];
-    // 300px above the bottom, the last fully visible row is m54 — m55..m59 are
-    // partly or fully below the fold.
-    expect(messageId).toBe("m54");
+    // 300px above the bottom the fold cuts m55: a partly visible message has been
+    // seen, so it is the read line (Telegram marks on intersection).
+    expect(messageId).toBe("m55");
   });
 
   it("does not repeat the same report when nothing changed", async () => {

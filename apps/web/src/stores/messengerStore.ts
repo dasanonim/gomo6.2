@@ -166,6 +166,8 @@ const localReadThrough = new Map<string, string>(); // convId → newest locally
 
 let readFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const READ_FLUSH_DELAY_MS = 400;
+/** A failed read line is retried (reading is monotonic, so it never goes back). */
+const READ_RETRY_DELAY_MS = 3000;
 
 function isLaterReceipt(candidate: PendingReceipt, current?: PendingReceipt): boolean {
   if (!current) return true;
@@ -270,9 +272,9 @@ export function queueMarkRead(conversationId: string, messageId: string, sentAt?
   scheduleReadFlush();
 }
 
-function scheduleReadFlush(): void {
+function scheduleReadFlush(delay = READ_FLUSH_DELAY_MS): void {
   if (readFlushTimer) clearTimeout(readFlushTimer);
-  readFlushTimer = setTimeout(flushPendingReads, READ_FLUSH_DELAY_MS);
+  readFlushTimer = setTimeout(flushPendingReads, delay);
 }
 
 function flushPendingReads(): void {
@@ -288,8 +290,14 @@ function flushPendingReads(): void {
     if (!isLaterReceipt(receipt, lastSentReadLine.get(convId))) continue;
     lastSentReadLine.set(convId, receipt);
     messengerApi.markRead(convId, receipt.messageId).catch(() => {
-      // Drop the confirmed marker so the next visibility pass retries.
+      // Drop the confirmed marker so the next attempt is allowed…
       if (sameReceipt(lastSentReadLine.get(convId), receipt)) lastSentReadLine.delete(convId);
+      // …and put the line back, so a failed request cannot leave a chat unread
+      // until the reader happens to scroll again. A newer line queued in the
+      // meantime subsumes this one (the marker is monotonic).
+      const pending = pendingReadLine.get(convId);
+      if (!pending || isLaterReceipt(receipt, pending)) pendingReadLine.set(convId, receipt);
+      scheduleReadFlush(READ_RETRY_DELAY_MS);
     });
   }
 }
