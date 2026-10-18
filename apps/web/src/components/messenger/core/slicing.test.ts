@@ -152,7 +152,10 @@ describe("slicing — trimBottom", () => {
   });
 
   it("keeps the window's start when it has slid away from zero", () => {
-    expect(trimBottom(messages, 100, 600, (m) => m.id)).toEqual({ end: 400, last: "m399" });
+    expect(trimBottom(messages, 100, 600, (m) => m.id)).toEqual({
+      end: 100 + MAX_DOM_MESSAGES,
+      last: `m${100 + MAX_DOM_MESSAGES - 1}`,
+    });
   });
 });
 

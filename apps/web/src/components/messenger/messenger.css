@@ -760,6 +760,25 @@ main.is-messenger-page {
   margin-top: auto;
 }
 
+/* ── "At the bottom" ──
+   While the reader is within the band around the bottom trigger the list is a
+   snap container, and the zero-height trigger after the newest row is its snap
+   point. That is what keeps a growing list glued to the bottom with no
+   `scrollTop` write at all — the browser holds the position, on the compositor
+   thread. Left in history the class is removed, so snapping can never pull the
+   reader back. (Telegram Web: `with-bottom-snap` + `.fab-trigger`.) */
+.message-scroll.with-bottom-snap {
+  scroll-snap-type: y proximity;
+}
+
+.message-list .fab-trigger {
+  width: 100%;
+  height: 0;
+  overflow-anchor: none;
+  pointer-events: none;
+  scroll-snap-align: end;
+}
+
 /* One mounted message. The row contract (content-visibility where the engine
    can anchor, plus `overflow-anchor`) lives in the shared `.chat-native-row`
    utility — see src/index.css. */

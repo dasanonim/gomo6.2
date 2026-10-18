@@ -802,30 +802,27 @@ html.perf-lite .profile-tabbar--stuck .profile-tabbar__bg {
     backdrop-filter: blur(var(--surface-blur, 0px)) saturate(var(--surface-saturate, 100%));
   }
 
-  /* ── Native DOM-slicing chat rows ──
-     One mounted message in a normal-flow list. The browser's own renderer skips
-     the rows that are far outside the viewport (`content-visibility`) and lays
-     them out from their remembered height (`auto`), or the 64px fallback before
-     their first paint — that IS the virtualization, no spacer and no absolute
-     rows. `overflow-anchor: auto` is the chat's own anchor: a prepended page
-     must never move the message the reader is looking at.
-     Used by the messenger list (`.message-item`) and the GomoSub channel chat.
+  /* ── Native chat rows ──
+     One mounted message in a normal-flow list: real layout, real height, and
+     `overflow-anchor: auto` so the engine's own scroll anchoring holds the
+     reader's message when content above it changes. There is deliberately NO
+     `content-visibility` on messenger rows: a row the engine has not laid out
+     contributes an estimate, and replacing that estimate with the real height
+     moves everything below it — the per-message stutter on WebKit, which has no
+     scroll anchoring to absorb it. The mounted window is what bounds the cost.
 
-     `content-visibility` is applied ONLY where the engine compensates the
-     height change of an unskipped row with native scroll anchoring (the
-     `has-scroll-anchoring` class is set behaviourally in lib/scrollAnchoring.ts).
-     Without anchoring — every WebKit browser — a row that scrolls into view
-     replaces its 64px estimate with its real height and moves everything below
-     it: that is a stutter on every single message while scrolling up through a
-     window that has not been rendered yet, plus an underestimated scrollable
-     height that ends a momentum fling early. There the mounted window IS the
-     virtualization and every row stays laid out. */
+     `content-visibility` stays available for the GomoSub channel chat, which
+     scrolls the DOCUMENT and keeps a much larger window mounted.
+
+     `content-visibility` is also gated on the behavioural anchoring flag
+     (`has-scroll-anchoring`, set in lib/scrollAnchoring.ts), never on
+     `CSS.supports`. */
   .chat-native-row {
     contain: layout style;
     overflow-anchor: auto;
   }
 
-  .has-scroll-anchoring .chat-native-row {
+  .has-scroll-anchoring .channel-message-row {
     content-visibility: auto;
     contain-intrinsic-size: auto 64px;
   }

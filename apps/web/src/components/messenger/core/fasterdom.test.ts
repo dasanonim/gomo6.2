@@ -100,7 +100,9 @@ describe("fasterdom", () => {
   it("runs a next-mutation after this frame's measures", async () => {
     const order: string[] = [];
     requestMeasure(() => order.push("measure"));
-    requestNextMutation(() => order.push("next-mutation"));
+    requestNextMutation(() => {
+      order.push("next-mutation");
+    });
 
     await runPass();
 

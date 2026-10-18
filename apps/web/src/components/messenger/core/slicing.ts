@@ -1,11 +1,10 @@
 /**
- * Window arithmetic for the messenger's native DOM slicing list.
+ * Window arithmetic for the chat's mounted message slice.
  *
  * The scroll container holds a plain, normal-flow DOM list and the browser's
  * own compositor thread owns the scroll position — no spacers, no absolute
- * rows, no transforms. The only thing this module owns is *which slice* of the
- * loaded history is mounted: a bounded window of ~150–300 rows that slides
- * bi-directionally as the reader moves.
+ * rows, no transforms. What this module owns is *which slice* of the loaded
+ * history is mounted: a bounded window that slides like a page of a book.
  *
  * The window is expressed in message KEYS, never in array indices:
  *
@@ -19,7 +18,11 @@
  * window never re-anchors to a different message. Indices do not: they move by
  * exactly the size of the inserted page.
  *
- * Everything here is pure so the sliding/GC decisions can be unit-tested
+ * Rows are added on the side the reader moves toward and dropped on the far
+ * side, which is off screen by construction. Every mounted row is laid out for
+ * real (no `content-visibility`), so a row's height is never an estimate.
+ *
+ * Everything here is pure so the sliding/trim decisions can be unit-tested
  * without a layout engine.
  */
 
@@ -41,23 +44,23 @@ export interface KeyWindow {
 export const TAIL_WINDOW: KeyWindow = { first: null, last: null };
 
 /**
- * Hard ceiling of mounted rows. Native `content-visibility` makes off-screen
- * rows cheap, so this only bounds the React reconciliation + DOM memory cost of
- * a very deep window.
+ * Hard ceiling of mounted rows. Every mounted row is fully laid out, so this
+ * bounds the real layout cost of a deep window (Telegram Web keeps ~120; the
+ * extra headroom here is for taller bubbles and albums).
  */
-export const MAX_DOM_MESSAGES = 300;
+export const MAX_DOM_MESSAGES = 220;
 /** Rows mounted on open (and whenever the reader returns to the bottom). */
-export const INITIAL_WINDOW = 150;
+export const INITIAL_WINDOW = 100;
 /** A jump to the bottom re-seeds the window to the newest N rows. */
 export const RESET_WINDOW = 50;
-/** Rows added per bi-directional expansion step. */
+/** Rows added per slide step. */
 export const WINDOW_STEP = 50;
-/** Rows removed beyond the ceiling, so GC does not run on every arrival. */
+/** Rows removed beyond the ceiling, so a trim does not run on every step. */
 export const PRUNE_BATCH = 50;
 /** Rows mounted above a `scrollToMessage` target. */
-export const ANCHOR_BEFORE = 20;
+export const ANCHOR_BEFORE = 30;
 /** Rows mounted below it — enough that the target can be centred. */
-export const ANCHOR_AFTER = INITIAL_WINDOW - ANCHOR_BEFORE;
+export const ANCHOR_AFTER = 70;
 
 /** The newest `size` messages, clamped to the array. */
 export function tailSlice(length: number, size = INITIAL_WINDOW): MessageSlice {

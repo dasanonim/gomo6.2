@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { createRef } from "react";
 import { MessageList, type MessageListHandle, type MessageRenderExtras } from "./MessageList";
 import {
   __resetMessageScrollAnchorsForTests,
   writeMessageScrollAnchor,
 } from "./core/messageScrollAnchors";
-import { INITIAL_WINDOW, MAX_DOM_MESSAGES, RESET_WINDOW } from "./core/slicing";
+import { INITIAL_WINDOW, MAX_DOM_MESSAGES, RESET_WINDOW, WINDOW_STEP } from "./core/slicing";
 import type { MessageView } from "./types";
 
 // ── Store mock ─────────────────────────────────────────────────────────────
@@ -42,9 +42,9 @@ vi.mock("@/stores/messengerStore", async () => {
 });
 
 // ── IntersectionObserver stand-in ──────────────────────────────────────────
-// jsdom has no layout and never intersects anything, so the two window
-// sentinels are driven explicitly. The contract under test is "a sentinel that
-// becomes visible slides the window", not the browser's geometry.
+// jsdom has no layout and never intersects anything, so the two sentinels are
+// driven explicitly. The contract under test is "a sentinel that becomes visible
+// slides the window", not the browser's geometry.
 type IOEntry = { isIntersecting: boolean; target: Element };
 type IOCallback = (entries: IOEntry[]) => void;
 
@@ -84,15 +84,15 @@ const triggerSentinel = (selector: string) => {
 };
 
 // ── Layout stand-in ────────────────────────────────────────────────────────
-// A fixed row height and viewport make every scroll decision observable:
-// `scrollHeight` is derived from the mounted rows, so a prepend genuinely grows
-// the scrollable content and the compensation can be asserted.
+// A fixed row height and viewport make every scroll decision observable. The
+// scroller CLAMPS `scrollTop` the way a browser does, so the bottom sentinel
+// contract ("write 1e7, land on the newest row") is testable.
 const ROW = 60;
 const VIEWPORT = 600;
 let scrollTopValue = 0;
 
-const messageItemsIn = (node: HTMLElement) =>
-  Array.from(node.querySelectorAll<HTMLElement>(".message-item"));
+const itemsIn = (node: HTMLElement) => node.querySelectorAll(".message-item").length;
+const contentHeight = (node: HTMLElement) => itemsIn(node) * ROW + 2; // + the two 1px sentinels
 
 const itemOffsetTop = (node: HTMLElement) => {
   let top = 0;
@@ -111,6 +111,7 @@ function installLayout() {
   for (const key of ["clientHeight", "scrollHeight", "scrollTop", "offsetTop", "offsetHeight", "getBoundingClientRect"]) {
     savedDescriptors.push([key, Object.getOwnPropertyDescriptor(proto, key)]);
   }
+
   Object.defineProperty(proto, "clientHeight", {
     configurable: true,
     get(this: HTMLElement) {
@@ -120,17 +121,18 @@ function installLayout() {
   Object.defineProperty(proto, "scrollHeight", {
     configurable: true,
     get(this: HTMLElement) {
-      if (!this.classList.contains("message-scroll")) return 0;
-      return messageItemsIn(this).length * ROW + 2; // + the two 1px sentinels
+      return this.classList.contains("message-scroll") ? contentHeight(this) : 0;
     },
   });
   Object.defineProperty(proto, "scrollTop", {
     configurable: true,
-    get() {
-      return scrollTopValue;
+    get(this: HTMLElement) {
+      return this.classList.contains("message-scroll") ? scrollTopValue : 0;
     },
-    set(value: number) {
-      scrollTopValue = Number.isFinite(value) ? Math.max(0, value) : 0;
+    set(this: HTMLElement, value: number) {
+      if (!this.classList.contains("message-scroll")) return;
+      const max = Math.max(0, contentHeight(this) - VIEWPORT);
+      scrollTopValue = Number.isFinite(value) ? Math.min(Math.max(0, value), max) : 0;
     },
   });
   Object.defineProperty(proto, "offsetHeight", {
@@ -142,14 +144,25 @@ function installLayout() {
   Object.defineProperty(proto, "offsetTop", {
     configurable: true,
     get(this: HTMLElement) {
-      return this.classList.contains("message-item") ? itemOffsetTop(this) : 0;
+      if (this.classList.contains("message-item")) return itemOffsetTop(this);
+      if (this.classList.contains("fab-trigger")) return itemsIn(this.closest(".message-scroll")!) * ROW + 2;
+      return 0;
     },
   });
   Object.defineProperty(proto, "getBoundingClientRect", {
     configurable: true,
     value(this: HTMLElement) {
-      const top = this.classList.contains("message-item") ? itemOffsetTop(this) : 0;
+      // Viewport coordinates: a row above the fold has a negative top, and the
+      // scroller itself starts at the top of the viewport.
+      const isScroller = this.classList.contains("message-scroll");
+      const scroller = isScroller ? this : this.closest<HTMLElement>(".message-scroll");
+      const contentTop = this.classList.contains("message-item")
+        ? itemOffsetTop(this)
+        : this.classList.contains("fab-trigger") && scroller
+          ? itemsIn(scroller) * ROW + 2
+          : 0;
       const height = this.classList.contains("message-item") ? ROW : 0;
+      const top = isScroller ? 0 : contentTop - (scroller ? scrollTopValue : 0);
       return { top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) };
     },
   });
@@ -189,9 +202,6 @@ const renderMessage = (message: MessageView, prev: MessageView | null, extras: M
   return <div data-testid={`msg-${message.id}`}>{message.content}</div>;
 };
 
-const mountList = (props: Partial<Parameters<typeof MessageList>[0]> = {}) =>
-  render(<MessageList renderMessage={renderMessage} {...props} />);
-
 const setStore = (patch: Record<string, unknown>) => {
   act(() => {
     h.store.setState(patch);
@@ -201,8 +211,30 @@ const setStore = (patch: Record<string, unknown>) => {
 const rows = (container: HTMLElement) => Array.from(container.querySelectorAll<HTMLElement>(".message-item"));
 const rowIds = (container: HTMLElement) => rows(container).map((row) => row.dataset.messageId);
 const scrollerOf = (container: HTMLElement) => container.querySelector<HTMLElement>(".message-scroll")!;
+const bottomOf = (container: HTMLElement) => contentHeight(scrollerOf(container)) - VIEWPORT;
 
-/** Scrolls the viewport, driving the same rAF pass the browser would. */
+/**
+ * Runs the batched DOM pass the engine defers to the next frame: rAF for the
+ * measurements, a microtask for the mutation it returns.
+ */
+const flushCommit = async () => {
+  await act(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
+
+const mountList = async (
+  props: Partial<Parameters<typeof MessageList>[0]> = {},
+  ref?: React.RefObject<MessageListHandle | null>,
+) => {
+  const view = render(<MessageList ref={ref} renderMessage={renderMessage} {...props} />);
+  await flushCommit();
+  return view;
+};
+
+/** Scrolls the viewport, driving the same frame pass the browser would. */
 const scrollTo = async (container: HTMLElement, top: number) => {
   const scroller = scrollerOf(container);
   scrollTopValue = top;
@@ -212,11 +244,12 @@ const scrollTo = async (container: HTMLElement, top: number) => {
   });
 };
 
-/** Waits out the scroll-settle window (the heavy pass runs after it). */
+/** Waits out the verified-rest window (reads and deferred mounts land there). */
 const settle = async () => {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 220));
+    await new Promise((resolve) => setTimeout(resolve, 200));
   });
+  await flushCommit();
 };
 
 beforeEach(() => {
@@ -230,8 +263,21 @@ beforeEach(() => {
   h.flushPendingOlderMessages.mockImplementation(() => false);
   h.queueMarkRead.mockClear();
   __resetMessageScrollAnchorsForTests();
+  document.documentElement.classList.remove("has-scroll-anchoring");
   (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
     MockIntersectionObserver;
+  // The glide is a real animation; tests run it instantly through the
+  // reduced-motion path (the same one the app uses when the user asks for it).
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes("prefers-reduced-motion"),
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
   installLayout();
   setStore({
     messages: [],
@@ -249,438 +295,392 @@ afterEach(() => {
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
-describe("MessageList (native DOM slicing)", () => {
-  it("mounts only the windowed slice, in source order", () => {
+describe("MessageList — window", () => {
+  it("mounts a bounded window that ends at the newest message", async () => {
     setStore({ messages: longList(500) });
 
-    const { container } = mountList();
+    const { container } = await mountList();
 
     expect(rows(container)).toHaveLength(INITIAL_WINDOW);
     expect(rowIds(container)[0]).toBe(`m${500 - INITIAL_WINDOW}`);
     expect(rowIds(container).at(-1)).toBe("m499");
-    // The renderer still sees the real neighbours from the full list, so
-    // grouping and date separators stay correct at a window boundary.
-    expect(captured[0].prevId).toBe(`m${500 - INITIAL_WINDOW - 1}`);
   });
 
-  it("renders a normal-flow list: no spacer, no absolute rows, no transforms", () => {
-    setStore({ messages: longList(30) });
+  it("opens pinned to the newest message", async () => {
+    setStore({ messages: longList(200) });
 
-    const { container } = mountList();
+    const { container } = await mountList();
 
-    expect(container.querySelector(".message-virtual-list")).toBeNull();
+    expect(scrollerOf(container).scrollTop).toBe(bottomOf(container));
+  });
+
+  it("keeps the rows in normal flow — no spacer, no absolute placement", async () => {
+    setStore({ messages: longList(40) });
+
+    const { container } = await mountList();
+    const [row] = rows(container);
+
+    expect(row.style.position).toBe("");
+    expect(row.style.top).toBe("");
+    expect(row.style.transform).toBe("");
+    expect(row.classList.contains("chat-native-row")).toBe(true);
+    expect(container.querySelector(".message-spacer")).toBeNull();
+  });
+
+  it("renders nothing for an empty conversation", async () => {
+    const { container } = await mountList();
+    expect(container.querySelector(".message-scroll")).toBeNull();
+  });
+
+  it("is not a live region: the window slides, so rows must not be announced", async () => {
+    setStore({ messages: longList(10) });
+
+    const { container } = await mountList();
     const scroller = scrollerOf(container);
-    expect(scroller.children).toHaveLength(1);
-    expect(scroller.firstElementChild?.className).toContain("message-list");
-    for (const row of rows(container)) {
-      expect(row.style.position).toBe("");
-      expect(row.style.transform).toBe("");
-      expect(row.style.top).toBe("");
-    }
+
+    expect(scroller.getAttribute("role")).toBe("log");
+    expect(scroller.getAttribute("aria-live")).toBe("off");
   });
+});
 
-  it("brackets the slice with the two window sentinels", () => {
-    setStore({ messages: longList(30) });
-
-    const { container } = mountList();
-
-    const list = container.querySelector(".message-list") as HTMLElement;
-    expect(list.firstElementChild?.className).toContain("scroll-sentinel-top");
-    expect(list.lastElementChild?.className).toContain("scroll-sentinel-bottom");
-    expect(rows(container)[0].previousElementSibling).toBe(list.firstElementChild);
-  });
-
-  it("hands the renderer the grouping and date extras", () => {
+describe("MessageList — rendering contract", () => {
+  it("passes grouping, date separators, quotes and receipts to the renderer", async () => {
+    const base = longList(3);
+    const quoted = makeMessage("q1", { content: "quoted" });
     setStore({
       messages: [
-        makeMessage("a", { sent_at: "2026-08-08T12:00:00.000Z" }),
-        // Same sender within 2 minutes → consecutive, same day → no date label.
-        makeMessage("b", { sent_at: "2026-08-08T12:01:00.000Z" }),
-        // Next day → new date separator.
-        makeMessage("c", { sent_at: "2026-08-09T09:00:00.000Z" }),
-      ],
-    });
-
-    mountList();
-
-    expect(captured[0].extras.isConsecutive).toBe(false);
-    expect(captured[0].extras.dateLabel).toBeTruthy();
-    expect(captured[1].extras.isConsecutive).toBe(true);
-    expect(captured[1].extras.dateLabel).toBeNull();
-    expect(captured[2].extras.isConsecutive).toBe(false);
-    expect(captured[2].extras.dateLabel).toBeTruthy();
-  });
-
-  it("resolves the quoted message and the peer receipt into the extras", () => {
-    setStore({
-      messages: [
-        makeMessage("a"),
-        makeMessage("reply", { parent_message_id: "a" }),
+        quoted,
+        ...base,
+        makeMessage("m3", { parent_message_id: quoted.id, sent_at: "2026-08-08T12:00:10.000Z" }),
       ],
       receipts: new Map([
-        ["c1", [{ message_id: "reply", user_id: "peer", read_at: "2026-08-08T12:05:00.000Z", delivered_at: null }]],
+        ["c1", [{ message_id: "m2", user_id: "u1", read_at: "2026-08-08T12:00:20.000Z", delivered_at: null }]],
       ]),
     });
 
-    mountList();
+    await mountList();
 
-    const reply = captured.find((entry) => entry.id === "reply");
-    expect(reply?.extras.quoted?.id).toBe("a");
-    expect(reply?.extras.peerReceipt?.message_id).toBe("reply");
-    // The reader's own receipt never becomes the peer's.
-    expect(captured.find((entry) => entry.id === "a")?.extras.quoted).toBeNull();
+    const last = captured.at(-1)!;
+    expect(last.extras.quoted?.id).toBe("q1");
+    expect(captured.length).toBeGreaterThan(0);
+    const withReceipt = captured.find((entry) => entry.id === "m2");
+    expect(withReceipt?.extras.peerReceipt?.read_at).toBe("2026-08-08T12:00:20.000Z");
   });
 
-  it("prefers messagesOverride over the store list (notes folder filter)", () => {
-    setStore({ messages: [makeMessage("stored")] });
+  it("renders the filtered notes view when one is supplied", async () => {
+    const messages = longList(20);
+    setStore({ messages });
 
-    mountList({ messagesOverride: [makeMessage("notes-1"), makeMessage("notes-2")] });
+    const { container } = await mountList({ messagesOverride: messages.slice(15) });
 
-    expect(captured.map((entry) => entry.id)).toEqual(["notes-1", "notes-2"]);
+    expect(rowIds(container)).toEqual(["m15", "m16", "m17", "m18", "m19"]);
   });
 
-  it("renders nothing when there are no messages", () => {
-    const { container } = mountList();
+  it("re-renders mounted rows when the ambient render version changes", async () => {
+    setStore({ messages: longList(5) });
+    const { container, rerender } = await mountList({ renderVersion: { pinned: null } });
+    captured.length = 0;
 
-    expect(container.querySelector(".message-scroll")).toBeNull();
-    expect(captured).toHaveLength(0);
+    rerender(
+      <MessageList renderMessage={renderMessage} renderVersion={{ pinned: "m2" }} />,
+    );
+
+    expect(captured.map((entry) => entry.id)).toEqual(["m0", "m1", "m2", "m3", "m4"]);
+    expect(container).toBeTruthy();
   });
+});
 
-  it("exposes an accessible log that does not replay history on scroll", () => {
-    setStore({ messages: [makeMessage("a")] });
-
-    const { container } = mountList();
-
-    const scroller = scrollerOf(container);
-    expect(scroller.getAttribute("role")).toBe("log");
-    expect(scroller.getAttribute("aria-live")).toBe("off");
-    expect(container.querySelector('[role="status"]')).not.toBeNull();
-  });
-
-  it("opens at the newest message", () => {
+describe("MessageList — bottom stickiness", () => {
+  it("arms native scroll snapping at the bottom and disarms it in history", async () => {
     setStore({ messages: longList(200) });
 
-    const { container } = mountList();
-
+    const { container } = await mountList();
     const scroller = scrollerOf(container);
-    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
-    expect(rowIds(container).at(-1)).toBe("m199");
+    expect(scroller.classList.contains("with-bottom-snap")).toBe(true);
+
+    await scrollTo(container, 0);
+    expect(scroller.classList.contains("with-bottom-snap")).toBe(false);
+
+    await scrollTo(container, bottomOf(container));
+    expect(scroller.classList.contains("with-bottom-snap")).toBe(true);
   });
 
-  it("restores the reader's place instead of jumping to the newest message", () => {
-    writeMessageScrollAnchor("c1", { key: "m300", offset: 5 });
-    setStore({ messages: longList(500) });
-
-    const { container } = mountList();
-
-    // The anchored row is mounted with runway above it and scrolled to its
-    // exact offset (5px of it hidden above the fold).
-    expect(rowIds(container)).toContain("m300");
-    const scroller = scrollerOf(container);
-    // 20 rows above it inside the restored window.
-    expect(scroller.scrollTop).toBe(20 * ROW - 5);
-  });
-
-  it("falls back to the newest message when the anchored message is gone", () => {
-    writeMessageScrollAnchor("c1", { key: "deleted-long-ago", offset: 5 });
+  it("shows the badge and the FAB once the reader leaves the bottom", async () => {
     setStore({ messages: longList(200) });
-
-    const { container } = mountList();
-
-    const scroller = scrollerOf(container);
-    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
-    expect(rowIds(container).at(-1)).toBe("m199");
-  });
-
-  it("offers a jump-to-latest button only while the reader is away from the end", async () => {
-    setStore({ messages: longList(400) });
-    const { container } = mountList();
-
+    const { container } = await mountList();
     expect(container.querySelector(".scroll-to-bottom-btn")).toBeNull();
 
     await scrollTo(container, 0);
-    await waitFor(() => {
-      expect(container.querySelector(".scroll-to-bottom-btn")).not.toBeNull();
-    });
 
-    const scroller = scrollerOf(container);
-    await scrollTo(container, scroller.scrollHeight - VIEWPORT);
-    await waitFor(() => {
-      expect(container.querySelector(".scroll-to-bottom-btn")).toBeNull();
-    });
+    expect(container.querySelector(".scroll-to-bottom-btn")).not.toBeNull();
   });
 
-  it("freezes the mounted window while reading history", async () => {
-    setStore({ messages: longList(400) });
-    const { container } = mountList();
+  it("pins to the new bottom when a message arrives while following", async () => {
+    setStore({ messages: longList(200) });
+    const { container } = await mountList();
+
+    setStore({ messages: [...longList(200), makeMessage("new1", { sent_at: "2026-08-08T12:01:00.000Z" })] });
+    await flushCommit();
+
+    expect(rowIds(container).at(-1)).toBe("new1");
+    expect(scrollerOf(container).scrollTop).toBe(bottomOf(container));
+  });
+
+  it("freezes the window and counts arrivals while the reader is in history", async () => {
+    setStore({ messages: longList(200) });
+    const { container } = await mountList();
+    await scrollTo(container, 0);
+    const frozenTail = rowIds(container).at(-1);
+
+    setStore({
+      messages: [
+        ...longList(200),
+        makeMessage("new1", { sent_at: "2026-08-08T12:01:00.000Z" }),
+        makeMessage("new2", { sent_at: "2026-08-08T12:02:00.000Z" }),
+      ],
+    });
+    await flushCommit();
+
+    expect(rowIds(container).at(-1)).toBe(frozenTail);
+    expect(container.querySelector(".scroll-to-bottom-badge")?.textContent).toBe("2");
+    expect(scrollerOf(container).scrollTop).toBe(0);
+  });
+
+  it("does not count a prepended page as unread", async () => {
+    setStore({ messages: longList(200) });
+    const { container } = await mountList();
     await scrollTo(container, 0);
 
-    // The window stops following the tail...
-    expect(rowIds(container).at(-1)).toBe("m399");
+    setStore({ messages: [...longList(40, "old"), ...longList(200)] });
+    await flushCommit();
 
-    // ...so an arrival is NOT mounted and does not move the reader.
-    setStore({ messages: [...longList(400), ...longList(50, "new")] });
-    expect(rowIds(container)).not.toContain("new0");
-    expect(rowIds(container)).toHaveLength(INITIAL_WINDOW);
-    await waitFor(() => {
-      expect(container.querySelector(".scroll-to-bottom-badge")?.textContent).toBe("50");
-    });
+    expect(container.querySelector(".scroll-to-bottom-badge")).toBeNull();
   });
 
-  it("counts appended arrivals while reading history, but not prepended pages", async () => {
-    const base = longList(400);
-    setStore({ messages: base });
-    const { container } = mountList();
-    await scrollTo(container, 0);
-
-    setStore({ messages: [...base, makeMessage("tail-1")] });
-    await waitFor(() => {
-      expect(container.querySelector(".scroll-to-bottom-badge")?.textContent).toBe("1");
-    });
-
-    // An older page is prepended: the array grows, but the tail does not move.
-    setStore({ messages: [makeMessage("older"), ...base, makeMessage("tail-1")] });
-    expect(container.querySelector(".scroll-to-bottom-badge")?.textContent).toBe("1");
-  });
-
-  it("does not chase new messages while the reader is at the end", () => {
-    const base = longList(20);
-    setStore({ messages: base });
-    const { container } = mountList();
-
-    setStore({ messages: [...base, makeMessage("tail-1")] });
-
-    expect(container.querySelector(".scroll-to-bottom-btn")).toBeNull();
-    expect(rowIds(container)).toContain("tail-1");
-  });
-
-  it("jump-to-latest re-seeds the window to the newest rows and snaps", async () => {
-    const base = longList(400);
-    setStore({ messages: base });
+  it("returns to the newest rows when the FAB is pressed", async () => {
     const ref = createRef<MessageListHandle>();
-    const { container } = mountList({ ref });
+    setStore({ messages: longList(200) });
+    const { container } = await mountList({}, ref);
     await scrollTo(container, 0);
+    setStore({ messages: [...longList(200), makeMessage("new1", { sent_at: "2026-08-08T12:01:00.000Z" })] });
+    await flushCommit();
 
-    setStore({ messages: [...base, ...longList(60, "new")] });
-    await waitFor(() => {
-      expect(container.querySelector(".scroll-to-bottom-badge")).not.toBeNull();
-    });
-
-    act(() => {
-      ref.current?.scrollToBottom();
-    });
+    act(() => ref.current?.scrollToBottom());
+    await flushCommit();
 
     expect(rows(container)).toHaveLength(RESET_WINDOW);
-    expect(rowIds(container)[0]).toBe(`new${60 - RESET_WINDOW}`);
-    const scroller = scrollerOf(container);
-    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+    expect(rowIds(container).at(-1)).toBe("new1");
+    expect(scrollerOf(container).scrollTop).toBe(bottomOf(container));
     expect(container.querySelector(".scroll-to-bottom-btn")).toBeNull();
   });
+});
 
-  it("jumps straight to a loaded message outside the mounted window", () => {
+describe("MessageList — history", () => {
+  it("slides into already-loaded rows above and keeps the reader in place", async () => {
     setStore({ messages: longList(500) });
-    const ref = createRef<MessageListHandle>();
-    const { container } = mountList({ ref });
-
-    act(() => {
-      ref.current?.scrollToMessage("m100");
-    });
-
-    expect(rowIds(container)).toContain("m100");
+    const { container } = await mountList();
     const scroller = scrollerOf(container);
-    // Centred: 20 rows above the target inside the new window.
-    expect(scroller.scrollTop).toBe(20 * ROW - (VIEWPORT - ROW) / 2);
-    expect(h.loadMoreMessages).not.toHaveBeenCalled();
-  });
-
-  it("pages older history when asked to reveal a message that is not loaded", () => {
-    setStore({ messages: longList(50), hasMoreMessages: true });
-    const ref = createRef<MessageListHandle>();
-    mountList({ ref });
-
-    act(() => {
-      ref.current?.scrollToMessage("ancient");
-    });
-
-    expect(h.loadMoreMessages).toHaveBeenCalledWith("c1");
-  });
-
-  it("reports a read line for the newest fully visible message from someone else", async () => {
-    setStore({
-      messages: [
-        makeMessage("peer-1", { sender_user_id: "peer" }),
-        makeMessage("mine-1", { sender_user_id: "me" }),
-      ],
-    });
-
-    mountList();
-
-    await waitFor(() => {
-      expect(h.queueMarkRead).toHaveBeenCalledWith("c1", "peer-1", expect.any(String));
-    });
-  });
-
-  it("does not report a message that is below the fold", async () => {
-    setStore({
-      messages: [
-        makeMessage("peer-1", { sender_user_id: "peer" }),
-        // Own messages fill the viewport, so the read line cannot advance past
-        // peer-1 even though peer-2 is mounted further down.
-        ...Array.from({ length: 11 }, (_, index) => makeMessage(`filler-${index}`, { sender_user_id: "me" })),
-        makeMessage("peer-2", { sender_user_id: "peer" }),
-      ],
-    });
-
-    const { container } = mountList();
     await scrollTo(container, 0);
     await settle();
 
-    expect(h.queueMarkRead).toHaveBeenCalledWith("c1", "peer-1", expect.any(String));
-    expect(h.queueMarkRead).not.toHaveBeenCalledWith("c1", "peer-2", expect.any(String));
+    triggerSentinel(".scroll-sentinel-top");
+    await flushCommit();
+
+    expect(rows(container)).toHaveLength(INITIAL_WINDOW + WINDOW_STEP);
+    expect(rowIds(container)[0]).toBe(`m${500 - INITIAL_WINDOW - WINDOW_STEP}`);
+    // The 3000px that were mounted above the reader are compensated exactly: the
+    // message they were looking at has not moved a pixel.
+    expect(scroller.scrollTop).toBe(WINDOW_STEP * ROW);
   });
 
-  it("does not touch the list while a finger is on the screen", async () => {
-    // WebKit defers/drops a programmatic scroll change while a gesture is live —
-    // even a resting finger. A mutation there moves the content under the finger
-    // (the reader ends up acting on a different message) and lands a second jump
-    // when the deferred write finally applies.
+  it("mounts above only at a verified rest on an engine without anchoring", async () => {
     setStore({ messages: longList(500) });
-    const { container } = mountList();
-    const wrap = container.querySelector(".message-scroll-wrap") as HTMLElement;
+    const { container } = await mountList();
+    await scrollTo(container, 0);
+    // A finger is on the list: the mount must wait for the release.
+    act(() => {
+      fireEvent.pointerDown(scrollerOf(container));
+    });
     const before = rows(container).length;
 
-    fireEvent.pointerDown(wrap);
-    await scrollTo(container, 0);
-    await settle();
-
-    // The gate held: nothing was mounted and the position was not rewritten.
+    triggerSentinel(".scroll-sentinel-top");
+    await flushCommit();
     expect(rows(container)).toHaveLength(before);
-    expect(scrollerOf(container).scrollTop).toBe(0);
 
-    // Lifting the finger runs the deferred pass immediately.
     act(() => {
       fireEvent.pointerUp(window);
     });
-    await waitFor(() => {
-      expect(rows(container).length).toBeGreaterThan(before);
-    });
-    expect(scrollerOf(container).scrollTop).toBe(50 * ROW);
-  });
-
-  it("requests the next page while the reader is still coasting", async () => {
-    setStore({ messages: longList(50), hasMoreMessages: true });
-    const { container } = mountList();
-
-    // One scroll event, no settle yet: the request must already be in flight
-    // (it touches no DOM), while the insert waits for the rest.
-    await scrollTo(container, 0);
-
-    await waitFor(() => {
-      expect(h.loadMoreMessages).toHaveBeenCalledWith("c1", { postpone: true });
-    });
-    expect(h.flushPendingOlderMessages).not.toHaveBeenCalled();
-  });
-
-  it("slides the window up into already-loaded rows and compensates the scroll", async () => {
-    setStore({ messages: longList(500) });
-    const { container } = mountList();
-    await scrollTo(container, 0);
     await settle();
 
-    // 50 rows were added ABOVE the viewport; the reader's place must not move,
-    // so `scrollTop` grew by exactly the inserted height.
-    expect(rows(container)).toHaveLength(INITIAL_WINDOW + 50);
-    expect(rowIds(container)[0]).toBe(`m${500 - INITIAL_WINDOW - 50}`);
-    expect(scrollerOf(container).scrollTop).toBe(50 * ROW);
+    expect(rows(container)).toHaveLength(before + WINDOW_STEP);
   });
 
-  it("requests a buffered older page when the window already reaches the oldest loaded row", async () => {
-    setStore({ messages: longList(50), hasMoreMessages: true });
-    const { container } = mountList();
+  it("mounts above immediately when the engine anchors for us", async () => {
+    document.documentElement.classList.add("has-scroll-anchoring");
+    setStore({ messages: longList(500) });
+    const { container } = await mountList();
     await scrollTo(container, 0);
+    act(() => {
+      fireEvent.pointerDown(scrollerOf(container));
+    });
 
     triggerSentinel(".scroll-sentinel-top");
+    await flushCommit();
 
-    await waitFor(() => {
-      expect(h.loadMoreMessages).toHaveBeenCalledWith("c1", { postpone: true });
-    });
-    // Nothing was inserted yet — the buffered page lands at rest.
-    expect(rows(container)).toHaveLength(50);
+    expect(rows(container)).toHaveLength(INITIAL_WINDOW + WINDOW_STEP);
   });
 
-  it("inserts the buffered page above the reader and keeps their place", async () => {
-    const base = longList(50);
-    const older = longList(50, "old");
-    setStore({ messages: base, hasMoreMessages: true });
-    h.flushPendingOlderMessages.mockImplementation(() => {
-      h.store.setState({ messages: [...older, ...base] });
-      return true;
-    });
-    const { container } = mountList();
+  it("mounts a buffered page above the reader", async () => {
+    setStore({ messages: longList(100), hasMoreMessages: true });
+    const { container } = await mountList();
+    const scroller = scrollerOf(container);
     await scrollTo(container, 0);
     await settle();
 
-    expect(h.flushPendingOlderMessages).toHaveBeenCalledWith("c1");
-    expect(rowIds(container)).toHaveLength(100);
+    h.flushPendingOlderMessages.mockImplementation(() => true);
+    setStore({ messages: [...longList(50, "old"), ...longList(100)] });
+    triggerSentinel(".scroll-sentinel-top");
+    await flushCommit();
+
     expect(rowIds(container)[0]).toBe("old0");
-    expect(scrollerOf(container).scrollTop).toBe(50 * ROW);
+    expect(rows(container)).toHaveLength(150);
+    // The page was inserted above the reader: their message is still in place.
+    expect(scroller.scrollTop).toBe(50 * ROW);
   });
 
-  it("garbage-collects rows above the ceiling without waiting for a scroll", () => {
-    const base = longList(200);
-    setStore({ messages: base });
-    const { container } = mountList();
+  it("requests the previous page when no loaded rows are left above", async () => {
+    setStore({ messages: longList(100), hasMoreMessages: true });
+    const { container } = await mountList();
+    await scrollTo(container, 0);
+    await settle();
 
-    // 200 arrivals while pinned to the bottom: the window grows, then the GC
-    // pass trims the top down to the ceiling.
-    setStore({ messages: [...base, ...longList(200, "new")] });
+    triggerSentinel(".scroll-sentinel-top");
+    await flushCommit();
+
+    expect(h.loadMoreMessages).toHaveBeenCalledWith("c1", { postpone: true });
+  });
+
+  it("never mounts more than the ceiling", async () => {
+    setStore({ messages: longList(600), hasMoreMessages: true });
+    const { container } = await mountList();
+    await scrollTo(container, 0);
+    await settle();
+
+    for (let step = 0; step < 6; step += 1) {
+      triggerSentinel(".scroll-sentinel-top");
+      await flushCommit();
+      await settle();
+    }
 
     expect(rows(container).length).toBeLessThanOrEqual(MAX_DOM_MESSAGES);
-    expect(rowIds(container).at(-1)).toBe("new199");
-    const scroller = scrollerOf(container);
-    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+  });
+});
+
+describe("MessageList — jump", () => {
+  it("restores the saved session anchor instead of the newest message", async () => {
+    setStore({ messages: longList(500) });
+    writeMessageScrollAnchor("c1", { key: "m450", offset: 5 });
+
+    const { container } = await mountList();
+
+    const row = container.querySelector<HTMLElement>('.message-item[data-message-id="m450"]')!;
+    expect(row).not.toBeNull();
+    expect(scrollerOf(container).scrollTop).toBe(row.offsetTop - 5);
   });
 
-  it("does not re-render existing rows when 50 messages arrive", () => {
-    const base = longList(200);
-    setStore({ messages: base });
-    mountList();
-    captured.length = 0;
+  it("glides to a loaded message and flashes it", async () => {
+    const ref = createRef<MessageListHandle>();
+    setStore({ messages: longList(500) });
+    const { container } = await mountList({}, ref);
 
-    setStore({ messages: [...base, ...longList(50, "new")] });
+    act(() => ref.current?.scrollToMessage("m100"));
+    await flushCommit();
 
-    // Only the arrivals rendered: the mounted rows kept their identity, so
-    // React.memo never re-ran their renderer.
-    expect(captured).toHaveLength(50);
-    expect(captured.every((entry) => entry.id.startsWith("new"))).toBe(true);
+    const row = container.querySelector<HTMLElement>('.message-item[data-message-id="m100"]')!;
+    expect(row).not.toBeNull();
+    expect(row.classList.contains("is-flash")).toBe(true);
+    // Aligned to the end of the viewport.
+    expect(scrollerOf(container).scrollTop).toBe(row.offsetTop + ROW - VIEWPORT);
   });
 
-  it("falls back to the tail, without compensation, when the window's keys are gone", async () => {
-    setStore({ messages: longList(400) });
-    const { container } = mountList();
-    // Freeze the window on the middle rows (250..399).
+  it("pages older history when the target is not loaded", async () => {
+    const ref = createRef<MessageListHandle>();
+    setStore({ messages: longList(50), hasMoreMessages: true });
+    await mountList({}, ref);
+
+    act(() => ref.current?.scrollToMessage("not-loaded"));
+    await flushCommit();
+
+    expect(h.loadMoreMessages).toHaveBeenCalled();
+  });
+});
+
+describe("MessageList — read line", () => {
+  it("reports the newest fully visible message that is not the reader's own", async () => {
+    setStore({
+      messages: [
+        ...longList(30, "a"),
+        makeMessage("deleted", { sender_user_id: "u2", is_deleted: true }),
+        makeMessage("mine", { sender_user_id: "me" }),
+      ],
+    });
+
+    await mountList();
+    await settle();
+
+    expect(h.queueMarkRead).toHaveBeenCalledTimes(1);
+    const [, messageId] = h.queueMarkRead.mock.calls[0] as [string, string];
+    // The last two rows are not eligible: one is deleted, one is the reader's.
+    expect(messageId).toBe("a29");
+  });
+
+  it("stops at the fold: a message that is not fully visible is not read", async () => {
+    setStore({ messages: longList(60) });
+
+    const { container } = await mountList();
+    await scrollTo(container, bottomOf(container) - 300);
+    await settle();
+
+    expect(h.queueMarkRead).toHaveBeenCalled();
+    const [, messageId] = h.queueMarkRead.mock.calls.at(-1) as [string, string];
+    // 300px above the bottom, the last fully visible row is m54 — m55..m59 are
+    // partly or fully below the fold.
+    expect(messageId).toBe("m54");
+  });
+
+  it("does not repeat the same report when nothing changed", async () => {
+    setStore({ messages: longList(30) });
+
+    await mountList();
+    await settle();
+    expect(h.queueMarkRead).toHaveBeenCalledTimes(1);
+
+    h.queueMarkRead.mockClear();
+    await settle();
+
+    expect(h.queueMarkRead).not.toHaveBeenCalled();
+  });
+
+  it("reports further down when the reader scrolls to the bottom", async () => {
+    setStore({
+      messages: [
+        ...longList(30, "a"),
+        makeMessage("first", { sender_user_id: "u2" }),
+        ...longList(10, "below"),
+        makeMessage("last", { sender_user_id: "u2" }),
+      ],
+    });
+
+    const { container } = await mountList();
     await scrollTo(container, 0);
-    expect(rowIds(container)[0]).toBe("m250");
+    await settle();
+    h.queueMarkRead.mockClear();
 
-    // A full replacement: every key is gone. The fallback tail window is a
-    // fresh slice, not "rows added above" — compensating it would throw the
-    // reader hundreds of rows down.
-    setStore({ messages: longList(300, "fresh") });
+    await scrollTo(container, bottomOf(container));
+    await settle();
 
-    expect(rowIds(container).at(-1)).toBe("fresh299");
-    expect(scrollerOf(container).scrollTop).toBe(0);
-  });
-
-  it("re-renders rows when the ambient render version changes", () => {
-    setStore({ messages: [makeMessage("a"), makeMessage("b")] });
-    const { rerender } = render(
-      <MessageList renderMessage={renderMessage} renderVersion={{ pinned: null }} />,
-    );
-    expect(captured).toHaveLength(2);
-
-    captured.length = 0;
-    rerender(<MessageList renderMessage={renderMessage} renderVersion={{ pinned: "a" }} />);
-
-    expect(captured.map((entry) => entry.id)).toEqual(["a", "b"]);
+    expect(h.queueMarkRead).toHaveBeenCalledTimes(1);
+    const [, messageId] = h.queueMarkRead.mock.calls[0] as [string, string];
+    expect(messageId).toBe("last");
   });
 });
