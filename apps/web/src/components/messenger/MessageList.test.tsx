@@ -556,6 +556,24 @@ describe("MessageList — history", () => {
     expect(rows(container)).toHaveLength(before + WINDOW_STEP);
   });
 
+  it("leaves the compensation for content above to an anchoring engine", async () => {
+    document.documentElement.classList.add("has-scroll-anchoring");
+    setStore({ messages: longList(500) });
+    const { container } = await mountList();
+    const scroller = scrollerOf(container);
+    await scrollTo(container, 300);
+    const topBefore = scroller.scrollTop;
+
+    triggerSentinel(".scroll-sentinel-top");
+    await flushCommit();
+
+    expect(rowIds(container)[0]).toBe(`m${500 - INITIAL_WINDOW - WINDOW_STEP}`);
+    // The engine moves `scrollTop` for the rows mounted above (the fake layout
+    // cannot model that), so the list must write nothing at all: the assertion
+    // is that the position is exactly where the reader left it.
+    expect(scroller.scrollTop).toBe(topBefore);
+  });
+
   it("mounts above immediately when the engine anchors for us", async () => {
     document.documentElement.classList.add("has-scroll-anchoring");
     setStore({ messages: longList(500) });

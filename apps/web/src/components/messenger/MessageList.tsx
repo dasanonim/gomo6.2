@@ -928,7 +928,17 @@ export const MessageList = memo(
             const coord = previousRow.getBoundingClientRect().top - containerTop + scrollTop;
             const growth = coord - previous.anchorCoord;
             const topDelta = containerTop - previous.containerTop;
-            const target = scrollTop + growth - topDelta;
+
+            // Where the engine anchors scroll for us, content inserted or grown
+            // ABOVE the viewport already moved `scrollTop` by exactly `growth`,
+            // and writing it again would throw the reader a full growth further
+            // down. (With anchoring: the anchor's rect stays put while
+            // `scrollTop` grows by the inserted height, so the coordinate delta
+            // IS the growth — measured, not assumed.) Without anchoring the
+            // write is the compensation. A container whose top edge moved is
+            // never the engine's business, so that part is always ours.
+            const contentCompensation = hasScrollAnchoring() ? 0 : growth;
+            const target = scrollTop + contentCompensation - topDelta;
             if (Math.abs(target - scrollTop) > 0.5) nextScrollTop = target;
           }
         }

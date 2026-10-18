@@ -102,17 +102,31 @@ The anchor is a mounted row — **one row below the fold**, deliberately
 `rect.top - scrollerRect.top + scrollTop`, which is **invariant under scrolling**:
 the reader scrolling changes `rect.top` and `scrollTop` by exactly the same
 amount. So the delta that coordinate moved by between two commits is *exactly*
-the layout change above the reader's place, and:
+the layout change above the reader's place:
 
 ```ts
-scrollTop += anchorCoordNow - anchorCoordBefore;
+const growth = anchorCoordNow - anchorCoordBefore;   // the real inserted height
 ```
 
-is idempotent with the engine's own anchoring:
+What to do with it depends on the engine, and this is the subtle part:
 
-* Chromium/Firefox already moved `scrollTop` by that delta → the measured delta
-  is `0` → nothing is written (no double compensation).
-* WebKit did not → the delta is the real growth → one write fixes it.
+* **Chromium/Firefox already did it.** Scroll anchoring keeps the anchor's
+  `rect.top` where it was and moves `scrollTop` by the inserted height instead —
+  so `growth` measures the insertion but the position is already correct, and any
+  write would throw the reader a *second* full growth down the list. There the
+  list writes nothing (`contentCompensation = 0`).
+* **WebKit did nothing**, so the same delta is the compensation:
+  `scrollTop += growth`.
+
+Writing `scrollTop += growth` unconditionally is therefore a *double*
+compensation on the anchoring engines — a jump of exactly the inserted height on
+every page mount, which is precisely the bug this section's first version had
+(measured by the dev counters below: two writes per mount gesture; after the fix,
+zero — see §8).
+
+A container whose **top edge** moved (the pinned banner appearing above the
+messages) is never the engine's business, so that part of the correction is
+always applied.
 
 One row below the fold rather than the first visible row, because the first row
 can change height when older messages are mounted (a date separator moves to an
@@ -345,6 +359,11 @@ side, and the same step never both mounts and trims more than the overflow.
 * Dev counters — `core/scrollDiagnostics.test.ts` (gesture accounting) and a
   `MessageList` case that scrolls a real list with the overlay on and asserts the
   per-gesture write count is 0.
+* Measured in a browser on the seeded 200-message chat, over five gestures that
+  mount a page and slide the window 50 → 100 → 150 → 180 rows: **0 writes per
+  gesture, worst gesture 0**, commit 2.5 ms for a slide and ~17–20 ms for a mount
+  of 100 rows (dev build, hidden tab). The same run before the anchoring fix
+  reported 2 writes per mount gesture.
 * Manual (a device is required, and is **not** a substitute for CI): open a
   long chat at the bottom, fling up through several pages, fling back down,
   receive a message while at the bottom and while deep in history, open a pinned
