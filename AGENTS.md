@@ -123,6 +123,16 @@ the backend + Docker infra can stay up across restarts.
   curl -s -o /dev/null -w "api:%{http_code}\n"  "http://localhost:8081/api/v1/feed?limit=1"
   curl -s -o /dev/null -w "health:%{http_code}\n" http://localhost:8080/health
   ```
+- **Phone testing (`make dev` + `make mobile`)**: web binds to `::` and proxies
+  everything, so a phone on the same Wi-Fi uses the app as-is. Two traps:
+  (1) the WebSocket hub validates the request's `Origin` against
+  `ALLOWED_ORIGINS` (`internal/websocket/hub.go`), and the phone's origin is not
+  localhost — a phone the list does not know loads the app, works over REST and
+  **silently never connects realtime** (no messages, no typing). `scripts/dev.sh`
+  now writes the LAN origins via `scripts/lan-origins.sh`; for a stack started
+  before that, `FIX=1 make mobile` repairs `.dev.env` and respawns the backend
+  window. (2) HTTP is not a secure context on a phone: «Заметки» (WebCrypto),
+  PWA install and push need HTTPS — `make mobile` says so.
 - **Sandbox note**: the agent's Bash sandbox refuses `listen` on any local port
   (EPERM) and denies the Docker/tmux sockets, so it cannot start or restart the dev
   stack itself. Drive those steps through the Terminal panel (runs on the host):

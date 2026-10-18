@@ -27,6 +27,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.." # repo root
 
+# LAN origins (the phone on the same Wi-Fi) — see scripts/lan-origins.sh.
+# shellcheck source=scripts/lan-origins.sh
+. "$(dirname "$0")/lan-origins.sh"
+
+WEB_PORT="${WEB_PORT:-8081}"
+MOBILE_WEB_PORT="${MOBILE_WEB_PORT:-8443}"
+
 COMPOSE="docker compose"
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.dev.yml"
 TMUX_SESSION="gomo6-dev"
@@ -177,7 +184,7 @@ DEV_ENV_FILE=".dev.env"
     echo "export SERVER_PORT=8080"
     printf "export DATABASE_URL='postgres://gomo6:%s@127.0.0.1:5432/gomo6?sslmode=disable'\n" "$POSTGRES_PASSWORD"
     printf "export REDIS_URL='redis://:%s@127.0.0.1:6379'\n" "$REDIS_PASSWORD"
-    echo "export ALLOWED_ORIGINS='http://localhost:8081,http://localhost:3001,http://localhost:3002'"
+    printf "export ALLOWED_ORIGINS='%s'\n" "$(gomo6_allowed_origins "$WEB_PORT" "$MOBILE_WEB_PORT")"
     echo "export TURNSTILE_DISABLED=1"
     echo "export WEBAUTHN_RP_ID=localhost"
     echo "export WEBAUTHN_RP_ORIGIN=http://localhost:8081"
