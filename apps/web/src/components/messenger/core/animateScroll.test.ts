@@ -8,6 +8,7 @@ import {
   animateScroll,
   cancelScrollAnimation,
   isAnimatingScroll,
+  restartCurrentScrollAnimation,
 } from "./animateScroll";
 
 describe("animateScroll", () => {
@@ -140,6 +141,32 @@ describe("animateScroll", () => {
     expect(isAnimatingScroll(scroller.el)).toBe(false);
     expect(scroller.scrollTop).toBe(interrupted);
     expect(scroller.el.style.scrollSnapType).toBe("");
+  });
+
+  it("retargets a running glide when the content moved under it", async () => {
+    const scroller = makeScroller(4000, 600);
+    const row = makeRow(scroller.el, { offsetTop: 1000, offsetHeight: 60 });
+    scroller.setScrollTop(600);
+
+    const mutate = animateScroll({
+      container: scroller.el,
+      element: row,
+      position: "end",
+      forceDuration: 400,
+      shouldReturnMutationFn: true,
+    });
+    mutate?.();
+    await raf.advanceFrames(FRAME_MS * 4);
+
+    // The row grew / moved while the glide was in flight (an image resolved, a
+    // page was mounted above). A commit retargets the glide instead of fighting
+    // it for the position.
+    Object.defineProperty(row, "offsetTop", { get: () => 1400, configurable: true });
+    restartCurrentScrollAnimation(scroller.el);
+    await raf.advanceFrames(600);
+
+    expect(scroller.scrollTop).toBe(1400 + 60 - 600);
+    expect(isAnimatingScroll(scroller.el)).toBe(false);
   });
 
   it("does nothing when told to hand back the write", async () => {

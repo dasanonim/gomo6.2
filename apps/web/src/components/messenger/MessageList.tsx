@@ -42,6 +42,7 @@ import {
   animateScroll,
   cancelScrollAnimation,
   isAnimatingScroll,
+  restartCurrentScrollAnimation,
   type ScrollDirection,
   type ScrollPosition,
 } from "./core/animateScroll";
@@ -596,6 +597,33 @@ export const MessageList = memo(
       }
     }, []);
 
+    /**
+     * Remember where the reader is, for the next open of this conversation — and,
+     * because the anchor also goes to `sessionStorage`, for the next *load* of the
+     * app (core/messageScrollAnchors). Written at rest, never on scroll: the row
+     * offsets it reads are only meaningful once the layout has settled.
+     */
+    const persistAnchor = useCallback(() => {
+      const id = conversationIdRef.current;
+      const scroller = scrollerRef.current;
+      if (!id || !scroller) return;
+      if (followingRef.current) {
+        // At the newest message there is nothing to remember — and a stale
+        // mid-history anchor must not survive into the next load.
+        clearMessageScrollAnchor(id);
+        return;
+      }
+
+      const scrollTop = readContainerScrollTop(scroller);
+      for (const row of rowsRef.current) {
+        if (row.offsetTop + row.offsetHeight <= scrollTop + 1) continue;
+        const key = row.dataset.messageKey;
+        if (!key) return;
+        writeMessageScrollAnchor(id, { key, offset: Math.max(0, row.offsetTop - scrollTop) });
+        return;
+      }
+    }, []);
+
     // ── The verified rest ──────────────────────────────────────────────
     /**
      * Everything that must not run under a live gesture or a coast. A quiet
@@ -632,9 +660,12 @@ export const MessageList = memo(
         }
         // A layout read (the binary search over row offsets) belongs in a
         // measure pass, not in an arbitrary timer task.
-        requestMeasure(() => reportVisibleReads());
+        requestMeasure(() => {
+          reportVisibleReads();
+          persistAnchor();
+        });
       },
-      [flushBufferedPage, expandOlderNow, reportVisibleReads],
+      [flushBufferedPage, expandOlderNow, reportVisibleReads, persistAnchor],
     );
     const restRef = useRef(handleRest);
     restRef.current = handleRest;
@@ -932,6 +963,12 @@ export const MessageList = memo(
             }
             flashMessage(pendingJump.id);
           }
+        } else if (isAnimatingScroll(scroller)) {
+          // A glide owns the position for its duration. A commit that lands in
+          // the middle of it (a message arrived, a row resized) must not fight
+          // it for the position — it retargets it, so the glide still lands
+          // where it was aiming (Telegram Web: `restartCurrentScrollAnimation`).
+          restartCurrentScrollAnimation(scroller);
         } else if (tailMoved && followingRef.current) {
           // The reader is following the tail and it moved: glide the arrival in.
           // The trigger after the content is the target, so the glide lands on

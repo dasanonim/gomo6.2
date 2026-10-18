@@ -173,6 +173,18 @@ stay pinned. The scroll-snap position is honoured by the browser during layout,
 which is precisely what a `scrollTop` write during a live scroll is not (WebKit
 drops those).
 
+### 4.1 Remembering the place across a reload
+
+`core/messageScrollAnchors.ts` keeps `{ key, offset }` per conversation: written at
+every verified rest (only while the reader is away from the bottom, and cleared
+there), and persisted to `sessionStorage` so a reloaded tab — or a relaunched PWA
+— reopens where the reader was. Telegram Web does the same with its persisted
+scroll offset and saved viewport. Session storage rather than local: two tabs on
+different messages of one chat must not fight over a single entry.
+
+`MessageList` already seeded its window from that anchor; persistence turns the
+"return to the chat" behaviour into a "return to the app" one.
+
 ## 5. The mounted window
 
 Bounded in `core/slicing.ts`, expressed in **keys** (`messageKey` = `client_id ||
@@ -253,7 +265,10 @@ another full rest — measured in the tests as a slide that never happens.
 
 **A glide owns the position.** While `animateScroll` runs, its per-frame writes are
 not the reader either: the scroll pass returns early, so a 500ms glide does not
-drag four rest passes and four read-line searches behind it.
+drag four rest passes and four read-line searches behind it. And a commit that
+lands *during* a glide (a message arrived, a share card resolved, a page was
+mounted above) retargets it (`restartCurrentScrollAnimation`) instead of writing a
+second, competing position — the glide still lands where it was aiming.
 
 **A touch takes the position back.** Telegram cancels a glide when a new focus
 supersedes it; a reader touching the list is the strongest version of that, so

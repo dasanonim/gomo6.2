@@ -108,13 +108,24 @@ export function cancelScrollAnimation(container?: HTMLElement): void {
 export function restartCurrentScrollAnimation(container: HTMLElement): void {
   const pending = retargetable.get(container);
   if (!pending || !animations.has(container)) return;
-  animateScroll({ ...pending, container });
+
+  // The remembered args may still say "hand the write back" (the list runs its
+  // glides inside its own forced reflow). A retarget is ours to run: drop the
+  // flag and start the new glide here.
+  const { shouldReturnMutationFn: _returnMutation, ...args } = pending;
+  animateScroll({ ...args, container });
 }
 
 export function animateScroll(args: AnimateScrollArgs): (() => void) | undefined {
   const mutate = createMutationFn(args);
 
-  if (args.shouldReturnMutationFn) return mutate;
+  if (args.shouldReturnMutationFn) {
+    // The caller runs the write inside its own forced reflow, but the target
+    // still has to be remembered: a commit that lands mid-glide retargets it
+    // (`restartCurrentScrollAnimation`) instead of fighting it.
+    retargetable.set(args.container, args);
+    return mutate;
+  }
 
   // A new target supersedes the previous glide on the same scroller.
   cancelScrollAnimation(args.container);
