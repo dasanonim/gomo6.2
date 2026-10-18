@@ -34,6 +34,7 @@ const mockSetSearchParams = vi.hoisted(() => vi.fn());
 const mockSearchParams = vi.hoisted(() => new URLSearchParams());
 
 vi.mock("@/stores/messengerStore", () => ({
+    getConversationReadThrough: () => null,
   useMessengerStore: Object.assign(vi.fn((selector: any) => selector(mockStore)), {
     getState: () => mockStore,
     setState: () => {},

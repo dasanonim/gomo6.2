@@ -162,6 +162,8 @@ const pendingReadLine = new Map<string, PendingReceipt>();
 const lastSentReadLine = new Map<string, PendingReceipt>();
 const localReadThrough = new Map<string, string>(); // convId → newest locally read sent_at
 
+
+
 let readFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const READ_FLUSH_DELAY_MS = 400;
 
@@ -1251,3 +1253,22 @@ export const selectSelectedConversation = (s: MessengerStore) =>
 
 export const selectTotalUnread = (s: MessengerStore) =>
   s.conversations.reduce((sum, c) => sum + (c.unread_count ?? 0), 0);
+
+/**
+ * The boundary of "unread" for a conversation: the newest timestamp that is known
+ * to have been read. The local marker wins when it is later than the server's
+ * `last_read_at`, because reading advances locally long before the server
+ * confirms it. The unread marker is captured from this value when a chat is
+ * opened and stays put for that session (Telegram's rule): it belongs to the
+ * moment the reader left off, and the next open — with the read line advanced —
+ * simply has no marker to place.
+ *
+ * Returns `null` when nothing is known to be read (everything is unread).
+ */
+export function getConversationReadThrough(conversationId: string): string | null {
+  const local = localReadThrough.get(conversationId) ?? null;
+  const fromServer = useMessengerStore.getState().conversations
+    .find((c) => c.id === conversationId)?.last_read_at ?? null;
+  if (local && fromServer) return Date.parse(local) >= Date.parse(fromServer) ? local : fromServer;
+  return local ?? fromServer;
+}

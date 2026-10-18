@@ -32,6 +32,7 @@ const mockStore = {
 };
 
 vi.mock("@/stores/messengerStore", () => ({
+    getConversationReadThrough: () => null,
   useMessengerStore: vi.fn((selector: (s: typeof mockStore) => unknown) => {
     return selector(mockStore);
   }),

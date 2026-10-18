@@ -17,7 +17,7 @@ import { queueMarkRead, useMessengerStore } from "@/stores/messengerStore";
 import { hasScrollAnchoring } from "@/lib/scrollAnchoring";
 import type { MessageView, ReceiptRow } from "./types";
 import { getDateSeparator, isConsecutive } from "./messageListUtils";
-import { indexById, messageKey } from "./core/messageModel";
+import { indexById, messageKey, sentAtMs } from "./core/messageModel";
 import {
   clearMessageScrollAnchor,
   readMessageScrollAnchor,
@@ -27,6 +27,7 @@ import {
 import {
   ANCHOR_AFTER,
   ANCHOR_BEFORE,
+  INITIAL_WINDOW,
   MAX_DOM_MESSAGES,
   RESET_WINDOW,
   WINDOW_STEP,
@@ -115,6 +116,8 @@ const FOCUS_MARGIN = 20;
  * (which is exactly a jump-to-bottom or a jump-to-message here).
  */
 const BOTTOM_FOCUS_DISTANCE = 500;
+/** Distance the unread divider keeps from the top when a chat opens on it. */
+const UNREAD_DIVIDER_TOP = 12;
 /** Redisplays a jumped-to message for this long. */
 const FLASH_MS = 1400;
 /** How many pages `scrollToMessage` may fetch while looking for its target. */
@@ -153,6 +156,14 @@ interface MessageListProps {
   /** Notes self-chat: a filtered view of the store messages (folder filter).
    *  When omitted the full store list is used. */
   messagesOverride?: MessageView[];
+  /**
+   * The timestamp the conversation is known to be read up to, captured when the
+   * chat was opened (`getConversationReadThrough`). Read on mount ONLY: the marker
+   * of where the reader left off must not move while they are reading it — it is
+   * recomputed on the next open, exactly like Telegram Web's
+   * `memoUnreadDividerBeforeIdRef`.
+   */
+  unreadBoundaryAt?: string | null;
 }
 
 type RenderMessage = MessageListProps["renderMessage"];
@@ -246,6 +257,32 @@ function findLastVisibleRowIndex(rows: HTMLElement[], fold: number): number {
   return visible;
 }
 
+/**
+ * The first loaded message the reader has not read: everything newer than the
+ * read-through boundary, skipping their own.
+ *
+ * `undefined` means the caller said nothing about the boundary (no divider);
+ * `null` means "nothing is known to be read", i.e. everything not the reader's
+ * own is unread — which is what a chat the reader has never opened looks like.
+ */
+function findFirstUnreadKey(
+  messages: readonly MessageView[],
+  boundaryAt: string | null | undefined,
+  ownId: string | undefined,
+): string | null {
+  if (boundaryAt === undefined) return null;
+
+  const boundary = boundaryAt ? Date.parse(boundaryAt) : Number.NEGATIVE_INFINITY;
+
+  for (const message of messages) {
+    if (message.is_deleted) continue;
+    if (ownId && message.sender_user_id === ownId) continue;
+    if (sentAtMs(message) > boundary) return messageKey(message);
+  }
+
+  return null;
+}
+
 // ── Window math ────────────────────────────────────────────────────────────
 
 /** A key window for an explicit `[start, end)` slice. */
@@ -303,7 +340,7 @@ function windowFromSlice(
  */
 export const MessageList = memo(
   forwardRef<MessageListHandle, MessageListProps>(function MessageList(
-    { renderMessage, renderVersion, messagesOverride },
+    { renderMessage, renderVersion, messagesOverride, unreadBoundaryAt },
     ref,
   ) {
     const conversationId = useMessengerStore((s) => s.selectedConversationId);
@@ -325,8 +362,10 @@ export const MessageList = memo(
     // ── Window state ───────────────────────────────────────────────────
     // Seeded once per mount (the list is keyed by conversation in ChatView):
     // the saved session anchor when its message is still loaded, the tail
-    // otherwise.
+    // otherwise. The unread marker is frozen here too — it belongs to the moment
+    // the chat was opened, not to the reader's progress through it.
     const [initial] = useState(() => {
+      const unreadKey = findFirstUnreadKey(messages, unreadBoundaryAt, meId);
       const saved = conversationId ? readMessageScrollAnchor(conversationId) : undefined;
       if (saved) {
         const at = messages.findIndex((message) => messageKey(message) === saved.key);
@@ -337,10 +376,31 @@ export const MessageList = memo(
               last: messageKey(messages[Math.min(messages.length - 1, at + ANCHOR_AFTER)]),
             } satisfies KeyWindow,
             restore: saved as MessageScrollAnchor | null,
+            unreadKey,
           };
         }
       }
-      return { window: tailKeyWindow(messages), restore: null as MessageScrollAnchor | null };
+      if (unreadKey) {
+        const at = messages.findIndex((message) => messageKey(message) === unreadKey);
+        if (at >= 0) {
+          return {
+            window: windowFromSlice(
+              messages,
+              at,
+              Math.min(messages.length, at + INITIAL_WINDOW),
+              false,
+            ),
+            restore: null as MessageScrollAnchor | null,
+            unreadKey,
+          };
+        }
+      }
+
+      return {
+        window: tailKeyWindow(messages),
+        restore: null as MessageScrollAnchor | null,
+        unreadKey,
+      };
     });
 
     const [window, setWindow] = useState<KeyWindow>(initial.window);
@@ -360,6 +420,11 @@ export const MessageList = memo(
 
     const messagesRef = useRef(messages);
     messagesRef.current = messages;
+
+    const unreadIndex = useMemo(() => {
+      if (!initial.unreadKey) return -1;
+      return indexByKey.get(initial.unreadKey) ?? -1;
+    }, [indexByKey, initial.unreadKey]);
 
     const resolved = resolveKeyWindow(window, indexByKey, messages.length);
     const windowResolvable = resolved !== null;
@@ -945,9 +1010,23 @@ export const MessageList = memo(
           const row = restore ? findRowByKey(rows, restore.key) : null;
           if (row && restore) {
             nextScrollTop = Math.max(0, row.offsetTop - restore.offset);
+            // Not at the newest message: the state has to agree with the ref, or
+            // the "to the newest" button would not be offered until the reader
+            // scrolls (which is exactly the state they are already in).
             followingRef.current = false;
+            setFollowing(false);
           } else {
-            pin = true;
+            // Where the unread messages begin is a better place to open than the
+            // bottom: the reader sees what is new, and the newest messages are
+            // one FAB press away (Telegram opens at the first unread).
+            const divider = scroller.querySelector<HTMLElement>(".chat-unread-divider");
+            if (divider) {
+              nextScrollTop = Math.max(0, divider.offsetTop - UNREAD_DIVIDER_TOP);
+              followingRef.current = false;
+              setFollowing(false);
+            } else {
+              pin = true;
+            }
           }
         } else if (pendingJump) {
           const row = findRowById(rows, pendingJump.id);
@@ -1256,6 +1335,16 @@ export const MessageList = memo(
     for (let at = derived.start; at < derived.end; at += 1) {
       const message = messages[at];
       if (!message) continue;
+
+      if (at === unreadIndex) {
+        // Not a `.message-item`: the anchor and the read-line search must never
+        // treat this marker as a message row.
+        rows.push(
+          <div key="unread-divider" className="chat-unread-divider" aria-hidden="true">
+            <span>Непрочитанные сообщения</span>
+          </div>,
+        );
+      }
       const prev = at > 0 ? messages[at - 1] : null;
       rows.push(
         <MessageItem

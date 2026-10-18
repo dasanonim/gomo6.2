@@ -5,7 +5,12 @@ import { PentagramLoader } from "@/components/PentagramLoader";
 import { UserBadge } from "@/components/UserBadge";
 import { UserAvatar } from "@/components/UserAvatar";
 import { giftImageUrl } from "@/utils/storage";
-import { useMessengerStore, selectSelectedConversation, queueMarkDelivered } from "@/stores/messengerStore";
+import {
+  getConversationReadThrough,
+  queueMarkDelivered,
+  selectSelectedConversation,
+  useMessengerStore,
+} from "@/stores/messengerStore";
 import { useLanguageStore } from "@/stores/languageStore";
 import { formatPresence, getGroupInitials, getInitials, getUserColorClass } from "./utils";
 import { MessageBubble } from "./MessageBubble";
@@ -124,6 +129,14 @@ export const ChatView = memo(function ChatView({
   // for the chat being opened, and the reply/edit/attachment staging of the one
   // being left must not follow the reader.
   const activeConversationId = conversation?.id;
+
+  // The unread boundary is captured when the conversation is opened: while the
+  // reader reads, their own read line advances and would take the marker away
+  // under them. The next open recomputes it (Telegram does the same).
+  const unreadBoundaryRef = useRef<{ id: string; at: string | null } | null>(null);
+  if (conversation && unreadBoundaryRef.current?.id !== conversation.id) {
+    unreadBoundaryRef.current = { id: conversation.id, at: getConversationReadThrough(conversation.id) };
+  }
   useEffect(() => {
     conversationIdRef.current = activeConversationId;
     if (!activeConversationId) return;
@@ -640,6 +653,7 @@ export const ChatView = memo(function ChatView({
             renderMessage={renderMessage}
             renderVersion={renderVersion}
             messagesOverride={visibleMessages}
+            unreadBoundaryAt={unreadBoundaryRef.current?.at ?? null}
           />
         )}
       </div>

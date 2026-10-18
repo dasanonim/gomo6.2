@@ -38,6 +38,7 @@ vi.mock("@/stores/messengerStore", async () => {
   }));
   h.store = useMessengerStore as unknown as typeof h.store;
   return {
+    getConversationReadThrough: () => null,
     useMessengerStore,
     queueMarkRead: (...args: unknown[]) => h.queueMarkRead(...args),
   };
@@ -181,6 +182,16 @@ function installLayout() {
     configurable: true,
     get(this: HTMLElement) {
       if (this.classList.contains("message-item")) return itemOffsetTop(this);
+      if (this.classList.contains("chat-unread-divider")) {
+        // Zero-height in jsdom: it sits where the rows above it end.
+        let top = 0;
+        let sibling = this.previousElementSibling;
+        while (sibling) {
+          if (sibling.classList.contains("message-item")) top += ROW;
+          sibling = sibling.previousElementSibling;
+        }
+        return top;
+      }
       if (this.classList.contains("fab-trigger")) return itemsIn(this.closest(".message-scroll")!) * ROW + 2;
       return 0;
     },
@@ -194,9 +205,19 @@ function installLayout() {
       const scroller = isScroller ? this : this.closest<HTMLElement>(".message-scroll");
       const contentTop = this.classList.contains("message-item")
         ? itemOffsetTop(this)
-        : this.classList.contains("fab-trigger") && scroller
-          ? itemsIn(scroller) * ROW + 2
-          : 0;
+        : this.classList.contains("chat-unread-divider")
+          ? (() => {
+              let top = 0;
+              let sibling = this.previousElementSibling;
+              while (sibling) {
+                if (sibling.classList.contains("message-item")) top += ROW;
+                sibling = sibling.previousElementSibling;
+              }
+              return top;
+            })()
+          : this.classList.contains("fab-trigger") && scroller
+            ? itemsIn(scroller) * ROW + 2
+            : 0;
       const height = isScroller ? viewportHeight : this.classList.contains("message-item") ? ROW : 0;
       const top = isScroller ? scrollerTop : contentTop - (scroller ? scrollTopValue : 0);
       return { top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) };
@@ -247,7 +268,8 @@ const setStore = (patch: Record<string, unknown>) => {
 const rows = (container: HTMLElement) => Array.from(container.querySelectorAll<HTMLElement>(".message-item"));
 const rowIds = (container: HTMLElement) => rows(container).map((row) => row.dataset.messageId);
 const scrollerOf = (container: HTMLElement) => container.querySelector<HTMLElement>(".message-scroll")!;
-const bottomOf = (container: HTMLElement) => contentHeight(scrollerOf(container)) - viewportHeight;
+const bottomOf = (container: HTMLElement) =>
+  Math.max(0, contentHeight(scrollerOf(container)) - viewportHeight);
 
 /**
  * Runs the batched DOM passes the engine defers to frames: rAF for the
@@ -726,6 +748,70 @@ describe("MessageList — jump", () => {
     await flushCommit();
 
     expect(h.loadMoreMessages).toHaveBeenCalled();
+  });
+});
+
+describe("MessageList — unread marker", () => {
+  // Enough unread messages below the marker for it to be placed at the top: a
+  // browser cannot scroll past the real end of the content, and the marker sits
+  // in the middle of the chat, not near the newest message.
+  const unreadChat = () => [
+    ...longList(6, "old"),
+    ...longList(10, "new").map((message) => ({ ...message, sent_at: "2026-08-09T09:00:00.000Z" })),
+    makeMessage("mine-new", { sender_user_id: "me", sent_at: "2026-08-09T09:02:00.000Z" }),
+  ];
+
+  it("marks where the unread messages begin and opens there", async () => {
+    setStore({ messages: unreadChat() });
+
+    const { container } = await mountList({ unreadBoundaryAt: "2026-08-08T12:00:00.000Z" });
+
+    const divider = container.querySelector<HTMLElement>(".chat-unread-divider");
+    expect(divider).not.toBeNull();
+    expect(divider?.textContent).toContain("Непрочитанные");
+
+    // The mounted window starts at the marker, so the unread messages are the
+    // first thing on screen — and the marker sits right before them.
+    const firstUnread = container.querySelector<HTMLElement>('.message-item[data-message-id="new0"]');
+    expect(rowIds(container)[0]).toBe("new0");
+    expect(firstUnread?.previousElementSibling).toBe(divider);
+    expect(scrollerOf(container).scrollTop).toBe(0);
+
+    // Away from the bottom: the "to the newest" button is offered.
+    expect(container.querySelector(".scroll-to-bottom-btn")).not.toBeNull();
+  });
+
+  it("does not render (or open on) a marker when everything is read", async () => {
+    setStore({ messages: unreadChat() });
+
+    const { container } = await mountList({ unreadBoundaryAt: "2026-08-09T23:00:00.000Z" });
+
+    expect(container.querySelector(".chat-unread-divider")).toBeNull();
+    expect(scrollerOf(container).scrollTop).toBe(bottomOf(container));
+  });
+
+  it("ignores the reader's own messages when placing the marker", async () => {
+    setStore({
+      messages: [
+        ...longList(4, "old").map((message) => ({ ...message, sender_user_id: "me" })),
+        makeMessage("mine-1", { sender_user_id: "me", sent_at: "2026-08-09T09:00:00.000Z" }),
+        makeMessage("theirs-1", { sent_at: "2026-08-09T09:01:00.000Z" }),
+      ],
+    });
+
+    const { container } = await mountList({ unreadBoundaryAt: null });
+
+    const divider = container.querySelector<HTMLElement>(".chat-unread-divider");
+    const firstUnread = container.querySelector<HTMLElement>('.message-item[data-message-id="theirs-1"]');
+    expect(firstUnread?.previousElementSibling).toBe(divider);
+  });
+
+  it("shows no marker when the caller says nothing about the boundary", async () => {
+    setStore({ messages: unreadChat() });
+
+    const { container } = await mountList();
+
+    expect(container.querySelector(".chat-unread-divider")).toBeNull();
   });
 });
 
