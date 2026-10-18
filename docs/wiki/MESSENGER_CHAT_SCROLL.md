@@ -440,12 +440,21 @@ Not scroll mechanics, but the same client's answers to the same problems — eac
 one independently reversible:
 
 * **Drafts belong to a conversation** (`core/drafts.ts`, `ChatView`). `ChatView`
-  is not remounted when the reader switches chats, so a plain piece of state
-  carried the text into the next conversation and lost it on the way back. The
-  draft now lives per conversation, is debounced into `localStorage` (a keystroke
-  must not cost a synchronous storage write) and the switch resets the composer's
-  transient state (reply target, edit, staged attachments) — Telegram's rule that
-  the composer belongs to the chat, not to the component.
+  is not remounted on a switch, so the two things that make this correct are
+  structural, not careful: the draft **state carries its conversation id** and the
+  text is derived during render (a switch is one consistent render — a bare
+  `useState` shows the previous chat's text for a frame, which is long enough for
+  the composer to mount with it and emit it back into the new chat), and the
+  **composer is keyed by the conversation**, because it owns an editor instance,
+  an emoji sheet and a full-mode flag that must not survive into another chat.
+  `localStorage`, debounced ~a keystroke and flushed on `pagehide` /
+  `visibilitychange`, so a PWA that is swiped closed keeps the text; the store is
+  read synchronously at mount, or the box would flash empty and then fill in.
+  (Drafts syncing *across devices* is what Telegram does server-side with
+  `saveDraft`; that is a separate piece of work, not a storage choice.)
+  The body of a message being edited is not a draft: it is applied without
+  persisting, and cancel/save give the stored draft back. The switch also drops the
+  composer's transient staging (reply target, edit, staged attachments).
 * **A quote is a link** (`MessageBubble.onJumpToMessage` → `MessageListHandle.
   scrollToMessage`). Tapping the quoted block jumps to the message and flashes it,
   instead of being inert decoration.
