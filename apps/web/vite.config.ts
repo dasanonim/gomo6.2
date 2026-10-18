@@ -8,6 +8,25 @@ export default defineConfig(() => ({
   server: {
     host: "::",
     port: 8081,
+    /**
+     * Vite refuses a request whose `Host` header is not `localhost`, an IP
+     * address or an entry from this list (the DNS-rebinding guard), and it
+     * answers with `403 Blocked request. This host (...) is not allowed.`
+     *
+     * An IP address is allowed without any entry here — which is why a phone
+     * reaching the dev server by LAN IP has always worked. A *name* is not, so
+     * the Mac's Bonjour address (`<name>.local`, the URL `make mobile` prints as
+     * the stable one) needs `.local`: mDNS resolves on the LAN only, never
+     * through public DNS, so it is exactly the kind of host this list exists for.
+     * Extra hosts can be passed in `GOMO6_ALLOWED_HOSTS` (comma-separated).
+     */
+    allowedHosts: [
+      ".local",
+      ...(process.env.GOMO6_ALLOWED_HOSTS ?? "")
+        .split(",")
+        .map((host) => host.trim())
+        .filter(Boolean),
+    ],
     proxy: {
       "/api": {
         target: "http://localhost:8080",
