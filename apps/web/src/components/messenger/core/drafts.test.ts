@@ -62,6 +62,26 @@ describe("drafts", () => {
     expect(readDraft("c1")).toBe("");
   });
 
+  it("flushes a pending draft when the page is put away", () => {
+    writeDraft("c1", "не потерять при закрытии");
+    expect(localStorage.getItem("gomo6:draft:c1")).toBeNull();
+
+    // iOS Safari fires `pagehide` when a tab is put away or a PWA is closed.
+    window.dispatchEvent(new Event("pagehide"));
+
+    expect(localStorage.getItem("gomo6:draft:c1")).toBe("не потерять при закрытии");
+  });
+
+  it("flushes a pending draft when the tab is hidden", () => {
+    writeDraft("c1", "свёрнутая вкладка");
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(localStorage.getItem("gomo6:draft:c1")).toBe("свёрнутая вкладка");
+    visibility.mockRestore();
+  });
+
   it("caps the stored text at the composer's limit", () => {
     writeDraft("c1", "x".repeat(5000));
     expect(readDraft("c1")).toHaveLength(4000);

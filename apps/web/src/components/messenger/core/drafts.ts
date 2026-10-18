@@ -23,6 +23,22 @@ const FLUSH_DELAY_MS = 400;
 const memory = new Map<string, string>();
 const pending = new Map<string, string>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let listenersInstalled = false;
+
+/**
+ * The debounce is ~a keystroke; a tab that is closed, hidden or killed in that
+ * window must still keep the text. `pagehide` is the one event iOS Safari fires
+ * reliably when a page is put away (including a PWA being swiped closed), and
+ * `visibilitychange` covers an app switch.
+ */
+function installFlushListeners(): void {
+  if (listenersInstalled || typeof window === "undefined") return;
+  listenersInstalled = true;
+  window.addEventListener("pagehide", flushDrafts);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushDrafts();
+  });
+}
 
 function storageKey(conversationId: string): string {
   return `${STORAGE_PREFIX}${conversationId}`;
@@ -56,6 +72,8 @@ export function readDraft(conversationId: string): string {
 }
 
 export function writeDraft(conversationId: string, text: string): void {
+  installFlushListeners();
+
   const trimmed = text.length > MAX_DRAFT_LENGTH ? text.slice(0, MAX_DRAFT_LENGTH) : text;
   if (memory.get(conversationId) === trimmed && !pending.has(conversationId)) return;
 

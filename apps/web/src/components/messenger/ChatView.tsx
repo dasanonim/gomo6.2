@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Folder, Lock, MessageCircle, NotebookPen, Pin, Gift, FileUp } from "lucide-react";
 import { toast } from "sonner";
 import { PentagramLoader } from "@/components/PentagramLoader";
@@ -62,19 +62,44 @@ export const ChatView = memo(function ChatView({
   const togglePin = useMessengerStore((s) => s.togglePin);
   const toggleNotesPin = useMessengerStore((s) => s.toggleNotesPin);
 
-  // The draft belongs to the open conversation: `ChatView` is not remounted when
-  // the reader switches chats, so a plain piece of state would carry the text
-  // into the next conversation and lose it on the way back.
-  const [draft, setDraftState] = useState(() => (conversation ? readDraft(conversation.id) : ""));
-  const conversationIdRef = useRef(conversation?.id);
-  const setDraft = useCallback((next: string) => {
-    setDraftState(next);
-    const id = conversationIdRef.current;
-    if (id) writeDraft(id, next);
-  }, []);
   const [pinnedText, setPinnedText] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState<string>("");
+
+  // The draft belongs to the open conversation, and the state says WHICH
+  // conversation it belongs to. That is what makes a switch a single consistent
+  // render: `ChatView` is not remounted when the reader switches chats, so a bare
+  // piece of state would show the previous chat's text for one render — long
+  // enough for the (keyed) composer to mount with it and for its editor to emit
+  // it back into the *new* chat. Deriving the text during render removes that
+  // window entirely.
+  const activeConversationId = conversation?.id ?? null;
+  const [draftState, setDraftState] = useState(() => ({
+    conversationId: conversation?.id ?? null,
+    text: conversation ? readDraft(conversation.id) : "",
+  }));
+  const draft = draftState.conversationId === activeConversationId
+    ? draftState.text
+    : activeConversationId
+      ? readDraft(activeConversationId)
+      : "";
+
+  /**
+   * Put text in the composer. `persist: false` is for text that is NOT the
+   * reader's draft — the body of a message being edited, which would otherwise
+   * overwrite the draft and be lost on cancel (the same for the restore below).
+   */
+  const applyDraft = useCallback((next: string, persist = true) => {
+    setDraftState({ conversationId: activeConversationId, text: next });
+    if (!persist || !activeConversationId) return;
+    writeDraft(activeConversationId, next);
+  }, [activeConversationId]);
+
+  // While editing, the composer's text is the message's body: it must never
+  // reach storage as a draft.
+  const setDraft = useCallback((next: string) => {
+    applyDraft(next, editingMessageId === null);
+  }, [applyDraft, editingMessageId]);
   const [showUserInfo, setShowUserInfo] = useState(false);
   const [showNotesInfo, setShowNotesInfo] = useState(false);
   const [giftDetailId, setGiftDetailId] = useState<string | null>(null);
@@ -125,11 +150,6 @@ export const ChatView = memo(function ChatView({
     setOrganizeMessage(null);
   }, [conversation?.id]);
 
-  // Switching chats swaps the composer's per-chat state: the draft comes back
-  // for the chat being opened, and the reply/edit/attachment staging of the one
-  // being left must not follow the reader.
-  const activeConversationId = conversation?.id;
-
   // The unread boundary is captured when the conversation is opened: while the
   // reader reads, their own read line advances and would take the marker away
   // under them. The next open recomputes it (Telegram does the same).
@@ -137,11 +157,19 @@ export const ChatView = memo(function ChatView({
   if (conversation && unreadBoundaryRef.current?.id !== conversation.id) {
     unreadBoundaryRef.current = { id: conversation.id, at: getConversationReadThrough(conversation.id) };
   }
-  useEffect(() => {
-    conversationIdRef.current = activeConversationId;
+  // Switching chats swaps the composer's per-chat state: the draft comes back
+  // for the chat being opened, and the reply/edit/attachment staging of the one
+  // being left must not follow the reader. A layout effect, so the staging is
+  // gone before the frame paints (the draft itself is already right — it is
+  // derived during render).
+  useLayoutEffect(() => {
     if (!activeConversationId) return;
     flushDrafts();
-    setDraftState(readDraft(activeConversationId));
+    setDraftState((current) => (
+      current.conversationId === activeConversationId
+        ? current
+        : { conversationId: activeConversationId, text: readDraft(activeConversationId) }
+    ));
     setReplyToMessage(null);
     setEditingMessageId(null);
     setEditingContent("");
@@ -338,20 +366,22 @@ export const ChatView = memo(function ChatView({
   const handleStartEdit = useCallback((msgId: string, content: string) => {
     setEditingMessageId(msgId);
     setEditingContent(content);
-    setDraft(content);
+    // The message body, not a draft.
+    applyDraft(content, false);
     // Same synchronous-focus rule as reply: iOS raises the soft keyboard only
     // for a focus that lands in the same event tick as the user gesture (the
     // action-panel click), so a deferred focus silently does nothing there.
     // The editor re-seeds from the new draft on the next commit (resetKey
     // bump) without losing focus — GomoRichEditor keeps the instance.
     composerRef.current?.focus();
-  }, [composerRef, setDraft]);
+  }, [composerRef, applyDraft]);
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
     setEditingContent("");
-    setDraft("");
-  }, [setDraft]);
+    // Cancelling an edit brings back whatever the reader was writing.
+    applyDraft(activeConversationId ? readDraft(activeConversationId) : "");
+  }, [activeConversationId, applyDraft]);
 
   const handleSaveEdit = useCallback((msgId: string, content: string) => {
     if (content.trim() && content.trim() !== editingContent) {
@@ -359,8 +389,9 @@ export const ChatView = memo(function ChatView({
     }
     setEditingMessageId(null);
     setEditingContent("");
-    setDraft("");
-  }, [editMessage, editingContent, setDraft]);
+    // Same as cancel: the draft the reader had before the edit is still theirs.
+    applyDraft(activeConversationId ? readDraft(activeConversationId) : "");
+  }, [activeConversationId, editMessage, editingContent, applyDraft]);
 
   const renderMessage = useCallback(
     (
@@ -660,6 +691,11 @@ export const ChatView = memo(function ChatView({
 
       {/* Composer */}
       <MessageComposer
+        // Keyed by conversation: the composer owns an editor instance, an emoji
+        // sheet, a full-mode flag — state that must not survive into another
+        // chat. Remounting is what guarantees it (the editor seeds from the
+        // draft it is mounted with, so the right chat's text is in the box).
+        key={conversation.id}
         draft={draft}
         setDraft={setDraft}
         isSending={isSending || isBatchSending}

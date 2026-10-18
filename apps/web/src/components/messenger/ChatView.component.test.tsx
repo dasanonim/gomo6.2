@@ -1,7 +1,7 @@
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ChatView } from "./ChatView";
-import { __resetDraftsForTests } from "./core/drafts";
+import { __resetDraftsForTests, readDraft } from "./core/drafts";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -104,17 +104,23 @@ vi.mock("./MessageList", () => ({
 }));
 
 // Composer mock exposes internal props for driving send/edit flows
-const { mockComposerProps } = vi.hoisted(() => ({ mockComposerProps: {} as any }));
+const { mockComposerProps, mockComposerState } = vi.hoisted(() => ({
+  mockComposerProps: {} as any,
+  mockComposerState: { mounts: 0, drafts: [] as string[] },
+}));
 
 vi.mock("./MessageComposer", () => ({
   MessageComposer: (props: any) => {
     Object.assign(mockComposerProps, props);
+    mockComposerState.mounts += 1;
+    mockComposerState.drafts.push(props.draft);
     return (
       <div data-testid="composer">
         <span data-testid="composer-draft">{props.draft}</span>
         <button onClick={() => props.onSend()}>send</button>
         <button onClick={() => props.setDraft("hello")}>set-draft</button>
         <button onClick={() => props.onSaveEdit("m1", "edited")}>save-edit</button>
+        <button onClick={() => props.onCancelEdit()}>cancel-edit</button>
       </div>
     );
   },
@@ -194,6 +200,9 @@ beforeEach(() => {
   mockStore.error = null;
   mockStore.receipts = new Map();
   Object.keys(mockComposerProps).forEach((k) => delete mockComposerProps[k]);
+  mockComposerState.mounts = 0;
+  mockComposerState.drafts = [];
+  __resetDraftsForTests();
 });
 
 afterEach(() => {
@@ -205,10 +214,48 @@ afterEach(() => {
 describe("ChatView", () => {
   describe("composer drafts", () => {
     beforeEach(() => {
-      __resetDraftsForTests();
       mockStore.me = { id: "me-1", username: "me" };
       mockStore.conversations = [mockConversation(), mockConversation({ id: "conv-2", other_username: "bob" })];
       mockStore.selectedConversationId = "conv-1";
+    });
+
+    it("does not let an edit overwrite the draft, and gives it back on cancel", async () => {
+      mockStore.messages = [mockMessage()];
+      render(<ChatView {...defaultProps} />);
+      act(() => mockComposerProps.setDraft("мой черновик"));
+      expect(readDraft("conv-1")).toBe("мой черновик");
+
+      // Start editing a message: the composer shows the message body…
+      fireEvent.click(screen.getByText("edit"));
+      await waitFor(() => expect(mockComposerProps.draft).toBe("Привет"));
+      // …and the reader's draft is untouched.
+      expect(readDraft("conv-1")).toBe("мой черновик");
+
+      // Cancelling the edit gives the draft back.
+      fireEvent.click(screen.getByText("cancel-edit"));
+      await waitFor(() => expect(mockComposerProps.draft).toBe("мой черновик"));
+      expect(readDraft("conv-1")).toBe("мой черновик");
+    });
+
+    it("never hands one chat's draft to the composer of another", async () => {
+      const { rerender } = render(<ChatView {...defaultProps} />);
+      act(() => mockComposerProps.setDraft("черновик для alice"));
+      expect(mockComposerProps.draft).toBe("черновик для alice");
+
+      const mountsBefore = mockComposerState.mounts;
+      mockComposerState.drafts = [];
+
+      // Switch chats. The composer is keyed by the conversation, so it must be
+      // mounted fresh — and never mounted or rendered with the text left behind.
+      mockStore.selectedConversationId = "conv-2";
+      rerender(<ChatView {...defaultProps} typingUsername="bob" />);
+      await waitFor(() => expect(screen.getByTestId("composer-draft").textContent).toBe(""));
+
+      expect(mockComposerState.mounts).toBeGreaterThan(mountsBefore);
+      expect(mockComposerState.drafts).not.toContain("черновик для alice");
+      expect(mockComposerProps.draft).toBe("");
+      expect(readDraft("conv-1")).toBe("черновик для alice");
+      expect(readDraft("conv-2")).toBe("");
     });
 
     it("keeps a draft per conversation instead of carrying it across chats", async () => {
