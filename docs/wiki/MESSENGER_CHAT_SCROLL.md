@@ -157,9 +157,9 @@ Bounded in `core/slicing.ts`, expressed in **keys** (`messageKey` = `client_id |
 id`), so a prepend, an optimistic → server swap or an index shift never
 re-anchors the reader to a different message:
 
-* mounted on open: `INITIAL_WINDOW` (100);
+* mounted on open: `INITIAL_WINDOW` (80);
 * each slide step: `WINDOW_STEP` (50) rows, in the direction the reader is moving;
-* hard ceiling: `MAX_DOM_MESSAGES` (220) — rows on the far side are dropped, and
+* hard ceiling: `MAX_DOM_MESSAGES` (180) — rows on the far side are dropped, and
   the far side is off screen by construction;
 * a window that follows the tail (`last: null`) never drops from the bottom: it
   owns the newest rows.
@@ -174,7 +174,9 @@ everything else goes through `resolveKeyWindow`.
 contributes an estimate; replacing the estimate with the real height moves
 everything below it. Chromium/Firefox absorb that with scroll anchoring, WebKit
 cannot — that is the per-message stutter documented in §7.1. The mounted window
-is what bounds the cost instead. GomoSub's `ChannelChat` (document-scrolled,
+is what bounds the cost instead, and it is sized like Telegram's (40 rows on a
+phone, 60 on a desktop, viewport limit 120) rather than generously: a row that is
+mounted costs layout on every commit that touches it. GomoSub's `ChannelChat` (document-scrolled,
 much larger window) keeps `content-visibility`, gated on the behavioural flag.
 
 ## 6. Triggers, reads and the capability gate

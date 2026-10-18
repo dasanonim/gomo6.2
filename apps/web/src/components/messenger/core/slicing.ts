@@ -45,12 +45,14 @@ export const TAIL_WINDOW: KeyWindow = { first: null, last: null };
 
 /**
  * Hard ceiling of mounted rows. Every mounted row is fully laid out, so this
- * bounds the real layout cost of a deep window (Telegram Web keeps ~120; the
- * extra headroom here is for taller bubbles and albums).
+ * bounds the real layout cost of a deep window. Deliberately Telegram-sized:
+ * the reference client mounts 40 rows on a phone, 60 on a desktop, and caps the
+ * viewport at 120 — its rows are the same kind of content, so a bigger window
+ * buys nothing and costs layout on every commit.
  */
-export const MAX_DOM_MESSAGES = 220;
+export const MAX_DOM_MESSAGES = 180;
 /** Rows mounted on open (and whenever the reader returns to the bottom). */
-export const INITIAL_WINDOW = 100;
+export const INITIAL_WINDOW = 80;
 /** A jump to the bottom re-seeds the window to the newest N rows. */
 export const RESET_WINDOW = 50;
 /** Rows added per slide step. */
@@ -60,7 +62,7 @@ export const PRUNE_BATCH = 50;
 /** Rows mounted above a `scrollToMessage` target. */
 export const ANCHOR_BEFORE = 30;
 /** Rows mounted below it — enough that the target can be centred. */
-export const ANCHOR_AFTER = 70;
+export const ANCHOR_AFTER = 50;
 
 /** The newest `size` messages, clamped to the array. */
 export function tailSlice(length: number, size = INITIAL_WINDOW): MessageSlice {

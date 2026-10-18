@@ -576,6 +576,11 @@ describe("MessageList — history", () => {
     await scrollTo(container, 0);
     await settle();
 
+    // The reader sits at the top of the mounted window; the row just below the
+    // fold is the anchor the compensation must hold.
+    const anchor = rows(container)[1];
+    const offsetBefore = anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+
     h.flushPendingOlderMessages.mockImplementation(() => true);
     setStore({ messages: [...longList(50, "old"), ...longList(100)] });
     triggerSentinel(".scroll-sentinel-top");
@@ -583,8 +588,10 @@ describe("MessageList — history", () => {
 
     expect(rowIds(container)[0]).toBe("old0");
     expect(rows(container)).toHaveLength(150);
-    // The page was inserted above the reader: their message is still in place.
-    expect(scroller.scrollTop).toBe(50 * ROW);
+    // The page was inserted above the reader: their message has not moved.
+    const offsetAfter = anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    expect(offsetAfter).toBeCloseTo(offsetBefore, 0);
+    expect(scroller.scrollTop).toBeGreaterThan(0);
   });
 
   it("requests the previous page when no loaded rows are left above", async () => {
