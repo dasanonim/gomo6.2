@@ -10,6 +10,12 @@
  *   later; Chromium paints it), and every rule in `MessageList.tsx` exists to
  *   keep it at 0.
  *
+ *   A gesture therefore means *the reader is scrolling the content*: a tap (on
+ *   the "to the newest message" button, on a message) is not one, and neither is
+ *   the glide it starts — those writes are deliberate navigation. The one
+ *   legitimate exception is `chrome:*`: Safari's collapsing toolbar resizes the
+ *   scroller mid-scroll, and keeping the reader's place then costs one write.
+ *
  * Everything here is a no-op unless the overlay is enabled, so the cost in a
  * normal session is one boolean test per call site.
  *

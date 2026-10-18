@@ -742,8 +742,10 @@ export const MessageList = memo(
     // the clearing listeners live on the window. Lifting the finger also arms
     // the rest, so the work the gate deferred happens right away.
     const markPointerDown = useCallback(() => {
+      // Only the mount gate: a finger on the list is not yet a scroll gesture,
+      // and a tap on the "to the newest message" button must not be counted as
+      // one (its glide writes on purpose, see the counters' contract).
       pointerDownRef.current = true;
-      noteGestureStart();
       // Telegram cancels a glide a new focus supersedes; the reader touching the
       // list is the strongest version of that — the position is theirs again.
       const scroller = scrollerRef.current;

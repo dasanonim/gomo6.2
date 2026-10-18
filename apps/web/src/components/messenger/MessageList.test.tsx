@@ -8,7 +8,7 @@ import {
 } from "./core/messageScrollAnchors";
 import { INITIAL_WINDOW, MAX_DOM_MESSAGES, RESET_WINDOW, WINDOW_STEP } from "./core/slicing";
 import { __resetFasterdomForTests } from "./core/fasterdom";
-import { __setScrollDiagnosticsEnabled } from "./core/scrollDiagnostics";
+import { __setScrollDiagnosticsEnabled, readScrollDiagnostics } from "./core/scrollDiagnostics";
 import type { MessageView } from "./types";
 
 // ── Store mock ─────────────────────────────────────────────────────────────
@@ -750,6 +750,32 @@ describe("MessageList — dev counters", () => {
     const writesRow = overlay.container.querySelector<HTMLElement>(".scroll-debug-row");
     expect(writesRow?.textContent).toContain("0");
     expect(writesRow?.classList.contains("is-bad")).toBe(false);
+    __setScrollDiagnosticsEnabled(false);
+  });
+
+  it("does not count a deliberate jump to the newest message as a scroll write", async () => {
+    const ref = createRef<MessageListHandle>();
+    setStore({ messages: longList(200) });
+    __setScrollDiagnosticsEnabled(true);
+    const { container } = await mountList({}, ref);
+    await scrollTo(container, 0);
+    await settle();
+
+    const before = readScrollDiagnostics();
+    // A tap on the "to the newest message" button: a pointer down, then a click.
+    act(() => {
+      fireEvent.pointerDown(scrollerOf(container));
+    });
+    act(() => ref.current?.scrollToBottom());
+    await flushCommit();
+    await settle();
+
+    const after = readScrollDiagnostics();
+    // It did move the position (that is the button's job)…
+    expect(after.writesTotal).toBeGreaterThan(before.writesTotal);
+    // …but a deliberate jump is not the reader scrolling, so the number that
+    // must stay at zero does.
+    expect(after.writesDuringGesture).toBe(0);
     __setScrollDiagnosticsEnabled(false);
   });
 });

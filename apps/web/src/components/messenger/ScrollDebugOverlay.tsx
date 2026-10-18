@@ -46,16 +46,19 @@ export const ScrollDebugOverlay = memo(function ScrollDebugOverlay() {
         <button type="button" onClick={() => resetScrollDiagnostics()}>reset</button>
       </div>
       <div className={`scroll-debug-row${isClean ? "" : " is-bad"}`}>
-        <span>записей scrollTop за жест</span>
+        <span>записей scrollTop за прокрутку</span>
         <b>{snapshot.writesDuringGesture}</b>
       </div>
       <div className="scroll-debug-row">
-        <span>смонтировано / снято за жест</span>
+        <span>смонтировано / снято за прокрутку</span>
         <b>{snapshot.mountedDuringGesture} / {snapshot.droppedDuringGesture}</b>
       </div>
       {!isClean && (
         <div className="scroll-debug-note">
-          запись внутри жеста — это и есть рывок{snapshot.lastWriteSource ? ` (${snapshot.lastWriteSource})` : ""}
+          запись внутри прокрутки — это и есть рывок{snapshot.lastWriteSource ? ` (${snapshot.lastWriteSource})` : ""}
+          {snapshot.lastWriteSource?.startsWith("chrome:")
+            ? " — это ресайз вьюпорта (панель Safari), а не скролл"
+            : ""}
         </div>
       )}
       <div className="scroll-debug-row">

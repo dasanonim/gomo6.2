@@ -211,12 +211,19 @@ http://localhost:8081/messages?scrolldebug=1
 # or, in the console: localStorage.setItem("gomo6:scrolldebug", "1") + reload
 ```
 
-The headline row is **"записей scrollTop за жест"** — writes between the first
-scroll event and the verified rest. It must read 0 through any scrolling, fling
-or momentum; a non-zero value is the bug, and the row names the writer
-(`pin`, `anchor`, `glide`, `chrome:pin`, `chrome:top`). The panel also reports
-the rows mounted/dropped per gesture, the mounted window size, commit duration
+The headline row is **"записей scrollTop за прокрутку"** — writes between the
+first scroll event and the verified rest. It must read 0 through any scrolling,
+fling or momentum; a non-zero value is the bug, and the note names the writer
+(`pin`, `anchor`, `glide`, `chrome:pin`, `chrome:top`). The panel also reports the
+rows mounted/dropped per gesture, the mounted window size, commit duration
 (last / max), long frames, history requests and rest passes.
+
+A gesture means *the reader is scrolling the content*. A tap is not one, so
+pressing the "to the newest message" button shows **0** here while `записей
+всего` grows: the jump (cut to 500px, then glide) is deliberate navigation, not a
+scroll. The one legitimate non-zero case is `chrome:*` — Safari's collapsing
+toolbar resizes the scroller mid-scroll and keeping the reader's place costs one
+write; the note says so.
 
 The whole overlay is dev-only: `import.meta.env.DEV` folds to `false`, so the
 dynamic import is dropped from a production build entirely (verified: the
