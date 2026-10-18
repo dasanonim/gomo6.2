@@ -38,7 +38,8 @@ check() {
 header "Go Backend"
 
 check "go build (all packages)"  "(cd apps/backend-go && go build ./...)"
-check "gofmt (format check)"     "(cd apps/backend-go && test -z \"\$(gofmt -l .)\")"
+# Same scope as ci.yml: vendored code is not ours to format.
+check "gofmt (format check)"     "(cd apps/backend-go && test -z \"\$(find . -name '*.go' -not -path './vendor/*' -print0 | xargs -0 gofmt -l)\")"
 check "go vet"                   "(cd apps/backend-go && go vet ./...)"
 
 if command -v golangci-lint &>/dev/null; then
