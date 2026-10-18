@@ -7,6 +7,7 @@ import {
   writeMessageScrollAnchor,
 } from "./core/messageScrollAnchors";
 import { INITIAL_WINDOW, MAX_DOM_MESSAGES, RESET_WINDOW, WINDOW_STEP } from "./core/slicing";
+import { __resetFasterdomForTests } from "./core/fasterdom";
 import type { MessageView } from "./types";
 
 // ── Store mock ─────────────────────────────────────────────────────────────
@@ -89,6 +90,9 @@ const triggerSentinel = (selector: string) => {
 // contract ("write 1e7, land on the newest row") is testable.
 const ROW = 60;
 const VIEWPORT = 600;
+let viewportHeight = VIEWPORT;
+/** Viewport coordinate of the scroller's top edge (a pinned banner moves it). */
+let scrollerTop = 0;
 let scrollTopValue = 0;
 
 const itemsIn = (node: HTMLElement) => node.querySelectorAll(".message-item").length;
@@ -104,6 +108,37 @@ const itemOffsetTop = (node: HTMLElement) => {
   return top;
 };
 
+// ── ResizeObserver stand-in ────────────────────────────────────────────────
+// The scroller's box changing (a pinned banner, a taller composer, the mobile
+// keyboard) is the one geometry change no React commit covers.
+const resizeObservers: Array<{ callback: () => void; targets: Element[] }> = [];
+
+class MockResizeObserver {
+  callback: () => void;
+  targets: Element[] = [];
+  constructor(callback: () => void) {
+    this.callback = callback;
+    resizeObservers.push(this);
+  }
+  observe(target: Element) {
+    this.targets.push(target);
+  }
+  unobserve(target: Element) {
+    this.targets = this.targets.filter((candidate) => candidate !== target);
+  }
+  disconnect() {
+    this.targets = [];
+  }
+}
+
+const fireResize = () => {
+  act(() => {
+    for (const observer of resizeObservers) {
+      if (observer.targets.length > 0) observer.callback();
+    }
+  });
+};
+
 const savedDescriptors: Array<[string, PropertyDescriptor | undefined]> = [];
 
 function installLayout() {
@@ -115,7 +150,7 @@ function installLayout() {
   Object.defineProperty(proto, "clientHeight", {
     configurable: true,
     get(this: HTMLElement) {
-      return this.classList.contains("message-scroll") ? VIEWPORT : 0;
+      return this.classList.contains("message-scroll") ? viewportHeight : 0;
     },
   });
   Object.defineProperty(proto, "scrollHeight", {
@@ -131,7 +166,7 @@ function installLayout() {
     },
     set(this: HTMLElement, value: number) {
       if (!this.classList.contains("message-scroll")) return;
-      const max = Math.max(0, contentHeight(this) - VIEWPORT);
+      const max = Math.max(0, contentHeight(this) - viewportHeight);
       scrollTopValue = Number.isFinite(value) ? Math.min(Math.max(0, value), max) : 0;
     },
   });
@@ -161,8 +196,8 @@ function installLayout() {
         : this.classList.contains("fab-trigger") && scroller
           ? itemsIn(scroller) * ROW + 2
           : 0;
-      const height = this.classList.contains("message-item") ? ROW : 0;
-      const top = isScroller ? 0 : contentTop - (scroller ? scrollTopValue : 0);
+      const height = isScroller ? viewportHeight : this.classList.contains("message-item") ? ROW : 0;
+      const top = isScroller ? scrollerTop : contentTop - (scroller ? scrollTopValue : 0);
       return { top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) };
     },
   });
@@ -211,7 +246,7 @@ const setStore = (patch: Record<string, unknown>) => {
 const rows = (container: HTMLElement) => Array.from(container.querySelectorAll<HTMLElement>(".message-item"));
 const rowIds = (container: HTMLElement) => rows(container).map((row) => row.dataset.messageId);
 const scrollerOf = (container: HTMLElement) => container.querySelector<HTMLElement>(".message-scroll")!;
-const bottomOf = (container: HTMLElement) => contentHeight(scrollerOf(container)) - VIEWPORT;
+const bottomOf = (container: HTMLElement) => contentHeight(scrollerOf(container)) - viewportHeight;
 
 /**
  * Runs the batched DOM pass the engine defers to the next frame: rAF for the
@@ -257,15 +292,20 @@ beforeEach(() => {
   captured.length = 0;
   observers.length = 0;
   scrollTopValue = 0;
+  viewportHeight = VIEWPORT;
+  scrollerTop = 0;
+  resizeObservers.length = 0;
   h.loadMoreMessages.mockClear();
   h.loadMoreMessages.mockImplementation(async () => {});
   h.flushPendingOlderMessages.mockClear();
   h.flushPendingOlderMessages.mockImplementation(() => false);
   h.queueMarkRead.mockClear();
   __resetMessageScrollAnchorsForTests();
+  __resetFasterdomForTests();
   document.documentElement.classList.remove("has-scroll-anchoring");
   (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
     MockIntersectionObserver;
+  (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = MockResizeObserver;
   // The glide is a real animation; tests run it instantly through the
   // reduced-motion path (the same one the app uses when the user asks for it).
   window.matchMedia = ((query: string) => ({
@@ -295,8 +335,7 @@ afterEach(() => {
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
-describe("MessageList — window", () => {
-  it("mounts a bounded window that ends at the newest message", async () => {
+describe("MessageList — window", () => {  it("mounts a bounded window that ends at the newest message", async () => {
     setStore({ messages: longList(500) });
 
     const { container } = await mountList();
@@ -612,6 +651,41 @@ describe("MessageList — jump", () => {
     await flushCommit();
 
     expect(h.loadMoreMessages).toHaveBeenCalled();
+  });
+});
+
+describe("MessageList — chrome changes", () => {
+  it("stays glued to the bottom when the list shrinks under the reader", async () => {
+    setStore({ messages: longList(200) });
+    const { container } = await mountList();
+    const scroller = scrollerOf(container);
+    expect(scroller.scrollTop).toBe(bottomOf(container));
+
+    // The composer grew a line, or the mobile keyboard opened: the viewport is
+    // shorter, and no message changed.
+    viewportHeight = 400;
+    fireResize();
+
+    expect(scroller.scrollTop).toBe(contentHeight(scroller) - 400);
+  });
+
+  it("keeps the reader in place when the scroller's top edge moves down", async () => {
+    setStore({ messages: longList(200) });
+    const { container } = await mountList();
+    const scroller = scrollerOf(container);
+    await scrollTo(container, 800);
+    const row = rows(container)[12];
+    const offsetBefore = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+
+    // The pinned banner appears above the messages: the top edge moves down and
+    // the height shrinks by the same amount.
+    scrollerTop += 60;
+    viewportHeight -= 60;
+    fireResize();
+
+    const offsetAfter = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    expect(offsetAfter).toBeCloseTo(offsetBefore, 0);
+    expect(scroller.scrollTop).toBe(800 - 60);
   });
 });
 

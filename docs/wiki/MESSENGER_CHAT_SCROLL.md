@@ -115,6 +115,22 @@ gomo6: unlike Telegram, the date separator is rendered *inside* a `.message-item
 (`ChatView.renderMessage` → `dateLabel`). That is why the one-row offset is
 required here and merely advisable there.
 
+### 3.2 The one exception: chrome size changes
+
+A scroller's own box can change with no message changing and no commit in the
+list at all: the pinned banner appears above the messages (moving the top edge
+down), the composer grows a line, the mobile keyboard opens, the window is
+resized. The browser keeps `scrollTop` through all of those, which moves the
+reader.
+
+`syncChrome` (a `ResizeObserver` on the scroller) is the only second writer. It
+uses the same derivation as the commit path — "was the reader glued?" from the
+last commit's `bottomOffset` and viewport height — then either pins (glued) or
+subtracts the top-edge delta (not glued), and records what it did in
+`prevCommitRef` so the next commit's arithmetic stays coherent. Telegram Web
+splits the same way: the panes/player hooks compensate the top reserve
+(`updateTopReserveWithScrollCompensation`).
+
 ## 4. "At the bottom" is native
 
 While the reader is within a band around the bottom trigger the scroller is a
@@ -261,7 +277,9 @@ side, and the same step never both mounts and trims more than the overflow.
   (`WINDOW_STEP * ROW`); mounts wait for a verified rest without anchoring and
   are immediate with it; a buffered page is mounted above the reader; the ceiling
   holds; session-anchor restore; glide + flash on jump; paging for an unloaded
-  jump target; the read line (own/deleted skipped, fold-aware, deduped).
+  jump target; the read line (own/deleted skipped, fold-aware, deduped); the
+  chrome writer (stays glued when the viewport shrinks, keeps the reader's place
+  when the top edge moves).
   GomoSub's `ChannelChat.test.tsx` still covers its own window.
 * Manual (a device is required, and is **not** a substitute for CI): open a
   long chat at the bottom, fling up through several pages, fling back down,
@@ -290,9 +308,10 @@ Deliberately not in this pass (each is independent and additive):
    the DOM instead. Telegram bounds the *store* (`MESSAGE_LIST_VIEWPORT_LIMIT`)
    and re-fetches a slice around the reader. gomo6's pagination is
    backward-only, so this needs a forward fetch (`since_event_id`) to be complete.
-4. **Keyboard / visual viewport.** The composer is in flow, so no bottom inset is
-   needed, but the mobile keyboard behaviour (`lib/mobileKeyboard.ts`) has not
-   been re-checked against the new list.
+4. **Mobile keyboard.** `syncChrome` compensates a scroller that shrinks while the
+   reader is glued, but the full mobile behaviour (`lib/mobileKeyboard.ts`, visual
+   viewport, `kb-open` class) has not been checked against the new list on a
+   device.
 5. **`scrollToMessage` for a very distant target** currently mounts the window
    around the target and glides; a dedicated "jump over N pages" animation would
    read better on slow networks.

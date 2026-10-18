@@ -37,7 +37,7 @@ import {
   type MessageSlice,
 } from "./core/slicing";
 import { animateScroll, isAnimatingScroll } from "./core/animateScroll";
-import { requestForcedReflow } from "./core/fasterdom";
+import { requestForcedReflow, requestMeasure } from "./core/fasterdom";
 import {
   AT_BOTTOM_THRESHOLD,
   BOTTOM_SNAP_CLASS,
@@ -349,6 +349,8 @@ export const MessageList = memo(
       anchorCoord: number;
       containerTop: number;
       clientHeight: number;
+      /** Distance from the top to the bottom of the content, after the write. */
+      bottomOffset: number;
       tailKey: string | null;
     } | null>(null);
 
@@ -561,7 +563,9 @@ export const MessageList = memo(
           pendingTopMountRef.current = false;
           if (!flushBufferedPage()) expandOlderNow();
         }
-        reportVisibleReads();
+        // A layout read (the binary search over row offsets) belongs in a
+        // measure pass, not in an arbitrary timer task.
+        requestMeasure(() => reportVisibleReads());
       },
       [flushBufferedPage, expandOlderNow, reportVisibleReads],
     );
@@ -861,7 +865,6 @@ export const MessageList = memo(
           : null;
 
         return () => {
-          prevCommitRef.current = nextCommit;
           if (mutation) {
             mutation();
           } else if (pin) {
@@ -873,6 +876,10 @@ export const MessageList = memo(
           // new position, and snapping is armed from it.
           syncBottomSnap();
           bestPositionRef.current = readContainerScrollTop(scroller);
+          prevCommitRef.current = {
+            ...nextCommit,
+            bottomOffset: scroller.scrollHeight - bestPositionRef.current,
+          };
         };
       });
 
@@ -923,6 +930,57 @@ export const MessageList = memo(
       setWindow((current) => (sameKeyWindow(current, next) ? current : next));
       setJumpNonce((nonce) => nonce + 1);
     }, [jumpNonce, messages, derived.start, derived.end, loadMoreMessages]);
+
+    // ── Chrome: a size change no commit covers ─────────────────────────
+    /**
+     * The scroller's own box can change without a single message changing: the
+     * pinned banner appears above the messages (pushing the content down), the
+     * composer grows a line, the mobile keyboard opens, the window is resized.
+     * None of those produce a commit *in this component*, so the writer above
+     * never sees them — and the browser keeps `scrollTop` on its own, which
+     * moves the reader.
+     *
+     * This is the only second writer, and it is deliberately narrow: it runs on
+     * a `ResizeObserver` of the scroller, uses the same "the reader was glued"
+     * derivation as the commit path, and records what it did in `prevCommitRef`
+     * so the next commit's arithmetic stays coherent. Telegram Web has the same
+     * split (the panes/player hooks compensate the top reserve).
+     */
+    const syncChrome = useCallback(() => {
+      const scroller = scrollerRef.current;
+      const previous = prevCommitRef.current;
+      if (!scroller || !previous) return;
+
+      const clientHeight = scroller.clientHeight;
+      const containerTop = scroller.getBoundingClientRect().top;
+      const scrollTop = readContainerScrollTop(scroller);
+      const wasGlued = previous.bottomOffset - previous.clientHeight <= AT_BOTTOM_THRESHOLD;
+
+      if (followingRef.current && wasGlued) {
+        pinToBottom(scroller);
+      } else {
+        // A container that grew downward does not move the content; one whose
+        // top edge moved down (a banner) does — by exactly that delta.
+        const topDelta = containerTop - previous.containerTop;
+        if (Math.abs(topDelta) > 0.5) setScrollTop(scroller, scrollTop - topDelta);
+      }
+
+      prevCommitRef.current = {
+        ...previous,
+        clientHeight,
+        containerTop,
+        bottomOffset: scroller.scrollHeight - readContainerScrollTop(scroller),
+      };
+      requestMeasure(() => syncBottomSnap());
+    }, [syncBottomSnap]);
+
+    useEffect(() => {
+      const scroller = scrollerRef.current;
+      if (!scroller || typeof ResizeObserver === "undefined") return;
+      const observer = new ResizeObserver(() => syncChrome());
+      observer.observe(scroller);
+      return () => observer.disconnect();
+    }, [hasMessages, syncChrome]);
 
     // ── Session anchor: persist the reader's place on unmount ──────────
     useEffect(() => {
