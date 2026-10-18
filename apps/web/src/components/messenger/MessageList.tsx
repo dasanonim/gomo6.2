@@ -776,18 +776,27 @@ export const MessageList = memo(
         const isAtBottomNow = bottomOffset - clientHeight <= AT_BOTTOM_THRESHOLD;
         const tailMoved = previous !== null && tailKey !== previous.tailKey;
 
-        // The reader's anchor: the first row that is at least partly on screen.
-        // Its scroll coordinate is invariant under scrolling, so the delta it
-        // moved by IS the layout change above the reader's place.
-        let anchor: { key: string; coord: number } | null = null;
-        for (const row of rows) {
-          const key = row.dataset.messageKey;
-          if (!key) continue;
-          if (row.offsetTop + row.offsetHeight > scrollTop + 1) {
-            anchor = { key, coord: row.getBoundingClientRect().top - containerTop + scrollTop };
+        // The reader's anchor: a row whose scroll coordinate (content offset of
+        // its top) is invariant under scrolling, so the delta it moved by IS the
+        // layout change above the reader's place.
+        //
+        // Deliberately NOT the very first visible row: that one may change
+        // height when older messages are mounted (a date separator moves to an
+        // older message, a grouped bubble loses its header). Anchoring one row
+        // lower keeps the reader immune to that — the same reason Telegram Web
+        // anchors on `preservedItemElements[1]`.
+        let firstVisible = -1;
+        for (let at = 0; at < rows.length; at += 1) {
+          if (rows[at].offsetTop + rows[at].offsetHeight > scrollTop + 1) {
+            firstVisible = at;
             break;
           }
         }
+        const anchorRow = firstVisible >= 0 ? rows[Math.min(firstVisible + 1, rows.length - 1)] : null;
+        const anchorKey = anchorRow?.dataset.messageKey ?? null;
+        const anchor = anchorKey
+          ? { key: anchorKey, coord: anchorRow.getBoundingClientRect().top - containerTop + scrollTop }
+          : null;
 
         const nextCommit = {
           anchorKey: anchor?.key ?? null,
