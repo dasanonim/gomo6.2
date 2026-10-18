@@ -64,14 +64,22 @@ it returns never interleave with another task's reads or writes. Its decision
 tree, in order:
 
 1. **First placement** — the restored session anchor, else the newest row.
-2. **A pending jump** — glide to the target, flash it.
+2. **A pending jump** — `centerOrTop` (centre a target that fits the viewport,
+   align a taller one to the top — Telegram's default for a focus) with a 20px
+   margin, then flash it.
 3. **A new tail while following** — glide the arrival into view (the "message
-   rises" feel). The glide target is the zero-height trigger *after* the content,
-   so it lands on the real bottom, not one sentinel above it.
-4. **The reader was at the bottom** — pin with the sentinel
+   rises" feel), capped at the default 800px. The glide target is the zero-height
+   trigger *after* the content, so it lands on the real bottom, not one sentinel
+   above it.
+4. **An explicit "to the newest message"** (the FAB) — Telegram Web's
+   scroll-to-bottom button: the distance the reader cannot see is *cut*, and the
+   last ≤500px glides down (`maxDistance: 500, forceDirection: 'down'`). Gliding
+   through thousands of pixels reads as a hang; a jump with no glide at all reads
+   as a teleport. This is the middle ground the reference client settled on.
+5. **The reader was at the bottom** — pin with the sentinel
    (`scrollTop = 1e7`, which the engine clamps to the new maximum). This single
    write keeps a growing list glued, whatever grew and on which side.
-5. **Otherwise** — compensate the layout change above the reader's anchor, plus
+6. **Otherwise** — compensate the layout change above the reader's anchor, plus
    any movement of the scroller's own top edge (the pinned banner appearing above
    the messages pushes the content down; the composer growing below does not).
 
@@ -179,6 +187,29 @@ phone, 60 on a desktop, viewport limit 120) rather than generously: a row that i
 mounted costs layout on every commit that touches it. GomoSub's `ChannelChat` (document-scrolled,
 much larger window) keeps `content-visibility`, gated on the behavioural flag.
 
+### 5.1 The dev counters
+
+`core/scrollDiagnostics.ts` + `ScrollDebugOverlay.tsx` exist so this document does
+not have to be taken on faith. Enable in a dev build:
+
+```
+http://localhost:8081/messages?scrolldebug=1
+# or, in the console: localStorage.setItem("gomo6:scrolldebug", "1") + reload
+```
+
+The headline row is **"записей scrollTop за жест"** — writes between the first
+scroll event and the verified rest. It must read 0 through any scrolling, fling
+or momentum; a non-zero value is the bug, and the row names the writer
+(`pin`, `anchor`, `glide`, `chrome:pin`, `chrome:top`). The panel also reports
+the rows mounted/dropped per gesture, the mounted window size, commit duration
+(last / max), long frames, history requests and rest passes.
+
+The whole overlay is dev-only: `import.meta.env.DEV` folds to `false`, so the
+dynamic import is dropped from a production build entirely (verified: the
+overlay's strings are absent from `dist/assets/*.js`). The counter module itself
+ships as a no-op — every function returns immediately unless the flag was read as
+`1` at boot, so the cost in a normal session is one boolean test per event.
+
 ## 6. Triggers, reads and the capability gate
 
 **History triggers.** Two 1px sentinels with `rootMargin: 750px` *request* work
@@ -199,6 +230,12 @@ A quiet event stream is not proof of a rest; the position is.
 The pointer gate is a gate on the *mount path*, never on the rest pass itself: a
 finger held on the list keeps `pointerDownRef` true and defers upward mounts, and
 the release arms the rest so the deferred work happens immediately.
+
+**Stale triggers.** A programmatic position replace sets
+`replacingHistoryRef` for the duration of the commit, and the history triggers do
+nothing while it is set. Safari delivers `IntersectionObserver` entries between
+the DOM mutation and the scroll restore; acting on one would mount a page for a
+position that no longer exists (Telegram Web: `isReplacingHistoryRef`).
 
 **Read line.** The newest fully visible message that is not the reader's own,
 found by binary search over the mounted rows (`offsetTop` is monotonic in
@@ -238,6 +275,28 @@ The capability is detected **behaviourally** (a probe scroller, see
 before the first paint. It must never be derived from
 `CSS.supports("overflow-anchor", …)`: an engine may parse the property without
 anchoring, which would put Safari on the broken branch.
+
+### 7.1b What the reference client actually does about WebKit
+
+Worth being straight about, because gomo6's gate is *stricter* than Telegram Web's:
+telegram-tt has **no** "wait for a rest" rule in its message list. It does not
+need one, because it never creates the situation the rule protects against:
+
+* no `content-visibility` on message rows, so no estimate is ever replaced by a
+  real height (the §7.1 stutter cannot start);
+* every position write happens in a commit, and only when the state changed —
+  there is no write on scroll to drop;
+* the bottom is native scroll snapping, so a growing list needs no write at all;
+* `isReplacingHistoryRef` ignores the stale Safari trigger entries that a
+  programmatic replace produces;
+* `fasterdom` batches reads and writes, so a commit costs one reflow, not one
+  per row.
+
+gomo6 keeps all of that and adds the rest gate on top, because unlike the
+reference client it has real iOS-web users to protect and a WebKit that drops the
+compensating write under a live gesture (measured — §7.2). The gate is the only
+place this port is more conservative than the original; if it ever proves
+unnecessary on a device, `canMountAboveNow` is where it is removed.
 
 ### 7.2 A quiet event stream is not a rest — and a finger is not a rest either
 
@@ -283,6 +342,9 @@ side, and the same step never both mounts and trims more than the overflow.
   chrome writer (stays glued when the viewport shrinks, keeps the reader's place
   when the top edge moves).
   GomoSub's `ChannelChat.test.tsx` still covers its own window.
+* Dev counters — `core/scrollDiagnostics.test.ts` (gesture accounting) and a
+  `MessageList` case that scrolls a real list with the overlay on and asserts the
+  per-gesture write count is 0.
 * Manual (a device is required, and is **not** a substitute for CI): open a
   long chat at the bottom, fling up through several pages, fling back down,
   receive a message while at the bottom and while deep in history, open a pinned

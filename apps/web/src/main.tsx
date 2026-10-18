@@ -8,6 +8,7 @@ import { toast } from "@/components/ui/sonner";
 import { setupGlobalErrorHandlers } from "@/lib/logging";
 import { initMobileKeyboard } from "@/lib/mobileKeyboard";
 import { initScrollAnchoringFlag } from "@/lib/scrollAnchoring";
+import { initScrollDiagnostics } from "@/components/messenger/core/scrollDiagnostics";
 import { initPerfTier } from "@/utils/perfTier";
 import "./index.css";
 import "@/theme/theme.css";
@@ -27,6 +28,8 @@ const disposeMobileKeyboard = initMobileKeyboard();
 // laid out (a skipped row's real height would move the reader — the
 // per-message stutter on iOS Safari). Must run before the first paint.
 initScrollAnchoringFlag();
+// Dev-only: enables the chat scroll counters when ?scrolldebug=1 is present.
+if (import.meta.env.DEV) initScrollDiagnostics();
 
 // Classify the device once and put weak hardware on the cheap glass tier
 // (html.perf-lite) before the header ever paints.

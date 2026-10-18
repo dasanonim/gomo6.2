@@ -779,6 +779,75 @@ main.is-messenger-page {
   scroll-snap-align: end;
 }
 
+/* ── Dev overlay: chat scroll counters ──
+   Fixed (out of flow, so it can never take part in the scroll math), visible
+   only with `?scrolldebug=1` in a dev build. See core/scrollDiagnostics.ts. */
+.scroll-debug {
+  position: fixed;
+  z-index: 60;
+  bottom: 12px;
+  left: 12px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  min-width: 260px;
+  padding: 8px 10px;
+  border: 1px solid oklch(var(--border) / 0.7);
+  border-radius: 10px;
+
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  color: oklch(var(--foreground) / 0.9);
+
+  background: oklch(var(--background) / 0.92);
+  backdrop-filter: blur(6px);
+
+  pointer-events: auto;
+  user-select: text;
+}
+
+.scroll-debug-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  color: oklch(var(--muted-foreground));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.scroll-debug-head button {
+  padding: 1px 6px;
+  border: 1px solid oklch(var(--border) / 0.7);
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.scroll-debug-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.scroll-debug-row b {
+  font-variant-numeric: tabular-nums;
+}
+
+.scroll-debug-row.is-bad {
+  color: oklch(var(--destructive, 0.62 0.22 25));
+}
+
+.scroll-debug-note {
+  margin-top: 4px;
+  color: oklch(var(--muted-foreground));
+}
+
 /* One mounted message. The row contract (content-visibility where the engine
    can anchor, plus `overflow-anchor`) lives in the shared `.chat-native-row`
    utility — see src/index.css. */
