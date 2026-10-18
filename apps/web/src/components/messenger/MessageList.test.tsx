@@ -250,14 +250,35 @@ const scrollerOf = (container: HTMLElement) => container.querySelector<HTMLEleme
 const bottomOf = (container: HTMLElement) => contentHeight(scrollerOf(container)) - viewportHeight;
 
 /**
- * Runs the batched DOM pass the engine defers to the next frame: rAF for the
- * measurements, a microtask for the mutation it returns.
+ * Runs the batched DOM passes the engine defers to frames: rAF for the
+ * measurements, a microtask for the mutation it returns, and any pass the
+ * mutation itself scheduled (a settled frame, not an arbitrary one — the guard
+ * against our own write's scroll echo is cleared on the next pass, exactly as in
+ * a browser, where the echo arrives in the following frame's scroll step).
  */
 const flushCommit = async () => {
+  await act(async () => {
+    for (let frame = 0; frame < 3; frame += 1) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+  });
+};
+
+/** One frame only: the pass the engine runs, no further frames. */
+const flushFrame = async () => {
   await act(async () => {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     await Promise.resolve();
     await Promise.resolve();
+  });
+};
+
+/** Fire the scroll event our own write produces, in the same frame as the write. */
+const echoOwnWrite = async (scroller: HTMLElement) => {
+  await act(async () => {
+    fireEvent.scroll(scroller);
   });
 };
 
@@ -587,6 +608,33 @@ describe("MessageList — history", () => {
     await flushCommit();
 
     expect(rows(container)).toHaveLength(INITIAL_WINDOW + WINDOW_STEP);
+  });
+
+  it("does not let its own write's scroll echo defer the next mount", async () => {
+    // History fully loaded on purpose: nothing is fetched or auto-mounted in the
+    // background, so the only slides are the two triggered here.
+    setStore({ messages: longList(600) });
+    const { container } = await mountList();
+    const scroller = scrollerOf(container);
+    await scrollTo(container, 0);
+    await settle();
+
+    // A slide writes the compensation; the browser delivers the scroll event that
+    // write produced in the following frame, before that frame's measurements.
+    triggerSentinel(".scroll-sentinel-top");
+    await flushFrame();
+    const before = rows(container).length;
+    expect(before).toBe(INITIAL_WINDOW + WINDOW_STEP);
+    await echoOwnWrite(scroller);
+
+    // Treating that echo as the reader scrolling would arm a rest pass and defer
+    // the next page by another rest window — the wall the reader feels on WebKit.
+    triggerSentinel(".scroll-sentinel-top");
+    await flushCommit();
+
+    expect(rows(container)).toHaveLength(before + WINDOW_STEP);
+    expect(rows(container).length).toBeLessThanOrEqual(MAX_DOM_MESSAGES);
+    expect(scroller.scrollTop).toBeGreaterThan(0);
   });
 
   it("mounts a buffered page above the reader", async () => {

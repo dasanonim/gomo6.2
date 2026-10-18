@@ -40,6 +40,7 @@ import {
 } from "./core/slicing";
 import {
   animateScroll,
+  cancelScrollAnimation,
   isAnimatingScroll,
   type ScrollDirection,
   type ScrollPosition,
@@ -82,18 +83,25 @@ const HISTORY_TRIGGER_MARGIN = 750;
 /**
  * Where the *request* for the next page starts. Much earlier than the mount
  * trigger: a request touches no DOM, so it is safe mid-fling and it takes the
- * network out of the wait when the reader reaches the mounted top.
+ * network out of the wait when the reader reaches the mounted top. A phone row
+ * is ~50-90px, so this keeps several pages ahead of a fast fling (the store
+ * buffers two, the rest are cheap no-ops).
  */
-const PREFETCH_PX = 6000;
+const PREFETCH_PX = 12000;
 /** Minimum gap between two older-history requests (burst guard). */
 const LOAD_COOLDOWN_MS = 400;
 /**
  * How long the scroller must be quiet before the work that needs a verified
  * rest: reading the read line, and — on an engine without native scroll
  * anchoring — mounting rows above the viewport. A quiet event stream is not
- * proof of a rest on iOS, so the rest is verified from the position itself.
+ * proof of a rest on iOS, so the rest is verified from the position itself: the
+ * position must be unchanged since the last observation, whatever the timer says.
+ *
+ * This is the delay between "the reader stopped" and "the page is mounted" on
+ * WebKit, so it is kept at Telegram Web's debounce scale (~100ms) rather than
+ * generous: the verification, not the timer, is what makes the rest safe.
  */
-const REST_MS = 150;
+const REST_MS = 80;
 /**
  * The gap a focused message keeps from the viewport edge (Telegram Web's
  * `FOCUS_MARGIN` / `BOTTOM_FOCUS_MARGIN`, both in rem there).
@@ -410,6 +418,13 @@ export const MessageList = memo(
     /** The position moved and has not been verified at rest yet. */
     const coastingRef = useRef(false);
     /**
+     * The next scroll event is the echo of our own `scrollTop` write, not the
+     * reader scrolling (Telegram Web: `isScrollTopJustUpdatedRef`). Treating it
+     * as the reader would re-arm the rest pass, which on WebKit defers the next
+     * page mount by another rest window — the wall the reader feels.
+     */
+    const justWrotePositionRef = useRef(false);
+    /**
      * A programmatic position replace is in flight. Safari delivers stale
      * `IntersectionObserver` entries between the DOM mutation and the scroll
      * restore, and acting on one would mount a page from a position that no
@@ -698,6 +713,15 @@ export const MessageList = memo(
 
     // ── Scroll pass ────────────────────────────────────────────────────
     const handleScroll = useCallback(() => {
+      if (justWrotePositionRef.current) {
+        justWrotePositionRef.current = false;
+        return;
+      }
+      const scroller = scrollerRef.current;
+      // A glide owns the position for its duration; its per-frame writes are no
+      // more "the reader scrolling" than the echo above.
+      if (scroller && isAnimatingScroll(scroller)) return;
+
       coastingRef.current = true;
       noteGestureStart();
       armRest();
@@ -705,7 +729,8 @@ export const MessageList = memo(
       scrollRafRef.current = requestAnimationFrame(() => {
         scrollRafRef.current = null;
         const scroller = scrollerRef.current;
-        if (scroller) bestPositionRef.current = readContainerScrollTop(scroller);
+        if (!scroller) return;
+        bestPositionRef.current = readContainerScrollTop(scroller);
         updateFollowing();
         syncBottomSnap();
         prefetchOlder();
@@ -719,6 +744,10 @@ export const MessageList = memo(
     const markPointerDown = useCallback(() => {
       pointerDownRef.current = true;
       noteGestureStart();
+      // Telegram cancels a glide a new focus supersedes; the reader touching the
+      // list is the strongest version of that — the position is theirs again.
+      const scroller = scrollerRef.current;
+      if (scroller) cancelScrollAnimation(scroller);
     }, []);
     const clearPointerDown = useCallback(() => {
       if (!pointerDownRef.current) return;
@@ -955,6 +984,8 @@ export const MessageList = memo(
             }) ?? null
           : null;
 
+        const wrotePosition = Boolean(mutation) || pin || nextScrollTop !== null;
+
         return () => {
           if (mutation) {
             noteScrollTopWrite("glide");
@@ -965,6 +996,12 @@ export const MessageList = memo(
           } else if (nextScrollTop !== null) {
             noteScrollTopWrite(isFirstCommit ? "initial" : "anchor");
             setScrollTop(scroller, nextScrollTop);
+          }
+          if (wrotePosition) {
+            justWrotePositionRef.current = true;
+            requestMeasure(() => {
+              justWrotePositionRef.current = false;
+            });
           }
           // After the write: "is the reader at the bottom" is a property of the
           // new position, and snapping is armed from it.
@@ -1064,9 +1101,11 @@ export const MessageList = memo(
       const scrollTop = readContainerScrollTop(scroller);
       const wasGlued = previous.bottomOffset - previous.clientHeight <= AT_BOTTOM_THRESHOLD;
 
+      let wrote = false;
       if (followingRef.current && wasGlued) {
         noteScrollTopWrite("chrome:pin");
         pinToBottom(scroller);
+        wrote = true;
       } else {
         // A container that grew downward does not move the content; one whose
         // top edge moved down (a banner) does — by exactly that delta.
@@ -1074,6 +1113,7 @@ export const MessageList = memo(
         if (Math.abs(topDelta) > 0.5) {
           noteScrollTopWrite("chrome:top");
           setScrollTop(scroller, scrollTop - topDelta);
+          wrote = true;
         }
       }
 
@@ -1083,6 +1123,12 @@ export const MessageList = memo(
         containerTop,
         bottomOffset: scroller.scrollHeight - readContainerScrollTop(scroller),
       };
+      if (wrote) {
+        justWrotePositionRef.current = true;
+        requestMeasure(() => {
+          justWrotePositionRef.current = false;
+        });
+      }
       requestMeasure(() => syncBottomSnap());
     }, [syncBottomSnap]);
 

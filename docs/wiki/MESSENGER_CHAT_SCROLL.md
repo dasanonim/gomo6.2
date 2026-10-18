@@ -229,17 +229,53 @@ ships as a no-op — every function returns immediately unless the flag was read
 **History triggers.** Two 1px sentinels with `rootMargin: 750px` *request* work
 only; the mount itself happens in a commit. `prefetchOlder()` additionally
 requests the next page from the per-frame scroll pass as soon as the position is
-within `PREFETCH_PX` (6000) of the top: a request touches no DOM, so it is safe
+within `PREFETCH_PX` (12000) of the top: a request touches no DOM, so it is safe
 mid-fling and it takes the network round trip out of the wait when the reader
 arrives at the mounted top. The store's buffered page (`postpone: true` in
-`loadMoreMessages`) is what makes request early / insert late possible.
+`loadMoreMessages`, up to two pages) is what makes request early / insert late
+possible. On a phone a row is ~50–90px, so 12000px is several pages of runway —
+enough that a fast fling does not outrun the network.
+
+**Our own write is not the reader.** Every `scrollTop` write produces a scroll
+event, and on WebKit every "the reader is scrolling" decision (arming the rest,
+deferring a mount, refreshing the snap state) costs a rest window. The writer
+therefore marks its writes (`justWrotePositionRef`, Telegram Web's
+`isScrollTopJustUpdatedRef`) and the scroll handler drops that one event. Without
+it, a mount's own compensation echo re-arms the rest and the *next* page waits
+another full rest — measured in the tests as a slide that never happens.
+
+**A glide owns the position.** While `animateScroll` runs, its per-frame writes are
+not the reader either: the scroll pass returns early, so a 500ms glide does not
+drag four rest passes and four read-line searches behind it.
+
+**A touch takes the position back.** Telegram cancels a glide when a new focus
+supersedes it; a reader touching the list is the strongest version of that, so
+`cancelScrollAnimation` runs on the gesture gate's pointer-down. Otherwise a
+glide that is still running would keep writing under the reader's finger (dropped
+on WebKit, then replayed as a jump when the finger lifts).
 
 **Capability gate.** Adding rows above the viewport is free where the engine
 anchors. Where it does not (WebKit), the compensating write would be dropped
 under a live gesture and the added rows would shift the reader's content — so
 those mounts wait for a **verified rest**: the scroller must be quiet for
-`REST_MS` (150) *and* its position must be the same as at the last observation.
-A quiet event stream is not proof of a rest; the position is.
+`REST_MS` (80 — Telegram Web's debounce scale; the *verification* is what makes it
+safe, not the timer) *and* its position must be the same as at the last
+observation. A quiet event stream is not proof of a rest; the position is. That
+one window is the entire "wall" the reader feels on iOS: the page is already
+fetched and buffered, only the insert waits.
+
+### 6.1 Why there is no invisible staging of the incoming page
+
+Mounting the page into a zero-height, `content-visibility: hidden` container
+during the fling and flipping its height at the rest looks attractive (the rest
+path then costs one layout instead of a render plus a layout). It was considered
+and rejected: the React commit and the element creation still happen *during the
+gesture*, i.e. on the frame budget of the very scroll the reader is judging, and
+a 10–20ms commit mid-fling is a dropped frame — the exact symptom this whole
+engine exists to remove. The wall, by contrast, is a single beat *after* the
+scroll has already stopped, and `REST_MS` is the only part of it under our
+control. Telegram Web does not stage rows either; its answer to the same problem
+is a deeper local cache and native anchoring (`§7.1b`).
 
 The pointer gate is a gate on the *mount path*, never on the rest pass itself: a
 finger held on the list keeps `pointerDownRef` true and defers upward mounts, and
@@ -302,7 +338,8 @@ need one, because it never creates the situation the rule protects against:
   there is no write on scroll to drop;
 * the bottom is native scroll snapping, so a growing list needs no write at all;
 * `isReplacingHistoryRef` ignores the stale Safari trigger entries that a
-  programmatic replace produces;
+  programmatic replace produces, `isScrollTopJustUpdated` ignores the scroll event
+  its own write produces;
 * `fasterdom` batches reads and writes, so a commit costs one reflow, not one
   per row.
 
