@@ -68,52 +68,160 @@ describe("MessageBubble — touch double-tap", () => {
   const touchAt = (x: number, y: number) => {
     fireEvent.pointerUp(rowOf(), { pointerType: "touch", clientX: x, clientY: y });
   };
+  const onToggleReaction = vi.fn();
+  beforeEach(() => onToggleReaction.mockClear());
 
-  it("replies on a double tap, with the confirmation cue", () => {
+  it("applies the quick reaction on a double tap, with the confirmation cue", () => {
     const onReply = vi.fn();
-    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+    render(
+      <MessageBubble
+        message={createMessage()}
+        {...defaultProps}
+        onReply={onReply}
+        onToggleReaction={onToggleReaction}
+      />,
+    );
 
     touchAt(100, 100);
     touchAt(102, 103);
 
-    expect(onReply).toHaveBeenCalledTimes(1);
+    // Telegram's model: the double-tap is the reaction, the swipe is the reply.
+    expect(onToggleReaction).toHaveBeenCalledWith("msg-1", "❤️");
+    expect(onReply).not.toHaveBeenCalled();
     expect(mockHaptics.success).toHaveBeenCalledTimes(1);
+    // …and the emoji floats over the bubble as the feedback.
+    expect(rowOf().querySelector(".reaction-float")?.textContent).toBe("❤️");
   });
 
-  it("does not reply when the two taps are too far apart in time", () => {
+  it("uses the reader's last reaction as the quick one", () => {
+    localStorage.setItem("gomo6:reactions:recent", "🔥");
+    render(<MessageBubble message={createMessage()} {...defaultProps} onToggleReaction={onToggleReaction} />);
+
+    touchAt(100, 100);
+    touchAt(100, 100);
+
+    expect(onToggleReaction).toHaveBeenCalledWith("msg-1", "🔥");
+  });
+
+  it("does nothing on a double tap without a reaction handler", () => {
+    const onReply = vi.fn();
+    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+
+    touchAt(100, 100);
+    touchAt(100, 100);
+
+    expect(onToggleReaction).not.toHaveBeenCalled();
+    expect(onReply).not.toHaveBeenCalled();
+  });
+
+  it("does not react when the two taps are too far apart in time", () => {
     // A controllable clock: `Date.now` is read by plenty of other code during a
     // render, so a once-per-call mock would be consumed by them.
     let clock = 1_000;
     const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
-    const onReply = vi.fn();
-    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+    render(<MessageBubble message={createMessage()} {...defaultProps} onToggleReaction={onToggleReaction} />);
 
     touchAt(100, 100);
     clock = 1_500;
     touchAt(100, 100);
 
-    expect(onReply).not.toHaveBeenCalled();
+    expect(onToggleReaction).not.toHaveBeenCalled();
     now.mockRestore();
   });
 
-  it("does not reply when the second tap is a drag", () => {
-    const onReply = vi.fn();
-    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+  it("does not react when the second tap is a drag", () => {
+    render(<MessageBubble message={createMessage()} {...defaultProps} onToggleReaction={onToggleReaction} />);
 
     touchAt(100, 100);
     touchAt(160, 100);
 
-    expect(onReply).not.toHaveBeenCalled();
+    expect(onToggleReaction).not.toHaveBeenCalled();
   });
 
-  it("leaves the mouse to the native double-click", () => {
+  it("leaves the mouse to the native double-click (reply)", () => {
     const onReply = vi.fn();
-    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+    render(
+      <MessageBubble
+        message={createMessage()}
+        {...defaultProps}
+        onReply={onReply}
+        onToggleReaction={onToggleReaction}
+      />,
+    );
 
     fireEvent.pointerUp(rowOf(), { pointerType: "mouse", clientX: 100, clientY: 100 });
     fireEvent.pointerUp(rowOf(), { pointerType: "mouse", clientX: 100, clientY: 100 });
 
+    expect(onToggleReaction).not.toHaveBeenCalled();
     expect(onReply).not.toHaveBeenCalled();
+  });
+});
+
+describe("MessageBubble — reactions", () => {
+  const reaction = {
+    emoji: "🔥",
+    count: 2,
+    mine: false,
+    users: [{ id: "u2", username: "bob" }, { id: "u3", username: "carol" }],
+  };
+
+  it("renders the chips under the bubble and toggles on tap", () => {
+    const onToggleReaction = vi.fn();
+    const { container } = render(
+      <MessageBubble
+        message={createMessage({ reactions: [reaction] })}
+        {...defaultProps}
+        viewerId="u1"
+        onToggleReaction={onToggleReaction}
+      />,
+    );
+
+    const chip = container.querySelector(".msg-reaction-chip") as HTMLButtonElement;
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toBe("🔥2");
+
+    fireEvent.click(chip);
+    expect(onToggleReaction).toHaveBeenCalledWith("msg-1", "🔥");
+    expect(mockHaptics.tick).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers the quick bar in the action panel and applies the pick", async () => {
+    const onToggleReaction = vi.fn();
+    const { container } = render(
+      <div className="chat-panel">
+        <div className="message-scroll">
+          <div className="message-list">
+            <div className="message-row">
+              <MessageBubble
+                message={createMessage()}
+                {...defaultProps}
+                viewerId="u1"
+                onToggleReaction={onToggleReaction}
+              />
+            </div>
+          </div>
+        </div>
+      </div>,
+    );
+
+    fireEvent.contextMenu(screen.getByText("Hello, world!"));
+    await screen.findByRole("menu");
+
+    const bar = container.querySelector(".msg-reaction-bar");
+    expect(bar).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "🔥" }));
+
+    expect(onToggleReaction).toHaveBeenCalledWith("msg-1", "🔥");
+    // The bar closes with the panel: the chip under the message is the answer.
+    await vi.waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  });
+
+  it("keeps reactions out of a surface without a handler", () => {
+    const { container } = render(
+      <MessageBubble message={createMessage({ reactions: [reaction] })} {...defaultProps} />,
+    );
+
+    expect(container.querySelector(".msg-reactions")).toBeNull();
   });
 });
 

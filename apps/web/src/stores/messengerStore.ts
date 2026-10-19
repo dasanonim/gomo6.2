@@ -1,5 +1,13 @@
 import { create } from "zustand";
-import type { Attachment, ConversationView, MessageView, TypingUser, ReceiptRow } from "@/components/messenger/types";
+import type {
+  Attachment,
+  ConversationView,
+  MessageView,
+  ReactionUser,
+  TypingUser,
+  ReceiptRow,
+} from "@/components/messenger/types";
+import { applyReaction, noteReactionUsed, replaceChips } from "@/components/messenger/reactions";
 import { messengerApi } from "@/services/messengerApi";
 import { eventManager } from "@/services/eventManager";
 import { loadCachedMessages, saveCachedMessages } from "@/utils/messengerCache";
@@ -7,6 +15,16 @@ import { decryptNote, decryptNotesMeta, encryptNote, encryptNotesMeta, NOTES_LOC
 import type { NotesMeta } from "@/utils/notesCrypto";
 import { messengerPlainPreview, messengerTextToPlain, stripDanglingTagFragment } from "@/components/messenger/messengerRichTextUtils";
 import { appendMessages, mergeMessages, prependOlder } from "@/components/messenger/core/messageModel";
+
+/** The realtime delta a peer's reaction arrives as. */
+export type ReactionEvent = {
+  message_id: string;
+  conversation_id?: string;
+  emoji: string;
+  user_id: string;
+  username: string;
+  action: "add" | "remove";
+};
 
 let messageLoadGeneration = 0;
 let loadMoreRequestGeneration = 0;
@@ -370,6 +388,10 @@ type MessengerStore = {
   createConversation: (userId: string) => Promise<string | null>;
   ensureNotesConversation: () => Promise<string | null>;
   togglePin: (messageId: string) => Promise<void>;
+  /** Toggles my reaction on a message: optimistic chips, then the server's list. */
+  toggleReaction: (messageId: string, emoji: string) => Promise<void>;
+  /** Folds a peer's reaction delta from the realtime hub into the open chat. */
+  applyReactionEvent: (event: ReactionEvent) => void;
   /** Updates a note's encrypted metadata (pin/folder/tags) and syncs it. */
   setNotesMeta: (messageId: string, meta: NotesMeta) => Promise<void>;
   /** Flips the pin flag of a note. */
@@ -880,6 +902,41 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
     } catch {
       set({ error: "Не удалось закрепить сообщение" });
     }
+  },
+
+  // ── Reactions ────────────────────────────────────────────────────────
+  toggleReaction: async (messageId, emoji) => {
+    const { me, selectedConversationId, messages } = get();
+    if (!me || !selectedConversationId) return;
+    const message = messages.find((entry) => entry.id === messageId);
+    if (!message) return;
+
+    // Optimistic: the chip flips under the finger. The server's answer replaces
+    // the whole list, so a lost race cannot leave a wrong count behind.
+    const before = message.reactions;
+    const viewer: ReactionUser = { id: me.id, username: me.username };
+    get().updateMessage(messageId, {
+      reactions: applyReaction(before, emoji, viewer, "toggle", me.id),
+    });
+    noteReactionUsed(emoji);
+
+    try {
+      const result = await messengerApi.toggleReaction(selectedConversationId, messageId, emoji);
+      get().updateMessage(messageId, { reactions: replaceChips(result.reactions) });
+    } catch {
+      get().updateMessage(messageId, { reactions: before });
+    }
+  },
+
+  applyReactionEvent: (event) => {
+    const { me, messages } = get();
+    const message = messages.find((entry) => entry.id === event.message_id);
+    if (!message) return;
+    const viewerId = me?.id ?? "";
+    const user: ReactionUser = { id: event.user_id, username: event.username };
+    get().updateMessage(event.message_id, {
+      reactions: applyReaction(message.reactions, event.emoji, user, event.action, viewerId),
+    });
   },
 
   // ── Notes metadata (pin/folder/tags, client-side E2E) ────────────────

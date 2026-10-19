@@ -83,6 +83,7 @@ class MessengerWebSocket {
       wsService.on("message_edited", (msg) => this.handleMessageEdited(msg)),
       wsService.on("message_notes_meta", (msg) => this.handleNotesMeta(msg)),
       wsService.on("message_deleted", (msg) => this.handleMessageDeleted(msg)),
+      wsService.on("message_reaction", (msg) => this.handleMessageReaction(msg)),
       wsService.on("read_receipt", (msg) => this.handleReadReceipt(msg)),
       wsService.on("chat_typing", (msg) => this.handleTyping(msg)),
       wsService.on("group_updated", (msg) => this.handleGroupUpdated(msg)),
@@ -173,6 +174,25 @@ class MessengerWebSocket {
     const data = this.getMessageData(msg);
     if (!data) return;
     useMessengerStore.getState().removeMessage(data.id as string);
+  }
+
+  private handleMessageReaction(msg: WebSocketMessage): void {
+    const data = this.getMessageData(msg);
+    if (!data) return;
+    const emoji = data.emoji as string;
+    const userId = data.user_id as string;
+    const action = data.action === "remove" ? "remove" : "add";
+    if (!emoji || !userId || !data.message_id) return;
+    // A reaction is a delta, not a summary: every client folds it into its own
+    // chips (and recomputes its own `mine`), so one broadcast serves everyone.
+    useMessengerStore.getState().applyReactionEvent({
+      message_id: data.message_id as string,
+      conversation_id: data.conversation_id as string | undefined,
+      emoji,
+      user_id: userId,
+      username: (data.username as string) ?? "",
+      action,
+    });
   }
 
   private handleReadReceipt(msg: WebSocketMessage): void {

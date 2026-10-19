@@ -23,11 +23,13 @@ interface MessageActionOverlayProps {
   /** `.chat-panel` — the absolute-positioning base for the group. */
   portalEl: HTMLElement;
   isMine: boolean;
+  /** Rendered above the floated message (the reaction bar). Real UI, unlike the clone. */
+  topSlot?: ReactNode;
   /** The action panel JSX; rendered below the floated message. */
   children: ReactNode;
 }
 
-export function MessageActionOverlay({ hostEl, portalEl, isMine, children }: MessageActionOverlayProps) {
+export function MessageActionOverlay({ hostEl, portalEl, isMine, topSlot, children }: MessageActionOverlayProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const cloneHostRef = useRef<HTMLDivElement | null>(null);
   // Upward shift (px, ≤ 0). Applied as translateY with a CSS transition, so
@@ -99,6 +101,7 @@ export function MessageActionOverlay({ hostEl, portalEl, isMine, children }: Mes
       className={`msg-action-lift${isMine ? " is-mine" : ""}`}
       style={{ transform: `translateY(${lift}px)` }}
     >
+      {topSlot}
       <div ref={cloneHostRef} className="msg-action-lift-bubble" />
       {children}
     </div>,

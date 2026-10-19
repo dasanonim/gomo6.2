@@ -107,6 +107,9 @@ type MessageResponse struct {
 	// NotesMeta is the client-side E2E-encrypted pin/folder/tags blob for the
 	// personal notes self-chat. It is forwarded verbatim, never decrypted.
 	NotesMeta *string `json:"notes_meta,omitempty"`
+	// Reactions are the message's chips, aggregated per emoji and ordered by
+	// popularity. `mine` is resolved for the viewer; realtime carries deltas.
+	Reactions []ReactionSummary `json:"reactions,omitempty"`
 }
 
 // Attachment represents a file attached to a message
@@ -147,6 +150,11 @@ type AttachmentInput struct {
 // per-conversation in the handler (see SendMessageRequest).
 type EditMessageRequest struct {
 	Content string `json:"content" binding:"required,max=24000"`
+}
+
+// ToggleReactionRequest is the POST body for toggling a reaction.
+type ToggleReactionRequest struct {
+	Emoji string `json:"emoji" binding:"required,max=48"`
 }
 
 // UpdateNotesMetaRequest is the PUT body for updating a note's encrypted

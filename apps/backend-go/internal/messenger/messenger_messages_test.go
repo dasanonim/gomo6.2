@@ -48,6 +48,11 @@ func TestGetMessages_Success(t *testing.T) {
 		WithArgs(testMsg2, testMsg1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "message_id", "url", "type", "name", "size", "mime", "meta", "sort_order"}))
 
+	// Reactions query (empty result)
+	mock.ExpectQuery(`SELECT r.message_id, r.emoji, r.user_id, COALESCE\(u.username, ''\), r.created_at.*FROM message_reactions r`).
+		WithArgs(testMsg2, testMsg1).
+		WillReturnRows(sqlmock.NewRows([]string{"message_id", "emoji", "user_id", "username", "created_at"}))
+
 	handler.GetMessages(c)
 
 	if w.Code != http.StatusOK {
@@ -64,6 +69,45 @@ func TestGetMessages_Success(t *testing.T) {
 	first := data[0].(map[string]interface{})
 	if first["id"] != testMsg1 {
 		t.Fatalf("expected oldest first (msg-1), got %v", first["id"])
+	}
+}
+
+func TestGetMessages_ReactionLookupFailure(t *testing.T) {
+	handler, mock := setupMessengerHandler(t)
+
+	claims := &auth.Claims{UserID: testUser1, Username: "testuser"}
+	c, w := testutil.NewGETContextWithParams("/api/v1/messenger/conversations/10000000-0000-0000-0000-000000000001/messages", nil, map[string]string{"id": testConv1})
+	c.Set("claims", claims)
+
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_members WHERE conversation_id = \$1 AND user_id = \$2\)`).
+		WithArgs(testConv1, testUser1).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(`SELECT COALESCE\(is_notes, false\) FROM chat_conversations WHERE id = \$1`).
+		WithArgs(testConv1).
+		WillReturnRows(sqlmock.NewRows([]string{"is_notes"}).AddRow(false))
+
+	now := time.Now()
+	msgRows := sqlmock.NewRows([]string{
+		"event_id", "id", "conversation_id", "sender_user_id", "sender_username", "parent_message_id",
+		"content", "is_edited", "is_deleted",
+		"edited_at", "sent_at", "client_id",
+	}).AddRow(int64(1), testMsg1, testConv1, testUser1, "testuser", nil, "Hello!", false, false, nil, now, "c1")
+
+	mock.ExpectQuery(`SELECT m.event_id, m.id, m.conversation_id, m.sender_user_id, u.username AS sender_username,.*FROM chat_messages m.*LEFT JOIN users u.*WHERE m.conversation_id = \$1.*ORDER BY m.sent_at DESC.*LIMIT \$2`).
+		WithArgs(testConv1, 50).
+		WillReturnRows(msgRows)
+
+	mock.ExpectQuery(`SELECT id, message_id, url, type, name, size, mime, meta, sort_order FROM message_attachments WHERE message_id IN`).
+		WithArgs(testMsg1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "message_id", "url", "type", "name", "size", "mime", "meta", "sort_order"}))
+	mock.ExpectQuery(`SELECT r.message_id, r.emoji, r.user_id, COALESCE\(u.username, ''\), r.created_at`).
+		WithArgs(testMsg1).
+		WillReturnError(errReactionInsert)
+
+	handler.GetMessages(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when the chips cannot be loaded, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -97,6 +141,11 @@ func TestGetMessages_WithBefore(t *testing.T) {
 	mock.ExpectQuery(`SELECT id, message_id, url, type, name, size, mime, meta, sort_order FROM message_attachments WHERE message_id IN`).
 		WithArgs(testMsg3).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "message_id", "url", "type", "name", "size", "mime", "meta", "sort_order"}))
+
+	// Reactions query (empty result)
+	mock.ExpectQuery(`SELECT r.message_id, r.emoji, r.user_id, COALESCE\(u.username, ''\), r.created_at.*FROM message_reactions r`).
+		WithArgs(testMsg3).
+		WillReturnRows(sqlmock.NewRows([]string{"message_id", "emoji", "user_id", "username", "created_at"}))
 
 	handler.GetMessages(c)
 
@@ -186,6 +235,9 @@ func TestGetMessages_DecryptionFailureNoCiphertextLeak(t *testing.T) {
 	mock.ExpectQuery(`SELECT id, message_id, url, type, name, size, mime, meta, sort_order FROM message_attachments WHERE message_id IN`).
 		WithArgs(testMsg1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "message_id", "url", "type", "name", "size", "mime", "meta", "sort_order"}))
+	mock.ExpectQuery(`SELECT r.message_id, r.emoji, r.user_id, COALESCE\(u.username, ''\), r.created_at.*FROM message_reactions r`).
+		WithArgs(testMsg1).
+		WillReturnRows(sqlmock.NewRows([]string{"message_id", "emoji", "user_id", "username", "created_at"}))
 
 	handler.GetMessages(c)
 
@@ -654,6 +706,9 @@ func TestGetMessages_NotesCiphertextPassthrough(t *testing.T) {
 	mock.ExpectQuery(`SELECT id, message_id, url, type, name, size, mime, meta, sort_order FROM message_attachments WHERE message_id IN`).
 		WithArgs(testMsg1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "message_id", "url", "type", "name", "size", "mime", "meta", "sort_order"}))
+	mock.ExpectQuery(`SELECT r.message_id, r.emoji, r.user_id, COALESCE\(u.username, ''\), r.created_at.*FROM message_reactions r`).
+		WithArgs(testMsg1).
+		WillReturnRows(sqlmock.NewRows([]string{"message_id", "emoji", "user_id", "username", "created_at"}))
 
 	handler.GetMessages(c)
 

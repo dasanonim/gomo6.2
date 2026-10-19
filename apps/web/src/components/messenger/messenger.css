@@ -1067,16 +1067,24 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
 }
 
 .bubble-row-inner {
+  /* Column: the bubble and (when present) the reaction chips stack under it,
+     and both align to the reader's side. The swipe-to-reply transform still
+     lives here, so a swipe carries the chips with the message. */
   display: flex;
-  justify-content: inherit;
-  align-items: inherit;
-  gap: 4px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0;
   width: 100%;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
   position: relative;
   transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.bubble-row.is-mine .bubble-row-inner {
+  align-items: flex-end;
 }
 
 .bubble-row-inner.is-swiping {
@@ -1728,6 +1736,230 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
 
 .bubble-row-inner.is-long-press .message-bubble {
   background: oklch(var(--primary) / 0.12);
+}
+
+
+/* ── Reactions ──
+   Telegram's two surfaces: chips under the bubble, and the pick bar floating
+   over the message while the press-and-hold panel is open. The chips use the
+   theme's card/primary tokens so they read on both light and dark palettes, and
+   the bar is the same frosted pill as the floating date. */
+
+.msg-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-top: 3px;
+  padding: 0 2px;
+}
+
+.bubble-row.is-mine .msg-reactions {
+  justify-content: flex-end;
+}
+
+.msg-reaction-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px 0 6px;
+  border: 1px solid oklch(var(--border));
+  border-radius: 999px;
+  background: oklch(var(--card) / 0.9);
+  color: oklch(var(--card-foreground));
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+  /* Every chip mounts when its emoji first appears: the pop is the "someone
+     reacted" feedback, and it costs one composited animation. */
+  animation: reaction-chip-in 0.26s cubic-bezier(0.2, 0.9, 0.25, 1.15);
+}
+
+.msg-reaction-chip:hover {
+  background: oklch(var(--card));
+}
+
+.msg-reaction-chip:active {
+  transform: scale(0.94);
+}
+
+.msg-reaction-chip.is-mine {
+  border-color: oklch(var(--primary) / 0.45);
+  background: oklch(var(--primary) / 0.14);
+  color: oklch(var(--primary));
+}
+
+.msg-reaction-emoji {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.msg-reaction-count {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: oklch(var(--muted-foreground));
+}
+
+.msg-reaction-chip.is-mine .msg-reaction-count {
+  color: oklch(var(--primary));
+}
+
+@keyframes reaction-chip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.7) translateY(3px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.06) translateY(0);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* The floating copy of the emoji a double-tap just applied. It stays inside the
+   bubble's box: rows may carry paint containment on anchoring engines (see
+   content-visibility in §5), and ink above the row would be clipped. */
+.reaction-float {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  font-size: 40px;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+  animation: reaction-float 0.7s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+}
+
+@keyframes reaction-float {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  30% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.12);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(-50%, -60%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -74%) scale(1.28);
+  }
+}
+
+/* The bar floats over the message's top edge, anchored to the bubble's side so
+   it always grows towards the middle of the chat (never off the panel). */
+.msg-reaction-bar {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 61;
+  display: flex;
+  padding: 3px;
+  border: 1px solid oklch(var(--border) / 0.7);
+  border-radius: 999px;
+  background: oklch(var(--card) / 0.86);
+  -webkit-backdrop-filter: blur(max(var(--surface-blur, 0px), 14px)) saturate(1.6);
+  backdrop-filter: blur(max(var(--surface-blur, 0px), 14px)) saturate(1.6);
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.16);
+  animation: reaction-bar-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.msg-action-lift.is-mine .msg-reaction-bar {
+  left: auto;
+  right: 0;
+}
+
+.msg-reaction-bar.is-expanded {
+  border-radius: 18px;
+}
+
+.msg-reaction-row {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.msg-reaction-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 32px);
+  gap: 1px;
+  max-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.msg-reaction-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.12s ease, transform 0.12s ease;
+}
+
+.msg-reaction-pick:hover {
+  background: oklch(var(--muted) / 0.85);
+}
+
+.msg-reaction-pick:active {
+  transform: scale(0.86);
+}
+
+.msg-reaction-pick.is-mine {
+  background: oklch(var(--primary) / 0.14);
+}
+
+.msg-reaction-more {
+  font-size: 17px;
+  font-weight: 600;
+  color: oklch(var(--muted-foreground));
+}
+
+@keyframes reaction-bar-in {
+  from {
+    opacity: 0;
+    transform: scale(0.86) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-reaction-chip,
+  .msg-reaction-bar,
+  .reaction-float {
+    animation: none;
+  }
+
+  .reaction-float {
+    opacity: 0;
+  }
 }
 
 /* ── Message action panel (press-and-hold / right-click) ──

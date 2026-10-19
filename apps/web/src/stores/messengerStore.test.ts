@@ -24,6 +24,7 @@ vi.mock("@/services/messengerApi", () => ({
     getOrCreateConversation: vi.fn(),
     getOrCreateNotes: vi.fn(),
     togglePin: vi.fn(),
+    toggleReaction: vi.fn(),
     updateNotesMeta: vi.fn(),
     getReceipts: vi.fn(),
     getUnreadCount: vi.fn(),
@@ -364,6 +365,101 @@ describe("messengerStore", () => {
       const msg = useMessengerStore.getState().messages[0];
       expect(msg.is_deleted).toBe(true);
       expect(msg.content).toBe("");
+    });
+  });
+
+  describe("toggleReaction", () => {
+    it("flips my chip optimistically and takes the server's list", async () => {
+      useMessengerStore.setState({
+        me: { id: "u1", username: "testuser" },
+        selectedConversationId: "conv-1",
+        messages: [mockMsg({ id: "msg-1", reactions: [] })],
+      });
+      let release: (value: unknown) => void = () => {};
+      vi.mocked(messengerApi.toggleReaction).mockImplementation(
+        () => new Promise((resolve) => { release = resolve as (value: unknown) => void; }) as never,
+      );
+
+      const pending = useMessengerStore.getState().toggleReaction("msg-1", "❤️");
+
+      // Optimistic: the chip exists before the network answered.
+      expect(useMessengerStore.getState().messages[0].reactions).toEqual([
+        { emoji: "❤️", count: 1, mine: true, users: [{ id: "u1", username: "testuser" }] },
+      ]);
+
+      release({
+        message_id: "msg-1",
+        action: "add",
+        reactions: [
+          { emoji: "❤️", count: 2, mine: true, users: [{ id: "u1", username: "testuser" }, { id: "u2", username: "bob" }] },
+          { emoji: "🔥", count: 1, mine: false, users: [{ id: "u2", username: "bob" }] },
+        ],
+      });
+      await pending;
+
+      expect(useMessengerStore.getState().messages[0].reactions?.map((c) => c.emoji)).toEqual(["❤️", "🔥"]);
+      expect(useMessengerStore.getState().messages[0].reactions?.[0].count).toBe(2);
+      expect(localStorage.getItem("gomo6:reactions:recent")).toBe("❤️");
+    });
+
+    it("rolls the optimistic chip back when the request fails", async () => {
+      useMessengerStore.setState({
+        me: { id: "u1", username: "testuser" },
+        selectedConversationId: "conv-1",
+        messages: [mockMsg({ id: "msg-1", reactions: [] })],
+      });
+      vi.mocked(messengerApi.toggleReaction).mockRejectedValue(new Error("offline"));
+
+      await useMessengerStore.getState().toggleReaction("msg-1", "🔥");
+
+      expect(useMessengerStore.getState().messages[0].reactions).toEqual([]);
+    });
+
+    it("ignores a message that is not in the open chat", async () => {
+      useMessengerStore.setState({
+        me: { id: "u1", username: "testuser" },
+        selectedConversationId: "conv-1",
+        messages: [],
+      });
+
+      await useMessengerStore.getState().toggleReaction("msg-404", "❤️");
+
+      expect(messengerApi.toggleReaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("applyReactionEvent", () => {
+    it("folds a peer's delta into the chips", () => {
+      useMessengerStore.setState({
+        me: { id: "u1", username: "testuser" },
+        messages: [mockMsg({ id: "msg-1", reactions: [] })],
+      });
+
+      useMessengerStore.getState().applyReactionEvent({
+        message_id: "msg-1",
+        emoji: "😂",
+        user_id: "u2",
+        username: "bob",
+        action: "add",
+      });
+
+      expect(useMessengerStore.getState().messages[0].reactions).toEqual([
+        { emoji: "😂", count: 1, mine: false, users: [{ id: "u2", username: "bob" }] },
+      ]);
+    });
+
+    it("ignores a delta for a message the client does not hold", () => {
+      useMessengerStore.setState({ me: { id: "u1", username: "testuser" }, messages: [] });
+
+      useMessengerStore.getState().applyReactionEvent({
+        message_id: "msg-404",
+        emoji: "❤️",
+        user_id: "u2",
+        username: "bob",
+        action: "add",
+      });
+
+      expect(useMessengerStore.getState().messages).toEqual([]);
     });
   });
 

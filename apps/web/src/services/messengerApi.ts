@@ -1,4 +1,11 @@
-import type { Attachment, ConversationView, GroupMember, MessageView, ReceiptRow } from "@/components/messenger/types";
+import type {
+  Attachment,
+  ConversationView,
+  GroupMember,
+  MessageView,
+  ReactionSummary,
+  ReceiptRow,
+} from "@/components/messenger/types";
 import type { VideoEdit } from "@/components/videoEditor/types";
 import { apiClient } from "@/integrations/api/client";
 import { uploadFile } from "@/utils/storage";
@@ -247,6 +254,17 @@ export const messengerApi = {
   async removeGroupMember(groupId: string, userId: string): Promise<{ removed: boolean }> {
     return req(`/groups/${groupId}/members/${userId}`, {
       method: "DELETE",
+    });
+  },
+
+  async toggleReaction(
+    conversationId: string,
+    messageId: string,
+    emoji: string,
+  ): Promise<{ message_id: string; action: "add" | "remove"; reactions: ReactionSummary[] }> {
+    return req(`/conversations/${conversationId}/messages/${messageId}/reactions`, {
+      method: "POST",
+      body: JSON.stringify({ emoji }),
     });
   },
 

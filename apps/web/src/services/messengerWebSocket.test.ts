@@ -46,6 +46,7 @@ const { storeMocks, queueMarkDeliveredMock, queueMarkReadMock } = vi.hoisted(() 
     setTyping: vi.fn(),
     updateConversationFromWs: vi.fn(),
     loadReceipts: vi.fn(),
+    applyReactionEvent: vi.fn(),
   };
   const queueMarkDeliveredMock = vi.fn();
   const queueMarkReadMock = vi.fn();
@@ -87,6 +88,7 @@ describe("messengerWebSocket", () => {
       expect(mockWsService.on).toHaveBeenCalledWith("message_edited", expect.any(Function));
       expect(mockWsService.on).toHaveBeenCalledWith("message_notes_meta", expect.any(Function));
       expect(mockWsService.on).toHaveBeenCalledWith("message_deleted", expect.any(Function));
+      expect(mockWsService.on).toHaveBeenCalledWith("message_reaction", expect.any(Function));
       expect(mockWsService.on).toHaveBeenCalledWith("read_receipt", expect.any(Function));
       expect(mockWsService.on).toHaveBeenCalledWith("chat_typing", expect.any(Function));
       // Presence (user_online/user_offline) is handled by the presence rooms
@@ -98,7 +100,7 @@ describe("messengerWebSocket", () => {
     it("does not double-register handlers", () => {
       messengerWs.connect();
       messengerWs.connect();
-      expect(mockWsService.on).toHaveBeenCalledTimes(7);
+      expect(mockWsService.on).toHaveBeenCalledTimes(8);
     });
   });
 
@@ -135,6 +137,33 @@ describe("messengerWebSocket", () => {
         content: "Edited",
         is_edited: true,
       }));
+    });
+
+    it("handles message_reaction as a delta", () => {
+      emitToHandlers("message_reaction", {
+        message_id: "msg-1",
+        conversation_id: "conv-1",
+        emoji: "🔥",
+        user_id: "u2",
+        username: "bob",
+        action: "add",
+      });
+
+      expect(storeMocks.applyReactionEvent).toHaveBeenCalledWith({
+        message_id: "msg-1",
+        conversation_id: "conv-1",
+        emoji: "🔥",
+        user_id: "u2",
+        username: "bob",
+        action: "add",
+      });
+    });
+
+    it("ignores a message_reaction without an emoji or an author", () => {
+      emitToHandlers("message_reaction", { message_id: "msg-1", emoji: "", user_id: "u2", action: "add" });
+      emitToHandlers("message_reaction", { message_id: "msg-1", emoji: "🔥", user_id: "", action: "add" });
+
+      expect(storeMocks.applyReactionEvent).not.toHaveBeenCalled();
     });
 
     it("handles message_notes_meta", () => {
