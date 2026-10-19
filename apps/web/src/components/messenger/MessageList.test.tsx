@@ -45,6 +45,15 @@ vi.mock("@/stores/messengerStore", async () => {
   };
 });
 
+const { mockHaptics } = vi.hoisted(() => ({
+  mockHaptics: { tick: vi.fn(), success: vi.fn() },
+}));
+
+vi.mock("@/lib/haptics", () => ({
+  hapticTick: mockHaptics.tick,
+  hapticSuccess: mockHaptics.success,
+}));
+
 // ── IntersectionObserver stand-in ──────────────────────────────────────────
 // jsdom has no layout and never intersects anything, so the two sentinels are
 // driven explicitly. The contract under test is "a sentinel that becomes visible
@@ -931,6 +940,17 @@ describe("MessageList — the engine's own discipline", () => {
     } finally {
       disableStrict();
     }
+  });
+
+  it("ticks when the reader asks to jump to the newest message", async () => {
+    const ref = createRef<MessageListHandle>();
+    setStore({ messages: longList(200) });
+    await mountList({}, ref);
+    mockHaptics.tick.mockClear();
+
+    act(() => ref.current?.scrollToBottom());
+
+    expect(mockHaptics.tick).toHaveBeenCalledWith(10);
   });
 
   it("does not flash the newest-message button while an arrival is settling", async () => {
