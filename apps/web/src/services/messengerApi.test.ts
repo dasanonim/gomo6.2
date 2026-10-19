@@ -35,6 +35,35 @@ describe("messengerApi", () => {
     } as Response);
   }
 
+  describe("toggleReaction", () => {
+    it("posts the emoji and returns the message's chips", async () => {
+      mockFetchRaw({
+        success: true,
+        data: {
+          message_id: "msg-1",
+          action: "add",
+          reactions: [{ emoji: "❤️", count: 1, mine: true, users: [{ id: "u1", username: "me" }] }],
+        },
+      });
+
+      const result = await messengerApi.toggleReaction("conv-1", "msg-1", "❤️");
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/v1/messenger/conversations/conv-1/messages/msg-1/reactions",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ emoji: "❤️" }) }),
+      );
+      expect(result.action).toBe("add");
+      expect(result.reactions).toHaveLength(1);
+      expect(result.reactions[0].mine).toBe(true);
+    });
+
+    it("surfaces the server's refusal (too many reactions)", async () => {
+      mockFetch({}, 409);
+
+      await expect(messengerApi.toggleReaction("conv-1", "msg-1", "❤️")).rejects.toThrow();
+    });
+  });
+
   describe("getMyProfile", () => {
     it("returns profile data", async () => {
       mockFetchRaw({ success: true, data: { id: "u1", username: "test" } });

@@ -2,6 +2,7 @@ package messenger
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/gomo6/backend/internal/auth"
 	"github.com/gomo6/backend/internal/testutil"
 )
+
+var errReactionInsert = errors.New("insert failed")
 
 // ─── Reaction helpers ───────────────────────────────────────────────────────
 
@@ -25,6 +28,23 @@ func TestValidReactionEmoji(t *testing.T) {
 		if validReactionEmoji(emoji) {
 			t.Fatalf("expected %q to be rejected", emoji)
 		}
+	}
+}
+
+func TestFetchReactionsForMessages_EmptyPageShortCircuits(t *testing.T) {
+	handler, _ := setupMessengerHandler(t)
+
+	summaries, err := handler.fetchReactionsForMessages(nil, nil, testUser1)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if summaries != nil {
+		t.Fatalf("expected no summaries for an empty page, got %v", summaries)
+	}
+
+	messages := []MessageResponse{}
+	if err := handler.addReactionsToMessages(nil, messages); err != nil {
+		t.Fatalf("expected no error attaching to an empty page, got %v", err)
 	}
 }
 
@@ -142,6 +162,39 @@ func TestToggleReaction_Removes(t *testing.T) {
 	chips, ok := data["reactions"].([]interface{})
 	if !ok || len(chips) != 0 {
 		t.Fatalf("expected an empty chip list once the last reaction is gone, got %v", data["reactions"])
+	}
+}
+
+func TestToggleReaction_SurfacesInsertFailure(t *testing.T) {
+	handler, mock := setupMessengerHandler(t)
+
+	claims := &auth.Claims{UserID: testUser1, Username: "testuser"}
+	c, w := testutil.NewPOSTContext(
+		"/api/v1/messenger/conversations/"+testConv1+"/messages/"+testMsg1+"/reactions",
+		map[string]string{"emoji": "❤️"},
+		claims,
+		map[string]string{"id": testConv1, "msgId": testMsg1},
+	)
+
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_members WHERE conversation_id = \$1 AND user_id = \$2\)`).
+		WithArgs(testConv1, testUser1).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_messages WHERE id = \$1 AND conversation_id = \$2 AND is_deleted = false\)`).
+		WithArgs(testMsg1, testConv1).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectExec(`DELETE FROM message_reactions WHERE message_id = \$1 AND user_id = \$2 AND emoji = \$3`).
+		WithArgs(testMsg1, testUser1, "❤️").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM message_reactions WHERE message_id = \$1 AND user_id = \$2`).
+		WithArgs(testMsg1, testUser1).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec(`INSERT INTO message_reactions`).
+		WillReturnError(errReactionInsert)
+
+	handler.ToggleReaction(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
