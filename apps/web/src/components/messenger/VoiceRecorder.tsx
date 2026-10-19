@@ -255,13 +255,20 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
   // ── Start ────────────────────────────────────────────────────────────────
   const start = useCallback(async () => {
     if (phaseRef.current !== "idle" || disabled) return;
+    // On an insecure origin (a phone on http://192.168.x.x) the browser hides
+    // `mediaDevices` entirely — saying "this browser cannot record" there is a
+    // lie, and the fix is an https address, not another browser.
+    if (!window.isSecureContext) {
+      toast.error("Запись работает только по HTTPS или на localhost — открой https-адрес стенда");
+      return;
+    }
     const mime = pickVoiceMimeType();
     if (mime === null) {
-      toast.error("Этот браузер не умеет записывать звук");
+      toast.error("Этот браузер не умеет записывать звук (нужен Safari 14.5+ или свежий Chrome)");
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
-      toast.error("Запись звука недоступна в этом браузере");
+      toast.error("Браузер не даёт доступ к микрофону");
       return;
     }
 
@@ -285,14 +292,41 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     }
 
     streamRef.current = stream;
-    mimeRef.current = mime || "audio/webm";
     chunksRef.current = [];
     liveBarsRef.current = [];
     lastBarAtRef.current = 0;
 
-    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    // Safari refuses `new MediaRecorder(stream, { mimeType })` in some versions
+    // even when `isTypeSupported` says yes, so the requested container is a
+    // preference, not a demand: retry with the browser's own default.
+    let recorder: MediaRecorder | null = null;
+    const optionSets: (MediaRecorderOptions | undefined)[] = mime ? [{ mimeType: mime }, undefined] : [undefined];
+    for (const options of optionSets) {
+      try {
+        recorder = new MediaRecorder(stream, options);
+        break;
+      } catch {
+        recorder = null;
+      }
+    }
+    if (!recorder) {
+      stream.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setPhase("idle");
+      toast.error("Не удалось начать запись в поддерживаемом формате");
+      return;
+    }
+
+    // What the browser ACTUALLY opened wins: Safari records mp4/AAC even when
+    // nothing was requested, and labelling that file "audio/webm" would upload
+    // a lie (wrong extension, wrong mime) and break playback for the receiver.
+    mimeRef.current = recorder.mimeType || mime || "";
     recorder.ondataavailable = (event) => {
       if (event.data && event.data.size > 0) chunksRef.current.push(event.data);
+    };
+    recorder.onerror = () => {
+      toast.error("Запись прервалась");
+      void finish(false);
     };
     recorder.start(250);
     recorderRef.current = recorder;
@@ -316,7 +350,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     setElapsed(0);
     hapticTick(8);
     startLoops();
-  }, [disabled, startLoops]);
+  }, [disabled, finish, startLoops]);
 
   // A release that arrives while the permission prompt is still open opens a
   // hands-free recording: the user asked to record, and the prompt is ours to
