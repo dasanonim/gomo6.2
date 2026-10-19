@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useCallback, useRef } from "react";
 import { hapticTick } from "@/lib/haptics";
 import type { ReactionSummary } from "./types";
 import { describeChip, describeReactors } from "./reactions";
@@ -20,7 +20,54 @@ interface Props {
   onToggle: (emoji: string) => void;
 }
 
+/** A press longer than this, or a drag past this slop, is not a tap. */
+const TAP_SLOP_PX = 10;
+
 export const ReactionChips = memo(function ReactionChips({ chips, viewerId, onToggle }: Props) {
+  // The tap is handled on `pointerup`, not on `click`: the row around the chips
+  // owns a swipe gesture, and a click on a chip can be swallowed on its way to
+  // React's root (a capture listener up the tree) — pointer events always reach
+  // the button. The click handler stays for keyboard/assistive activation, with
+  // this guard so a pointer tap is never applied twice.
+  const pressRef = useRef<{ emoji: string; x: number; y: number } | null>(null);
+  const handledRef = useRef<{ emoji: string; at: number } | null>(null);
+
+  const apply = useCallback(
+    (emoji: string) => {
+      hapticTick(6);
+      onToggle(emoji);
+    },
+    [onToggle],
+  );
+
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>, emoji: string) => {
+    event.stopPropagation();
+    pressRef.current = { emoji, x: event.clientX, y: event.clientY };
+  }, []);
+
+  const handlePointerUp = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>, emoji: string) => {
+      event.stopPropagation();
+      const press = pressRef.current;
+      pressRef.current = null;
+      if (!press || press.emoji !== emoji) return;
+      if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > TAP_SLOP_PX) return;
+      handledRef.current = { emoji, at: Date.now() };
+      apply(emoji);
+    },
+    [apply],
+  );
+
+  const handleClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>, emoji: string) => {
+      event.stopPropagation();
+      const handled = handledRef.current;
+      if (handled && handled.emoji === emoji && Date.now() - handled.at < 600) return;
+      apply(emoji);
+    },
+    [apply],
+  );
+
   if (chips.length === 0) return null;
 
   return (
@@ -44,11 +91,12 @@ export const ReactionChips = memo(function ReactionChips({ chips, viewerId, onTo
           key={chip.emoji}
           type="button"
           className={`msg-reaction-chip${chip.mine ? " is-mine" : ""}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            hapticTick(6);
-            onToggle(chip.emoji);
+          onPointerDown={(event) => handlePointerDown(event, chip.emoji)}
+          onPointerUp={(event) => handlePointerUp(event, chip.emoji)}
+          onPointerCancel={() => {
+            pressRef.current = null;
           }}
+          onClick={(event) => handleClick(event, chip.emoji)}
           aria-pressed={chip.mine}
           aria-label={describeChip(chip, viewerId)}
           title={describeReactors(chip, viewerId)}

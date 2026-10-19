@@ -47,11 +47,12 @@ const (
 	// status immediately (before the first delta arrives).
 	MessageTypePresenceSnapshot = "presence_snapshot"
 	// Messenger-specific events
-	MessageTypeMessageEdited  = "message_edited"
-	MessageTypeMessageDeleted = "message_deleted"
-	MessageTypeReadReceipt    = "read_receipt"
-	MessageTypeChatTyping     = "chat_typing"
-	MessageTypeSessionRevoked = "session_revoked"
+	MessageTypeMessageEdited   = "message_edited"
+	MessageTypeMessageDeleted  = "message_deleted"
+	MessageTypeMessageReaction = "message_reaction"
+	MessageTypeReadReceipt     = "read_receipt"
+	MessageTypeChatTyping      = "chat_typing"
+	MessageTypeSessionRevoked  = "session_revoked"
 
 	// GomoSub text-channel (chat) events — separate from the E2E messenger
 	// pipeline: this content is plaintext and moderatable by design.
@@ -527,9 +528,11 @@ func (h *Hub) dispatchRealtimeBroadcast(eventType string, payload interface{}, m
 		messageBytes = decryptChatMessage(payload, message, messageBytes, eventType)
 		h.broadcastChatEvent(payload, messageBytes, false)
 
-	case MessageTypeMessageDeleted, MessageTypeReadReceipt, MessageTypeChatTyping, "member_left",
-		// Messenger housekeeping events (conversation metadata, notes meta).
-		// They carry no encrypted content and route to the conversation room.
+	case MessageTypeMessageDeleted, MessageTypeMessageReaction, MessageTypeReadReceipt, MessageTypeChatTyping, "member_left",
+		// Messenger housekeeping events (conversation metadata, notes meta,
+		// reactions). They carry no encrypted content and route to the
+		// conversation room — a reaction delta has to reach the peer in
+		// realtime, not on the next page load.
 		"group_updated", "message_notes_meta":
 		// These events don't carry encrypted content
 		h.broadcastChatEvent(payload, messageBytes, false)

@@ -53,6 +53,32 @@ describe("ReactionChips", () => {
     expect(mockHaptics.tick).toHaveBeenCalledTimes(1);
   });
 
+  it("toggles on a pointer tap, and the synthesized click does not double-apply", () => {
+    const onToggle = vi.fn();
+    render(<ReactionChips chips={chips} viewerId="me" onToggle={onToggle} />);
+    const button = screen.getByRole("button", { name: /😂/ });
+
+    fireEvent.pointerDown(button, { clientX: 10, clientY: 10, pointerType: "touch" });
+    fireEvent.pointerUp(button, { clientX: 12, clientY: 11, pointerType: "touch" });
+    expect(onToggle).toHaveBeenCalledWith("😂");
+    expect(mockHaptics.tick).toHaveBeenCalledTimes(1);
+
+    // The browser still fires a click after the tap.
+    fireEvent.click(button);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a press that drags across the chip", () => {
+    const onToggle = vi.fn();
+    render(<ReactionChips chips={chips} viewerId="me" onToggle={onToggle} />);
+    const button = screen.getByRole("button", { name: /😂/ });
+
+    fireEvent.pointerDown(button, { clientX: 10, clientY: 10, pointerType: "touch" });
+    fireEvent.pointerUp(button, { clientX: 40, clientY: 10, pointerType: "touch" });
+
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
   it("renders nothing without reactions", () => {
     const { container } = render(<ReactionChips chips={[]} viewerId="me" onToggle={vi.fn()} />);
 
