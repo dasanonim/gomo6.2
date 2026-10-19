@@ -116,6 +116,14 @@ const FOCUS_MARGIN = 20;
  * (which is exactly a jump-to-bottom or a jump-to-message here).
  */
 const BOTTOM_FOCUS_DISTANCE = 500;
+/**
+ * Telegram's `body.is-scrolling-messages`: set while the reader is scrolling and
+ * removed a beat after they stop. The floating date is gated on it in CSS, so at
+ * rest the date steps aside instead of hanging over the list (their rule, their
+ * delay — 1s of `runDebounced`).
+ */
+const SCROLLING_CLASS = "is-scrolling-messages";
+const SCROLLING_FLAG_MS = 900;
 /** Distance the unread divider keeps from the top when a chat opens on it. */
 const UNREAD_DIVIDER_TOP = 12;
 /** Redisplays a jumped-to message for this long. */
@@ -527,6 +535,7 @@ export const MessageList = memo(
     const pinnedTailRef = useRef<string | null>(null);
     const lastReadKeyRef = useRef<string | null>(null);
     const lastStickyDateRef = useRef<string | null>(null);
+    const scrollingFlagTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastRequestAtRef = useRef(0);
     const olderBusyRef = useRef(false);
     /** A pointer is on the list: nothing may move content under it (WebKit). */
@@ -865,6 +874,19 @@ export const MessageList = memo(
     }, []);
 
     /**
+     * The reader is scrolling: publishes Telegram's `is-scrolling-messages` on
+     * `<body>` and takes it back a beat after the last scroll event.
+     */
+    const markScrolling = useCallback(() => {
+      document.body.classList.add(SCROLLING_CLASS);
+      if (scrollingFlagTimerRef.current !== null) clearTimeout(scrollingFlagTimerRef.current);
+      scrollingFlagTimerRef.current = setTimeout(() => {
+        scrollingFlagTimerRef.current = null;
+        document.body.classList.remove(SCROLLING_CLASS);
+      }, SCROLLING_FLAG_MS);
+    }, []);
+
+    /**
      * The floating date. Telegram keeps a date pinned to the top while the
      * separator it belongs to has scrolled out of view (`useStickyDates`); this is
      * the same idea, computed from the mounted rows instead of a `sticky` element
@@ -936,10 +958,11 @@ export const MessageList = memo(
         bestPositionRef.current = readContainerScrollTop(scroller);
         updateFollowing();
         syncBottomSnap();
+        markScrolling();
         updateStickyDate();
         prefetchOlder();
       });
-    }, [armRest, updateFollowing, syncBottomSnap, updateStickyDate, prefetchOlder]);
+    }, [armRest, updateFollowing, syncBottomSnap, markScrolling, updateStickyDate, prefetchOlder]);
 
     // ── Pointer/touch gate ─────────────────────────────────────────────
     // A release can happen outside the list (a flick that ends off-screen), so
@@ -1419,6 +1442,8 @@ export const MessageList = memo(
         if (restTimerRef.current !== null) clearTimeout(restTimerRef.current);
         if (flashTimerRef.current !== null) clearTimeout(flashTimerRef.current);
         if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+        if (scrollingFlagTimerRef.current !== null) clearTimeout(scrollingFlagTimerRef.current);
+        document.body.classList.remove(SCROLLING_CLASS);
       };
     }, []);
 

@@ -777,10 +777,31 @@ describe("MessageList — floating date", () => {
     await scrollTo(container, row.offsetTop);
     expect(sticky?.classList.contains("is-visible")).toBe(true);
     expect(sticky?.textContent).toBe(getDateSeparator(null, makeMessage("x", { sent_at: "2026-08-09T10:00:00.000Z" })));
+    // …and it is only *shown* while the reader is scrolling: the class below is
+    // what the stylesheet gates the pill on (Telegram's rule).
+    expect(document.body.classList.contains("is-scrolling-messages")).toBe(true);
 
     // Back to the very top: the first group's separator is visible again.
     await scrollTo(container, 0);
     expect(sticky?.classList.contains("is-visible")).toBe(false);
+  });
+
+  it("steps aside once the scroll stops", async () => {
+    setStore({ messages: twoDays() });
+    const { container } = await mountList();
+    const row = container.querySelector<HTMLElement>('.message-item[data-message-id="d23"]')!;
+
+    await scrollTo(container, row.offsetTop);
+    expect(document.body.classList.contains("is-scrolling-messages")).toBe(true);
+
+    // Telegram takes the flag back a beat after the last scroll event (~1s).
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    });
+
+    expect(document.body.classList.contains("is-scrolling-messages")).toBe(false);
+    // The pill still knows which date it is inside — the stylesheet hides it.
+    expect(pill(container)?.classList.contains("is-visible")).toBe(true);
   });
 
   it("stays hidden at the top of a chat whose first separator is on screen", async () => {

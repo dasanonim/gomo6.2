@@ -985,6 +985,15 @@ main.is-messenger-page {
   opacity: 1;
 }
 
+/* …and only while the reader is actually scrolling (Telegram's
+   `body:not(.is-scrolling-messages) .sticky-date.stuck { opacity: 0 }`): at rest
+   the date steps aside, so it never hangs over a list that is standing still.
+   Specificity: `body:not(...) .chat-sticky-date` beats `.chat-sticky-date.is-visible`,
+   which is what makes the resting state win. */
+body:not(.is-scrolling-messages) .chat-sticky-date {
+  opacity: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat-sticky-date {
     transition: none;
