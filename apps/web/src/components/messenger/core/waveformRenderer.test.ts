@@ -101,6 +101,31 @@ describe("WaveformRenderer", () => {
     renderer.destroy();
   });
 
+  it("draws silence as dots — it never normalises the floor to full height", async () => {
+    // Regression: the recorder used to feed a 6% floor into the renderer, which
+    // is above its initial maximum (0.05) — every silent bar rendered at 100%
+    // until the first real sound. Silence must stay a dot.
+    const { ctx, calls } = fakeContext();
+    const canvas = fakeCanvas(ctx, 200, 26);
+    const renderer = new WaveformRenderer(canvas);
+    renderer.handleResize(200, 26);
+    await flush();
+
+    renderer.pushPeak(0);
+    renderer.pushPeak(0);
+    await flush();
+
+    expect(calls.map((call) => call.h)).toEqual([3, 3]);
+
+    // A quiet first sound is relative to the initial max, not full height.
+    renderer.pushPeak(0.02);
+    await flush();
+    const quiet = calls[calls.length - 1];
+    expect(quiet.h).toBeGreaterThan(3);
+    expect(quiet.h).toBeLessThan(26 * 0.8);
+    renderer.destroy();
+  });
+
   it("anchors the newest peaks to the right edge", async () => {
     const { ctx, calls } = fakeContext();
     const canvas = fakeCanvas(ctx, 200, 26);

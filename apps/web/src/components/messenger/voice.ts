@@ -65,6 +65,20 @@ export function barCountForWidth(width: number): number {
   return Math.min(160, Math.max(16, Math.round(width / perBar)));
 }
 
+/**
+ * A live analyser's RMS → 0..1 peak, with the same curve the file-based
+ * waveform uses. No floor: the renderer normalises against a running maximum
+ * that starts at 0.05, so a floored silence would read as full height.
+ */
+export function livePeak(rms: number): number {
+  return Math.min(1, Math.max(0, Math.pow(rms * 4.2, 0.75)));
+}
+
+/** The 0..100 value stored in a message's waveform: silence keeps a visible 6%. */
+export function storedPeak(peak: number): number {
+  return Math.round(Math.min(100, Math.max(6, peak * 100)));
+}
+
 export function parseVoiceMeta(attachment: Attachment | undefined | null): VoiceMeta | null {
   if (!attachment || attachment.type !== "audio" || !attachment.meta) return null;
   try {

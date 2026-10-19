@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   VOICE_BARS,
   barCountForWidth,
+  livePeak,
+  storedPeak,
   extensionForMime,
   formatVoiceTime,
   isVoiceAttachment,
@@ -36,6 +38,23 @@ describe("formatVoiceTime", () => {
   it("survives garbage", () => {
     expect(formatVoiceTime(Number.NaN)).toBe("0:00");
     expect(formatVoiceTime(-4)).toBe("0:00");
+  });
+});
+
+describe("live peaks", () => {
+  it("keeps the stored floor and the live value on separate scales", () => {
+    // Silence: the message's waveform keeps a visible 6%, the live renderer
+    // must receive 0 — a floored value is above its running maximum (0.05) and
+    // would render as full height until the first real sound.
+    expect(livePeak(0)).toBe(0);
+    expect(storedPeak(livePeak(0))).toBe(6);
+  });
+
+  it("curves a normal level without ever exceeding one", () => {
+    expect(livePeak(0.05)).toBeGreaterThan(0);
+    expect(livePeak(0.05)).toBeLessThan(0.5);
+    expect(livePeak(0.5)).toBeLessThanOrEqual(1);
+    expect(livePeak(1)).toBe(1);
   });
 });
 

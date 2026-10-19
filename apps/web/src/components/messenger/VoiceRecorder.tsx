@@ -7,6 +7,8 @@ import type { Attachment } from "./types";
 import { VoicePlayer } from "./VoicePlayer";
 import { WaveformRenderer } from "./core/waveformRenderer";
 import {
+  livePeak,
+  storedPeak,
   VOICE_MAX_BYTES,
   VOICE_MAX_SECONDS,
   extensionForMime,
@@ -399,9 +401,13 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
         const rms = Math.sqrt(sum / buffer.length);
         // Same curve the file-based waveform uses, so the live preview and the
         // delivered bars look like the same voice.
-        const value = Math.round(Math.min(100, Math.max(6, Math.pow(rms * 4.2, 0.75) * 100)));
-        liveBarsRef.current.push(value);
-        waveRendererRef.current?.pushPeak(value / 100);
+        // Two consumers, two scales: the stored waveform keeps a 6% floor so a
+        // silent bar still reads in the message bubble, but the live renderer
+        // must get the RAW level — its running maximum starts at 0.05, and a
+        // floored 0.06 would normalise to full height before the first sound.
+        const peak = livePeak(rms);
+        liveBarsRef.current.push(storedPeak(peak));
+        waveRendererRef.current?.pushPeak(peak);
       }
       rafRef.current = requestAnimationFrame(frame);
     };
