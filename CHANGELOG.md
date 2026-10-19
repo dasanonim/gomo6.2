@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.23.1] — 2026-10-19
+
+### Fixed
+- **Фон плавающей даты**: пилюля ссылалась на токен `--action-message-bg`, которого нигде нет, — белый текст вообще без подложки (невидим на светлой теме, нечитаем поверх светлого фото). Теперь это стеклянная пилюля на токенах темы (`--card` с прозрачностью, `--card-foreground`, `--border`, `backdrop-filter` с полом по блюру и тень): следует и светлой, и тёмной палитре, а там, где блюр недоступен, альфа поднимается до 0.96
+
 ## [2.23.0] — 2026-10-19
 
 GomoSub-каналы переехали на тот же движок скролла, что и мессенджер: один

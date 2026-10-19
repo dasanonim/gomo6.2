@@ -970,15 +970,32 @@ main.is-messenger-page {
   font-weight: 500;
   line-height: 1.25;
   text-transform: lowercase;
-  color: white;
 
-  background: var(--action-message-bg);
+  /* The pill's own theme: a frosted card, so the date reads over whatever
+     content it floats above and follows the light/dark palette of the theme
+     instead of being white text on an undefined background. The blur is floored
+     (themes that ask for no glass still get a readable pill) and the tint comes
+     from the theme's own card/border/tokens. */
+  color: oklch(var(--card-foreground));
+  background-color: oklch(var(--card) / 0.78);
+  border: 1px solid oklch(var(--border) / 0.55);
+  -webkit-backdrop-filter: blur(max(var(--surface-blur, 0px), 12px)) saturate(1.6);
+  backdrop-filter: blur(max(var(--surface-blur, 0px), 12px)) saturate(1.6);
+  box-shadow:
+    0 1px 2px oklch(0 0 0 / 0.12),
+    0 6px 18px oklch(0 0 0 / 0.1);
 
   opacity: 0;
   transform: translateX(-50%);
   transition: opacity 0.2s ease;
   pointer-events: none;
   user-select: none;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .chat-sticky-date {
+    background-color: oklch(var(--card) / 0.96);
+  }
 }
 
 .chat-sticky-date.is-visible {
