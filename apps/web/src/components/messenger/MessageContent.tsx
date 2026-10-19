@@ -20,6 +20,8 @@ import { GiftDetailPanel } from "@/components/GiftDetailPanel";
 import { MessengerRichText } from "./MessengerRichText";
 import { ShareCard } from "@/components/share/ShareCard";
 import { parseShareToken } from "@/components/share/share";
+import { VoicePlayer } from "./VoicePlayer";
+import { isVoiceAttachment } from "./voice";
 import type { Attachment } from "./types";
 
 // ─── Gift message (exported for ChatView) ────────────────────────────────────
@@ -116,9 +118,19 @@ interface MessageContentProps {
   content: string;
   attachments?: Attachment[];
   hasQuotedMessage?: boolean;
+  /** Own messages get the primary-tinted voice player. */
+  isMine?: boolean;
 }
 
-function AttachmentView({ attachment, fitToViewport = false }: { attachment: Attachment; fitToViewport?: boolean }) {
+function AttachmentView({
+  attachment,
+  fitToViewport = false,
+  isMine = false,
+}: {
+  attachment: Attachment;
+  fitToViewport?: boolean;
+  isMine?: boolean;
+}) {
   const meta = useMemo(() => parseImageMeta(attachment), [attachment.meta]);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [isPreviewReady, setIsPreviewReady] = useState(false);
@@ -217,6 +229,17 @@ function AttachmentView({ attachment, fitToViewport = false }: { attachment: Att
     );
   }
 
+  if (isVoiceAttachment(attachment)) {
+    // A voice note gets Telegram's player, not a browser audio bar. It loads
+    // its own blob (authenticated + cached), so the `url` computed above is not
+    // needed here.
+    return (
+      <div style={{ marginTop: 2 }}>
+        <VoicePlayer attachment={attachment} isMine={isMine} />
+      </div>
+    );
+  }
+
   if (attachment.type === "audio" && url) {
     return (
       <div style={{ marginTop: 4 }}>
@@ -236,7 +259,7 @@ function AttachmentView({ attachment, fitToViewport = false }: { attachment: Att
   );
 }
 
-export const MessageContent = memo(function MessageContent({ content, attachments, hasQuotedMessage = false }: MessageContentProps) {
+export const MessageContent = memo(function MessageContent({ content, attachments, hasQuotedMessage = false, isMine = false }: MessageContentProps) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const hasAttachments = attachments && attachments.length > 0;
@@ -279,7 +302,7 @@ export const MessageContent = memo(function MessageContent({ content, attachment
         <div className={`message-content message-content-media${content.trim() ? " has-caption" : ""}`}>
           {visualAttachments.length === 1 ? (
             <div className="msg-attachments">
-              <AttachmentView attachment={visualAttachments[0]} fitToViewport />
+              <AttachmentView attachment={visualAttachments[0]} fitToViewport isMine={isMine} />
             </div>
           ) : (
             <div className="msg-media-mosaic-stack">
@@ -314,7 +337,7 @@ export const MessageContent = memo(function MessageContent({ content, attachment
       {hasAttachments && (
         <div className="msg-attachments">
           {attachments!.map((att, i) => (
-            <AttachmentView key={att.id || i} attachment={att} />
+            <AttachmentView key={att.id || i} attachment={att} isMine={isMine} />
           ))}
         </div>
       )}

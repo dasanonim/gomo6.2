@@ -308,6 +308,14 @@ export const ChatView = memo(function ChatView({
 
   const handleCancelReply = useCallback(() => setReplyToMessage(null), []);
 
+  // A voice note is already uploaded by the recorder; this only sends the
+  // message that carries it (same path as an attachment, no caption).
+  const handleSendVoice = useCallback(async (attachment: Attachment) => {
+    const clientId = `c${Date.now().toString(36)}_v${Math.random().toString(36).slice(2, 8)}`;
+    const sentId = await sendMessage(" ", clientId, replyToMessage?.id ?? undefined, [attachment]);
+    if (sentId) setReplyToMessage(null);
+  }, [sendMessage, replyToMessage]);
+
   const handleSend = useCallback(async () => {
     // Files still uploading must block send — otherwise Enter would send the
     // message without them and leave the finished attachments as orphans.
@@ -717,6 +725,7 @@ export const ChatView = memo(function ChatView({
         setDraft={setDraft}
         isSending={isSending || isBatchSending}
         onSend={handleSend}
+        onSendVoice={handleSendVoice}
         composerRef={composerRef}
         onTyping={onTyping}
         editingMessageId={editingMessageId}

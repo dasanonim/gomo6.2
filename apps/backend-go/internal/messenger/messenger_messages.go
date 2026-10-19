@@ -414,7 +414,15 @@ func (h *MessengerHandler) SendMessage(c *gin.Context) {
 		msg.Attachments = buildAttachmentResponse(req.Attachments)
 	}
 
-	if !updateConversationPreview(c, tx, conversationID, isNotes, cleanContent, claims.UserID) {
+	// A message that is only a voice note has blank content: preview it
+	// as the voice message it is instead of leaving the chat list empty.
+	previewBody := cleanContent
+	if strings.TrimSpace(previewBody) == "" {
+		if label := voicePreviewLabel(req.Attachments); label != "" {
+			previewBody = label
+		}
+	}
+	if !updateConversationPreview(c, tx, conversationID, isNotes, previewBody, claims.UserID) {
 		return
 	}
 
@@ -1139,6 +1147,11 @@ func (h *MessengerHandler) validateAttachments(c *gin.Context, userID string, at
 			}
 			if !previewExists {
 				return fmt.Errorf("image preview not found")
+			}
+		}
+		if att.Type == "audio" && att.Meta != nil && strings.TrimSpace(*att.Meta) != "" {
+			if err := validateAudioMeta(*att.Meta); err != nil {
+				return err
 			}
 		}
 		if att.URL == "" || strings.Contains(att.URL, "://") ||

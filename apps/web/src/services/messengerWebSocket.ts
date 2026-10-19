@@ -1,4 +1,5 @@
 import { useMessengerStore, queueMarkDelivered } from "@/stores/messengerStore";
+import { attachmentPreviewLabel } from "@/components/messenger/voice";
 import { wsService, type WebSocketMessage } from "@/services/websocket";
 
 // ─── Messenger WebSocket — event handlers for chat-specific WS events ───────
@@ -136,9 +137,14 @@ class MessengerWebSocket {
         last_message_sender_id: data.sender_user_id as string,
       }, !isMine);
     } else {
+      // A message that carries only a voice note has blank content; the chat
+      // list must say what it is instead of showing an empty line.
+      const preview = content.trim()
+        ? content.slice(0, 80)
+        : attachmentPreviewLabel(data.attachments as import("@/components/messenger/types").Attachment[] | undefined) ?? content.slice(0, 80);
       store.updateConversationFromWs(data.conversation_id as string, {
         last_message_at: data.sent_at as string,
-        last_message_preview: content.slice(0, 80),
+        last_message_preview: preview,
         last_message_sender_id: data.sender_user_id as string,
       }, !isMine);
     }

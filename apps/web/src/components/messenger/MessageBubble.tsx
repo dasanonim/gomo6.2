@@ -12,6 +12,7 @@ import { hapticTick, hapticSuccess } from "@/lib/haptics";
 import { ReactionChips } from "./ReactionChips";
 import { ReactionBar } from "./ReactionBar";
 import { getQuickReaction } from "./reactions";
+import { isVoiceAttachment } from "./voice";
 
 const LONG_PRESS_DELAY = 400;
 /** Max horizontal pull of the swipe reply, in px (leftwards) — 40% shorter
@@ -458,6 +459,11 @@ export const MessageBubble = memo(function MessageBubble({
   const hasVisualAttachments = message.attachments?.some(
     (attachment) => attachment.type === "image" || attachment.type === "video",
   ) ?? false;
+  // A single voice note is its own bubble shape: the player needs a stable
+  // width, and the inline time/status must not try to overlap it.
+  const voiceAttachment = !quotedMessage && message.attachments?.length === 1 ? message.attachments[0] : null;
+  const isVoiceBubble = Boolean(voiceAttachment && isVoiceAttachment(voiceAttachment));
+
   const isMediaBubble = !quotedMessage
     && message.localStatus !== "failed"
     && hasVisualAttachments
@@ -469,7 +475,8 @@ export const MessageBubble = memo(function MessageBubble({
   // measurement does not apply, and the card reserves its own meta space, so
   // skip the whole compact/multiline path for it.
   const isShareMessage = message.content?.startsWith("__SHARE__") ?? false;
-  const canUseInlineMeta = !isMediaBubble
+  const canUseInlineMeta = !isVoiceBubble
+    && !isMediaBubble
     && !isShareMessage
     && !message.attachments?.length
     && message.localStatus !== "failed";
@@ -581,7 +588,7 @@ export const MessageBubble = memo(function MessageBubble({
             in the overlay below. */}
         <div
           ref={messageBubbleRef}
-          className={`message-bubble${isMine ? " is-mine" : ""}${isPinned ? " is-pinned" : ""}${message.localStatus === "failed" ? " is-stuck" : ""}${isMediaBubble ? " is-media-bubble" : ""}${isMediaBubble && message.content.trim() ? " has-caption" : ""}${isShareMessage ? " is-share-bubble" : ""}${isCompact ? " is-compact" : ""}${hasMeasuredLines && !isCompact && !isMediaBubble ? " is-multiline" : ""}${menuOpen ? " is-menu-hidden" : ""}`}
+          className={`message-bubble${isMine ? " is-mine" : ""}${isVoiceBubble ? " is-voice-bubble" : ""}${isPinned ? " is-pinned" : ""}${message.localStatus === "failed" ? " is-stuck" : ""}${isMediaBubble ? " is-media-bubble" : ""}${isMediaBubble && message.content.trim() ? " has-caption" : ""}${isShareMessage ? " is-share-bubble" : ""}${isCompact ? " is-compact" : ""}${hasMeasuredLines && !isCompact && !isMediaBubble ? " is-multiline" : ""}${menuOpen ? " is-menu-hidden" : ""}`}
           data-message-id={message.id}
           onContextMenu={(e) => { e.preventDefault(); openMenu(); }}
         >
@@ -593,7 +600,11 @@ export const MessageBubble = memo(function MessageBubble({
                   {quotedMessage.sender_user_id === message.sender_user_id ? "Вы" : "Собеседник"}
                 </span>
                 <span className="quoted-text">
-                  {quotedMessage.is_deleted ? "Сообщение удалено" : messengerPlainPreview(quotedMessage.content)}
+                  {quotedMessage.is_deleted
+                    ? "Сообщение удалено"
+                    : quotedMessage.attachments?.some((attachment) => isVoiceAttachment(attachment))
+                      ? "Голосовое сообщение"
+                      : messengerPlainPreview(quotedMessage.content)}
                 </span>
               </>
             );
@@ -629,6 +640,7 @@ export const MessageBubble = memo(function MessageBubble({
             content={message.content}
             attachments={message.attachments}
             hasQuotedMessage={Boolean(quotedMessage)}
+            isMine={isMine}
           />
 
           <div className="message-meta">

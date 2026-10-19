@@ -17,6 +17,7 @@ import {
   messengerPlainPreview,
 } from "./messengerRichTextUtils";
 import type { Attachment, MessageView, UploadingFile } from "./types";
+import { VoiceRecorder } from "./VoiceRecorder";
 import { formatFileSize, getAttachmentIcon } from "./core/display";
 
 const MAX_LENGTH = 4000;
@@ -46,6 +47,8 @@ interface Props {
   setDraft: (value: string) => void;
   isSending: boolean;
   onSend: () => void;
+  /** A finished voice note, already uploaded; the parent sends the message. */
+  onSendVoice?: (attachment: Attachment) => void;
   composerRef: RefObject<GomoRichEditorHandle | null>;
   onTyping?: (isTyping: boolean) => void;
   editingMessageId?: string | null;
@@ -106,6 +109,7 @@ export const MessageComposer = memo(function MessageComposer({
   setDraft,
   isSending,
   onSend,
+  onSendVoice,
   composerRef,
   onTyping,
   editingMessageId,
@@ -1267,6 +1271,14 @@ useEffect(() => {
       ? capturedEditor.editor
       : null;
 
+  // Telegram's rule: an empty composer offers the microphone, typing swaps it
+  // for send. Editing an existing message never records.
+  const showVoiceRecorder = Boolean(onSendVoice)
+    && !isEditing
+    && !hasContent
+    && pendingAttachments.length === 0
+    && uploadingFiles.length === 0;
+
   const sendButton = (
     <button
       type="button"
@@ -1602,7 +1614,11 @@ useEffect(() => {
           )}
         </div>
 
-        {sendButton}
+        {showVoiceRecorder && onSendVoice ? (
+          <VoiceRecorder onSend={onSendVoice} disabled={isSending} />
+        ) : (
+          sendButton
+        )}
       </div>
 
       {attachSheet}
