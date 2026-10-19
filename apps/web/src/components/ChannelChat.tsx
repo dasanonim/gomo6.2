@@ -14,6 +14,15 @@ import { safeDate } from "@/utils/safeDate";
 import { useDateLocale } from "@/i18n/dateLocale";
 import { format, formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import { hasScrollAnchoring } from "@/lib/scrollAnchoring";
+import { animateScroll, isAnimatingScroll } from "./messenger/core/animateScroll";
+import { forceMeasure } from "./messenger/core/fasterdom";
+import {
+  isAtBottom as isScrolledToBottom,
+  pinToBottom,
+  readContainerScrollTop,
+  setScrollTop,
+} from "./messenger/core/scrollGeometry";
 import {
   MAX_DOM_MESSAGES,
   PRUNE_BATCH,
@@ -65,6 +74,10 @@ const TOP_LOAD_ZONE = 300; // px from the top that arms the history loader
 const GROUP_WINDOW_MS = 5 * 60 * 1000; // same-author messages within this are compact
 const LOAD_THROTTLE_MS = 500; // min gap between history page loads
 const SCROLL_SETTLE_MS = 150; // quiet time before the heavy pass (GC)
+/** An arrival keeps the follow state pinned for this long (Telegram's freeze). */
+const FOLLOWING_FREEZE_MS = 350;
+/** A scroll event this soon after our write, reporting its position, is its echo. */
+const ECHO_WINDOW_MS = 250;
 
 interface ChannelChatProps {
   channelId: string;
@@ -158,6 +171,14 @@ export function ChannelChat({
   // "N new" pill counts messages only while the user is scrolled up.
   const followingRef = useRef(true);
 
+  // A new channel starts the writer from scratch. This has to be synchronous
+  // with the render: a mount effect runs after the first commit, and resetting
+  // there would make the first content commit look like a placement again.
+  const writerChannelRef = useRef(channelId);
+  if (writerChannelRef.current !== channelId) {
+    writerChannelRef.current = channelId;
+  }
+
   const listRef = useRef<HTMLDivElement | null>(null);
   const topSentinelRef = useRef<HTMLDivElement | null>(null);
   const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -169,26 +190,36 @@ export function ChannelChat({
   const prevLastIdRef = useRef<number | null>(null);
   const userDraggingRef = useRef(false);
 
-  const isScrollingRef = useRef(false);
+  // ── Scroll bookkeeping (the same model as the messenger list) ───────────
+  /** A pointer is on the list: nothing may move content under it (WebKit). */
+  const pointerDownRef = useRef(false);
+  /** The position moved and has not been verified at rest yet. */
+  const coastingRef = useRef(false);
   /**
-   * True while a pointer/touch is on the list. NOTHING may mutate the mounted
-   * window (or write `scrollTop`) in that state: WebKit defers or drops a
-   * programmatic scroll change while a gesture is live — even a finger that is
-   * simply resting — so the content moves under the finger (the reader ends up
-   * acting on a different message) and the deferred write lands later as a
-   * second, visible jump.
+   * The last position we wrote ourselves. A scroll event that reports exactly
+   * that position right after the write is its echo, not the reader moving
+   * (Telegram's `isScrollTopJustUpdated`). Comparing the position keeps a real
+   * scroll — which always lands somewhere else — from being swallowed.
    */
-  const pointerActiveRef = useRef(false);
-  /** The verified-rest pass, reachable from a pointer release and a fetch. */
-  const settleRef = useRef<(() => void) | null>(null);
-  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPositionWriteRef = useRef<{ top: number; at: number } | null>(null);
+  const bestPositionRef = useRef(0);
+  const restTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRafRef = useRef<number | null>(null);
-  /** A fetched page waiting for the scroller to come to rest. */
+  /** A fetched page waiting for the scroller to come to rest (no anchoring). */
   const pendingOlderRef = useRef<ChannelMessage[] | null>(null);
-  /** The mounted slice + position of the previous commit (anchoring fallback). */
-  const prevSliceRef = useRef<MessageSlice | null>(null);
-  const lastTopRef = useRef(0);
-  const pendingPruneRef = useRef<{ removed: number } | null>(null);
+  /** The anchor of the previous commit: the first row on screen, in viewport px. */
+  const prevCommitRef = useRef<{
+    clientHeight: number;
+    tailId: number | null;
+    anchorKey: string | null;
+    anchorCoord: number;
+  } | null>(null);
+  const didInitialPositionRef = useRef(false);
+  const pendingBottomGlideRef = useRef(false);
+  /** The top sentinel fired during a gesture: expand once the scroller rests. */
+  const pendingExpandRef = useRef(false);
+  /** An arrival is settling; leaving the follow state in that window flashes the FAB. */
+  const followingFreezeUntilRef = useRef(0);
 
   const timeLabel = useMemo(
     () => (iso: string) => formatDistanceToNow(safeDate(iso), { locale: dateLocale, addSuffix: true }),
@@ -204,8 +235,8 @@ export function ChannelChat({
   /**
    * Insert a page above the mounted window. Rows are added ABOVE the viewport,
    * which is the one mutation that has to be compensated to keep the reader's
-   * place — native anchoring does it in Chromium/Firefox, the layout effect
-   * below does it where there is none (Safari).
+   * place — native scroll anchoring does it in Chromium/Firefox, the writer's
+   * anchor invariant does it where there is none (WebKit).
    */
   const insertOlder = useCallback((fresh: ChannelMessage[]) => {
     if (fresh.length === 0) return;
@@ -249,17 +280,22 @@ export function ChannelChat({
         return;
       }
       if (older.length < 50) setHasMore(false);
-      // Never insert under a live coast (or under a resting finger): the
-      // compensation for content added above the viewport is deferred — and
-      // dropped — by WebKit while a gesture is live. The page waits in the
-      // buffer and the verified-rest pass brings it in.
+      // Where the engine anchors scroll for us, the page can be mounted the
+      // moment it arrives (even mid-coast): content above the viewport moves the
+      // reader by zero pixels. Without anchoring (WebKit) the compensating write
+      // would be dropped under a live gesture, so the page waits in the buffer
+      // and the verified-rest pass brings it in.
       pendingOlderRef.current = fresh;
-      if (!isScrollingRef.current && !pointerActiveRef.current) settleRef.current?.();
+      if (hasScrollAnchoring() || (!coastingRef.current && !pointerDownRef.current)) {
+        const page = pendingOlderRef.current;
+        pendingOlderRef.current = null;
+        insertOlder(page);
+      }
     } finally {
       loadingMoreRef.current = false;
       setLoadingOlder(false);
     }
-  }, [channelId]);
+  }, [channelId, insertOlder]);
 
   const maybeLoadOlder = useCallback(() => {
     const now = Date.now();
@@ -378,10 +414,11 @@ export function ChannelChat({
   }, [channelId]);
 
   // ── Garbage collection: drop rows above the ceiling ─────────────────────
+  // Runs at a verified rest only. No measurement and no compensation here: rows
+  // removed above the viewport are exactly what the writer's anchor invariant
+  // accounts for in the same commit (and native scroll anchoring already did on
+  // Chromium/Firefox).
   const pruneTopIfNeeded = useCallback(() => {
-    if (isScrollingRef.current || pointerActiveRef.current) return;
-    const el = getScroller();
-    if (!el) return;
     const { start, end } = sliceRef.current;
     const over = end - start - MAX_DOM_MESSAGES;
     if (over <= 0) return;
@@ -389,13 +426,6 @@ export function ChannelChat({
     const remove = Math.min(over + PRUNE_BATCH, end - start - 1);
     const kept = list[start + remove];
     if (!kept || start + remove >= end) return;
-    const nodes = listRef.current?.querySelectorAll<HTMLElement>(".channel-message-row");
-    const first = nodes?.[0];
-    const boundary = nodes?.[remove];
-    if (!first || !boundary) return;
-    const removed = boundary.getBoundingClientRect().top - first.getBoundingClientRect().top;
-    if (!(removed > 0)) return;
-    pendingPruneRef.current = { removed };
     setWin((current) => ({ ...current, first: keyOf(kept) }));
   }, []);
 
@@ -432,13 +462,16 @@ export function ChannelChat({
     setWin((current) => ({ ...current, last: keyOf(newest) }));
   }, []);
 
-  // ── Bottom stickiness ───────────────────────────────────────────────────
-  const updateBottomState = useCallback(() => {
+  // ── Following the newest message ───────────────────────────────────────
+  const updateFollowing = useCallback(() => {
     const el = getScroller();
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_SLACK;
-    if (atBottom === followingRef.current) return;
-    if (atBottom) {
+    const isFollowing = isScrolledToBottom(el, AT_BOTTOM_SLACK);
+    if (isFollowing === followingRef.current) return;
+    // An arrival in flight: leaving the follow state now would flash the button.
+    if (!isFollowing && Date.now() < followingFreezeUntilRef.current) return;
+
+    if (isFollowing) {
       followingRef.current = true;
       setIsAtBottom(true);
       setNewMessageCount(0);
@@ -459,64 +492,94 @@ export function ChannelChat({
     }
   }, []);
 
-  // ── Scroll pass ─────────────────────────────────────────────────────────
-  const handleSettle = useCallback(
-    function handleSettle() {
+  // ── The verified rest ──────────────────────────────────────────────────
+  /**
+   * Everything that must not run under a live gesture or a coast: inserting a
+   * fetched page above the viewport on an engine without scroll anchoring, and
+   * dropping rows above the ceiling. A quiet event stream is not proof of a rest
+   * (iOS), so the position has to be unchanged since the last observation.
+   */
+  const handleRest = useCallback(
+    function handleRest() {
+      if (pointerDownRef.current) return;
       const el = getScroller();
-      // `scroll` events can go quiet before the momentum has visually ended
-      // (iOS): verify the rest from the position and re-arm if it still moves.
-      // Everything below writes `scrollTop`, which WebKit drops under a live
-      // coast.
-      if (pointerActiveRef.current || (el && Math.abs(el.scrollTop - lastTopRef.current) > 1)) {
-        if (el) lastTopRef.current = el.scrollTop;
-        isScrollingRef.current = true;
-        if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
-        settleTimerRef.current = setTimeout(() => {
-          settleTimerRef.current = null;
-          handleSettle();
+      if (!el) return;
+
+      const scrollTop = readContainerScrollTop(el);
+      if (Math.abs(scrollTop - bestPositionRef.current) > 1) {
+        bestPositionRef.current = scrollTop;
+        if (restTimerRef.current !== null) clearTimeout(restTimerRef.current);
+        restTimerRef.current = setTimeout(() => {
+          restTimerRef.current = null;
+          handleRest();
         }, SCROLL_SETTLE_MS);
         return;
       }
-      isScrollingRef.current = false;
-      if (el && followingRef.current) el.scrollTop = el.scrollHeight;
+
+      coastingRef.current = false;
+      restTimerRef.current = null;
+
       if (pendingOlderRef.current) {
         const page = pendingOlderRef.current;
         pendingOlderRef.current = null;
         insertOlder(page);
       }
+      if (pendingExpandRef.current) {
+        pendingExpandRef.current = false;
+        expandOlderNow();
+        return;
+      }
       pruneTopIfNeeded();
-      if (el && !followingRef.current && el.scrollTop <= TOP_LOAD_ZONE) maybeLoadOlder();
+      if (!followingRef.current && scrollTop <= TOP_LOAD_ZONE) maybeLoadOlder();
     },
-    [insertOlder, pruneTopIfNeeded, maybeLoadOlder],
+    [insertOlder, pruneTopIfNeeded, maybeLoadOlder, expandOlderNow],
   );
-  settleRef.current = handleSettle;
+  const restRef = useRef(handleRest);
+  restRef.current = handleRest;
 
+  const armRest = useCallback(() => {
+    coastingRef.current = true;
+    if (restTimerRef.current !== null) clearTimeout(restTimerRef.current);
+    restTimerRef.current = setTimeout(() => {
+      restTimerRef.current = null;
+      restRef.current();
+    }, SCROLL_SETTLE_MS);
+  }, []);
+
+  // ── Scroll pass ────────────────────────────────────────────────────────
   const handleScroll = useCallback(() => {
     const el = getScroller();
     if (!el) return;
-    lastTopRef.current = el.scrollTop;
-    isScrollingRef.current = true;
-    if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
-    settleTimerRef.current = setTimeout(() => {
-      settleTimerRef.current = null;
-      handleSettle();
-    }, SCROLL_SETTLE_MS);
+    // Our own write's scroll event is not the reader scrolling (Telegram's
+    // `isScrollTopJustUpdated`): treating it as one would re-arm the rest.
+    const written = lastPositionWriteRef.current;
+    if (written !== null) {
+      lastPositionWriteRef.current = null;
+      const echo =
+        Math.abs(readContainerScrollTop(el) - written.top) <= 1 &&
+        Date.now() - written.at < ECHO_WINDOW_MS;
+      if (echo) return;
+    }
+    // A glide owns the position for its duration.
+    if (isAnimatingScroll(el)) return;
 
+    armRest();
     if (scrollRafRef.current !== null) return;
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null;
-      updateBottomState();
+      const scroller = getScroller();
+      if (!scroller) return;
+      bestPositionRef.current = readContainerScrollTop(scroller);
+      updateFollowing();
+      // The request may start early (it touches no DOM).
+      if (!followingRef.current && readContainerScrollTop(scroller) <= TOP_LOAD_ZONE) maybeLoadOlder();
     });
+  }, [armRest, updateFollowing, maybeLoadOlder]);
 
-    // The request may start early (it touches no DOM); the insert waits for a
-    // rest (see loadOlder).
-    if (el.scrollTop <= TOP_LOAD_ZONE) maybeLoadOlder();
-  }, [handleSettle, updateBottomState, maybeLoadOlder]);
-
-  // The scroller is the window: listen for window and resize events (the
-  // layout owns the page, so a mobile keyboard that changes the visible area
-  // fires resize, not scroll). React's onScroll on a div would never fire for
-  // window scroll.
+  // The scroller is the window: listen for window and resize events (the layout
+  // owns the page, so a mobile keyboard that changes the visible area fires
+  // resize, not scroll). React's onScroll on a div would never fire for window
+  // scroll.
   useEffect(() => {
     const onWinScroll = () => handleScroll();
     window.addEventListener("scroll", onWinScroll, { passive: true });
@@ -527,28 +590,30 @@ export function ChannelChat({
     };
   }, [handleScroll]);
 
-  // ── Pointer/touch gate ──────────────────────────────────────────────────
-  const markPointerActive = useCallback(() => {
-    pointerActiveRef.current = true;
-  }, []);
-  const clearPointerActive = useCallback(() => {
-    if (!pointerActiveRef.current) return;
-    pointerActiveRef.current = false;
-    settleRef.current?.();
-  }, []);
-
+  // ── Pointer/touch gate ─────────────────────────────────────────────────
+  // A release can happen outside the list (a flick that ends off-screen), so the
+  // clearing listeners live on the window. Lifting the finger arms the rest, so
+  // the work the gate deferred happens right away.
   useEffect(() => {
-    window.addEventListener("pointerup", clearPointerActive, true);
-    window.addEventListener("pointercancel", clearPointerActive, true);
-    window.addEventListener("touchend", clearPointerActive, true);
-    window.addEventListener("touchcancel", clearPointerActive, true);
-    return () => {
-      window.removeEventListener("pointerup", clearPointerActive, true);
-      window.removeEventListener("pointercancel", clearPointerActive, true);
-      window.removeEventListener("touchend", clearPointerActive, true);
-      window.removeEventListener("touchcancel", clearPointerActive, true);
+    const onDown = () => { pointerDownRef.current = true; };
+    const onUp = () => {
+      if (!pointerDownRef.current) return;
+      pointerDownRef.current = false;
+      armRest();
     };
-  }, [clearPointerActive]);
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onUp, true);
+    window.addEventListener("touchend", onUp, true);
+    window.addEventListener("touchcancel", onUp, true);
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onUp, true);
+      window.removeEventListener("touchend", onUp, true);
+      window.removeEventListener("touchcancel", onUp, true);
+    };
+  }, [armRest]);
 
   // ── Sentinels: bi-directional window triggers ───────────────────────────
   // `hasMessages` is a dependency so the observers are (re)attached when the
@@ -561,8 +626,14 @@ export function ChannelChat({
     const topObserver = top
       ? new IntersectionObserver(
           (entries) => {
-            if (entries.some((entry) => entry.isIntersecting) && !isScrollingRef.current) {
+            if (!entries.some((entry) => entry.isIntersecting)) return;
+            // Adding rows above the viewport is safe to do mid-coast where the
+            // engine anchors scroll for us; on WebKit the compensating write
+            // would be dropped under a live gesture, so it waits for a rest.
+            if (hasScrollAnchoring() || (!coastingRef.current && !pointerDownRef.current)) {
               expandOlderNow();
+            } else {
+              pendingExpandRef.current = true;
             }
           },
           { rootMargin: "600px 0px 0px 0px" },
@@ -584,59 +655,126 @@ export function ChannelChat({
     };
   }, [expandOlderNow, expandNewer, hasMessages]);
 
-  // ── Position: bottom pin + prepend/prune compensation ───────────────────
+  // ── The single writer ──────────────────────────────────────────────────
+  // One commit, one decision, one `scrollTop` write. Every read happens in this
+  // layout effect's read block (after the DOM was committed, before paint) and
+  // the write lands at its end, so a commit never interleaves reads and writes.
+  // The decision tree is the messenger list's:
+  //
+  //   first placement → an arrival while following (glide) → "the reader was at
+  //   the bottom" (pin) → otherwise compensate the layout change above the
+  //   reader's anchor.
+  //
+  // The anchor is one row below the first visible one, compared in *content*
+  // coordinates (`rect.top + scrollTop`, invariant under scrolling): the delta
+  // it moved by IS the layout change above the reader's place.
   useLayoutEffect(() => {
     const el = getScroller();
-    const previous = prevSliceRef.current;
-    prevSliceRef.current = { start: slice.start, end: slice.end };
     if (!el) return;
 
-    // Rows were added ABOVE the mounted window: keep the reader's message where
-    // it was. Native scroll anchoring has already done it in Chromium/Firefox;
-    // this is the pre-paint fallback (and the only path in Safari).
-    // The fallback slice of an unresolvable window is a fresh tail, not "rows
-    // added above", so it must not be compensated.
-    const addedAbove = windowResolvable && previous ? previous.start - slice.start : 0;
-    if (addedAbove > 0) {
-      const nodes = listRef.current?.querySelectorAll<HTMLElement>(".channel-message-row");
-      const first = nodes?.[0];
-      const boundary = nodes?.[addedAbove];
-      if (first && boundary) {
-        const added = boundary.getBoundingClientRect().top - first.getBoundingClientRect().top;
-        if (added > 1 && el.scrollTop < lastTopRef.current + added - 1) {
-          el.scrollTop = lastTopRef.current + added;
-        }
+    const rows = Array.from(listRef.current?.querySelectorAll<HTMLElement>(".channel-message-row") ?? []);
+    const previous = prevCommitRef.current;
+    const isFirstCommit = !didInitialPositionRef.current;
+    const tailId = messages.length > 0 ? messages[messages.length - 1].id : null;
+    const pendingGlide = pendingBottomGlideRef.current;
+    pendingBottomGlideRef.current = false;
+
+    const scrollTop = readContainerScrollTop(el);
+    const scrollHeight = el.scrollHeight;
+    const clientHeight = el.clientHeight;
+    const bottomOffset = scrollHeight - scrollTop;
+
+    // `scrollHeight - scrollTop` grew by exactly what was added below while the
+    // reader did not move, so comparing it with the PREVIOUS viewport height
+    // judges the position as it was before this commit.
+    const wasAtBottom = previous !== null && bottomOffset - previous.clientHeight <= AT_BOTTOM_SLACK;
+    const isAtBottomNow = bottomOffset - clientHeight <= AT_BOTTOM_SLACK;
+    const tailMoved = previous !== null && tailId !== previous.tailId;
+
+    // The anchor is one row BELOW the first visible one: the first can change
+    // height when older messages mount (a date separator moves up, a grouped row
+    // loses its header), and the reader must not feel that (Telegram anchors on
+    // `preservedItemElements[1]` for the same reason).
+    let firstVisible = -1;
+    for (let at = 0; at < rows.length; at += 1) {
+      if (rows[at].offsetTop + rows[at].offsetHeight > scrollTop + 1) {
+        firstVisible = at;
+        break;
+      }
+    }
+    const anchorRow = firstVisible >= 0 ? rows[Math.min(firstVisible + 1, rows.length - 1)] : null;
+    const anchorKey = anchorRow?.dataset.messageId ?? null;
+    // Content coordinates (`rect.top + scrollTop`) are invariant under scrolling,
+    // so a position the previous commit wrote cannot make this anchor stale.
+    const anchorCoord = anchorRow ? anchorRow.getBoundingClientRect().top + scrollTop : null;
+
+    let pin = false;
+    let glideTarget: HTMLElement | null = null;
+    let nextScrollTop: number | null = null;
+
+    // The list had no rows at the previous commit: this is its placement, not an
+    // arrival — gliding it in would fly the reader through the whole history.
+    const isFirstContent = previous !== null && previous.tailId === null && tailId !== null;
+
+    if (isFirstCommit || isFirstContent) {
+      didInitialPositionRef.current = true;
+      pin = true;
+    } else if (pendingGlide || (tailMoved && followingRef.current)) {
+      if (tailMoved) followingFreezeUntilRef.current = Date.now() + FOLLOWING_FREEZE_MS;
+      glideTarget = bottomSentinelRef.current;
+    } else if (wasAtBottom) {
+      if (!isAtBottomNow) pin = true;
+    } else if (previous?.anchorKey) {
+      const row = rows.find((node) => node.dataset.messageId === previous.anchorKey);
+      if (row) {
+        // The delta the row moved by in content coordinates IS the layout change
+        // above it. Where the engine anchors scroll for us, it already moved
+        // `scrollTop` by that delta, so writing it again would throw the reader a
+        // full growth further down (measured, not assumed).
+        const growth = row.getBoundingClientRect().top + scrollTop - previous.anchorCoord;
+        const compensation = hasScrollAnchoring() ? 0 : growth;
+        const target = scrollTop + compensation;
+        if (Math.abs(target - scrollTop) > 0.5) nextScrollTop = target;
       }
     }
 
-    const prune = pendingPruneRef.current;
-    if (prune) {
-      pendingPruneRef.current = null;
-      if (followingRef.current) el.scrollTop = el.scrollHeight;
-      else if (el.scrollTop > lastTopRef.current - prune.removed + 1) {
-        el.scrollTop = Math.max(0, lastTopRef.current - prune.removed);
-      }
+    if (glideTarget) {
+      animateScroll({
+        container: el,
+        element: glideTarget,
+        position: "end",
+        maxDistance: 500,
+        forceDirection: "down",
+      });
+    } else if (pin) {
+      pinToBottom(el);
+    } else if (nextScrollTop !== null) {
+      setScrollTop(el, nextScrollTop);
     }
 
-    if (!isScrollingRef.current) pruneTopIfNeeded();
-    lastTopRef.current = el.scrollTop;
-  }, [slice.start, slice.end, messages, pruneTopIfNeeded, windowResolvable]);
+    const wrotePosition = Boolean(glideTarget) || pin || nextScrollTop !== null;
+    if (wrotePosition) {
+      lastPositionWriteRef.current = { top: readContainerScrollTop(el), at: Date.now() };
+    }
+    // The bookkeeping reads the position back, which is a read after the write —
+    // declared, so the dev discipline pass does not flag it.
+    forceMeasure(() => {
+      bestPositionRef.current = readContainerScrollTop(el);
+      prevCommitRef.current = {
+        clientHeight,
+        tailId,
+        anchorKey: anchorKey,
+        anchorCoord: anchorCoord ?? 0,
+      };
+    });
 
-  // Pin to the real bottom while following. Skipped mid-coast: writing
-  // `scrollTop` during momentum is what makes iOS stutter; the settle pass
-  // pins instead. A layout change (an interactive-widget keyboard resizing the
-  // shell) also lands here.
-  useLayoutEffect(() => {
-    if (!followingRef.current || isScrollingRef.current || pointerActiveRef.current) return;
-    const el = getScroller();
-    if (!el) return;
-    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
-    if (Math.abs(el.scrollTop - maxScrollTop) > 1) el.scrollTop = maxScrollTop;
-  }, [messages.length, slice.start, slice.end]);
+    // Mounts a gesture deferred land at the verified rest, never in the commit.
+    armRest();
+  }, [messages, slice.start, slice.end, armRest]);
 
   useEffect(() => {
     return () => {
-      if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
+      if (restTimerRef.current !== null) clearTimeout(restTimerRef.current);
       if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
     };
   }, []);
@@ -662,16 +800,28 @@ export function ChannelChat({
 
   const scrollToBottom = useCallback(() => {
     followingRef.current = true;
-    // An explicit "take me to the newest" overrides the coast tracking.
-    isScrollingRef.current = false;
     setIsAtBottom(true);
     setNewMessageCount(0);
-    // No smooth scroll: re-seed the window to the newest rows and snap in one
-    // frame. A smooth scroll across thousands of pixels reads as a hang.
+
+    // Telegram's button: the distance the reader cannot see is covered at once,
+    // and the last ≤500px glide down. Re-seeding the window changes the DOM, so
+    // when it actually moves the glide is requested through the writer.
+    if (sameKeyWindow(win, TAIL_WINDOW)) {
+      const el = getScroller();
+      const marker = bottomSentinelRef.current;
+      if (!el) return;
+      if (marker) {
+        animateScroll({ container: el, element: marker, position: "end", maxDistance: 500, forceDirection: "down" });
+      } else {
+        pinToBottom(el);
+        lastPositionWriteRef.current = { top: readContainerScrollTop(el), at: Date.now() };
+      }
+      return;
+    }
+
+    pendingBottomGlideRef.current = true;
     setWin(TAIL_WINDOW);
-    const el = getScroller();
-    if (el) el.scrollTop = el.scrollHeight;
-  }, []);
+  }, [win]);
 
   const handleSend = async () => {
     const content = draft.trim();
@@ -757,13 +907,11 @@ export function ChannelChat({
     <div className="relative bg-background min-h-[100dvh] flex flex-col">
       {/* Message stream — contributes height to the document; the window
           scrolls this page, not an inner overflow container. The pointer
-          handlers are passive observers that open/close the "a finger is on the
-          list" gate — they never take over the gesture. */}
-      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+          handlers are passive observers; the "a finger is on the list" gate
+          itself lives on the window, so a release anywhere ends it. */}
       <div
         onPointerDown={() => {
           userDraggingRef.current = true;
-          markPointerActive();
         }}
         onPointerUp={() => {
           userDraggingRef.current = false;
@@ -771,8 +919,6 @@ export function ChannelChat({
         onPointerCancel={() => {
           userDraggingRef.current = false;
         }}
-        onTouchStart={markPointerActive}
-        onMouseDown={markPointerActive}
         data-testid="channel-chat-messages"
         role="log"
         aria-label="Сообщения канала"
