@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/gin-gonic/gin"
@@ -22,8 +23,9 @@ import (
 // same emoji from different people aggregates into one chip.
 
 const (
-	// Telegram gives a free account one reaction per message; three is the
-	// premium allowance and a good ceiling for a small community.
+	// How many different reactions one person may hold on one message. Telegram
+	// caps it (1 free / 3 premium) and, when the cap is reached, a new reaction
+	// REPLACES the oldest one instead of being refused — see ToggleReaction.
 	maxReactionsPerUser = 3
 	// A reaction chip's payload is a single emoji (a ZWJ sequence can be a few
 	// runes); anything longer is not an emoji and would break the chip layout.
@@ -45,6 +47,10 @@ type ReactionSummary struct {
 	Count int            `json:"count"`
 	Mine  bool           `json:"mine"`
 	Users []ReactionUser `json:"users"`
+	// MineAt is when the VIEWER chose this emoji (RFC3339). It is what the
+	// per-message cap evicts by, so the client can predict the eviction exactly
+	// instead of guessing.
+	MineAt *string `json:"mine_at,omitempty"`
 }
 
 // validReactionEmoji accepts a single, printable emoji-ish grapheme and rejects
@@ -103,7 +109,7 @@ func (h *MessengerHandler) fetchReactionsForMessages(c *gin.Context, messageIDs 
 
 	for rows.Next() {
 		var messageID, emoji, userID, username string
-		var createdAt interface{}
+		var createdAt time.Time
 		if err := rows.Scan(&messageID, &emoji, &userID, &username, &createdAt); err != nil {
 			return nil, err
 		}
@@ -121,6 +127,8 @@ func (h *MessengerHandler) fetchReactionsForMessages(c *gin.Context, messageIDs 
 		current.summary.Count++
 		if userID == viewerID {
 			current.summary.Mine = true
+			at := createdAt.UTC().Format(time.RFC3339Nano)
+			current.summary.MineAt = &at
 		}
 		current.summary.Users = append(current.summary.Users, ReactionUser{ID: userID, Username: username})
 	}
@@ -286,8 +294,21 @@ func (h *MessengerHandler) ToggleReaction(c *gin.Context) {
 			return
 		}
 		if held >= maxReactionsPerUser {
-			c.JSON(http.StatusConflict, models.ErrorResponse("Too many reactions on this message"))
-			return
+			// Telegram's model: at the cap, the new reaction replaces the OLDEST
+			// one you hold. Refusing would make a tap on a peer's chip do nothing
+			// at all — from the outside indistinguishable from a broken button.
+			if _, err := h.dbFor(c).Exec(`
+				DELETE FROM message_reactions
+				WHERE id = (
+					SELECT id FROM message_reactions
+					WHERE message_id = $1 AND user_id = $2
+					ORDER BY created_at ASC
+					LIMIT 1
+				)`, messageID, claims.UserID,
+			); err != nil {
+				httpx.ServerError(c, "replace oldest reaction", err)
+				return
+			}
 		}
 
 		if _, err := h.dbFor(c).Exec(

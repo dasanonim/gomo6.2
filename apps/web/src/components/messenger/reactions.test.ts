@@ -28,7 +28,7 @@ describe("applyReaction", () => {
   it("adds a first reaction as my own chip", () => {
     const chips = applyReaction([], "❤️", me, "toggle", me.id);
 
-    expect(chips).toEqual([{ emoji: "❤️", count: 1, mine: true, users: [me] }]);
+    expect(chips).toEqual([{ emoji: "❤️", count: 1, mine: true, users: [me], mineAt: expect.any(String) }]);
   });
 
   it("removes my reaction on a second toggle", () => {
@@ -77,6 +77,49 @@ describe("applyReaction", () => {
 
     expect(chips.map((entry) => entry.emoji)).toEqual(["❤️", "🔥"]);
     expect(chips[0].count).toBe(2);
+  });
+});
+
+describe("the per-message cap", () => {
+  it("replaces the reader's oldest reaction instead of refusing a fourth", () => {
+    let chips = applyReaction([], "❤️", me, "add", me.id);
+    chips = applyReaction(chips, "🔥", me, "add", me.id);
+    chips = applyReaction(chips, "😂", me, "add", me.id);
+    expect(chips).toHaveLength(3);
+
+    chips = applyReaction(chips, "👍", me, "add", me.id);
+
+    // Twitter… err, Telegram: the new one lands, the first one the reader chose
+    // loses its owner.
+    expect(chips).toHaveLength(3);
+    expect(chips.map((chip) => chip.emoji).sort()).toEqual(["😂", "👍", "🔥"].sort());
+    expect(chips.every((chip) => chip.mine)).toBe(true);
+  });
+
+  it("keeps a peer's reaction when the reader's own chip is evicted", () => {
+    // ❤️ is shared with a peer and was the reader's first choice.
+    let chips = applyReaction([], "❤️", me, "add", me.id);
+    chips = applyReaction(chips, "❤️", peer, "add", me.id);
+    chips = applyReaction(chips, "🔥", me, "add", me.id);
+    chips = applyReaction(chips, "😂", me, "add", me.id);
+
+    chips = applyReaction(chips, "👍", me, "add", me.id);
+
+    const heart = chips.find((chip) => chip.emoji === "❤️");
+    // The viewer's row is gone (it was the oldest); the peer's stays.
+    expect(heart).toEqual({ emoji: "❤️", count: 1, mine: false, users: [peer] });
+    expect(chips.filter((chip) => chip.mine)).toHaveLength(3);
+  });
+
+  it("never evicts on a peer's delta", () => {
+    let chips = applyReaction([], "❤️", me, "add", me.id);
+    chips = applyReaction(chips, "🔥", me, "add", me.id);
+    chips = applyReaction(chips, "😂", me, "add", me.id);
+    chips = applyReaction(chips, "😮", peer, "add", me.id);
+
+    expect(chips).toHaveLength(4);
+    expect(chips.filter((chip) => chip.mine)).toHaveLength(3);
+    expect(chips.find((chip) => chip.emoji === "😮")?.mine).toBe(false);
   });
 });
 

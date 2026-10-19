@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { toast } from "sonner";
 import type {
   Attachment,
   ConversationView,
@@ -924,7 +925,10 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
       const result = await messengerApi.toggleReaction(selectedConversationId, messageId, emoji);
       get().updateMessage(messageId, { reactions: replaceChips(result.reactions) });
     } catch {
+      // Silent rollbacks are how the first version of this looked "broken":
+      // the chip flipped back and nothing said why.
       get().updateMessage(messageId, { reactions: before });
+      toast.error("Не удалось поставить реакцию");
     }
   },
 

@@ -384,7 +384,13 @@ describe("messengerStore", () => {
 
       // Optimistic: the chip exists before the network answered.
       expect(useMessengerStore.getState().messages[0].reactions).toEqual([
-        { emoji: "❤️", count: 1, mine: true, users: [{ id: "u1", username: "testuser" }] },
+        {
+          emoji: "❤️",
+          count: 1,
+          mine: true,
+          users: [{ id: "u1", username: "testuser" }],
+          mineAt: expect.any(String),
+        },
       ]);
 
       release({
