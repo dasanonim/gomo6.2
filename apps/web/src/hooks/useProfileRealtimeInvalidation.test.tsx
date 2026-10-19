@@ -98,6 +98,22 @@ describe("useProfileRealtimeInvalidation", () => {
     expect(mockEnsureConnected).toHaveBeenCalledTimes(1);
   });
 
+  it("repairs a socket that died while the tab stayed open", () => {
+    // No visibility/focus/online event will ever fire for a foreground tab whose
+    // backoff gave up; the slow tick is the only thing that brings it back.
+    vi.useFakeTimers();
+    try {
+      socketConnected = false;
+      renderHook(() => useProfileRealtimeInvalidation());
+
+      vi.advanceTimersByTime(45_000);
+
+      expect(mockEnsureConnected).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops listening when it unmounts", () => {
     socketConnected = false;
     const { unmount } = renderHook(() => useProfileRealtimeInvalidation());

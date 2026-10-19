@@ -48,10 +48,17 @@ export function useProfileRealtimeInvalidation(): void {
       if (document.visibilityState === "visible") recover();
     };
 
+    // A visible tab whose backoff has already given up gets no lifecycle event
+    // ever again — a server restart or a rejected origin leaves it silently
+    // dead until the page is reloaded (the phone lived through exactly that).
+    // A slow tick is a no-op while the socket is alive and repairs it otherwise.
+    const repairTimer = setInterval(recover, 45_000);
+
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("focus", recover);
     window.addEventListener("online", recover);
     return () => {
+      clearInterval(repairTimer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", recover);
       window.removeEventListener("online", recover);
