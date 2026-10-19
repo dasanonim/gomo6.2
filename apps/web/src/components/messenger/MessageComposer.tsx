@@ -286,6 +286,10 @@ export const MessageComposer = memo(function MessageComposer({
   const isEditing = editingMessageId != null;
   const plainDraft = useMemo(() => messengerTextToPlain(draft), [draft]);
   const hasContent = plainDraft.length > 0;
+  // Recording a voice note — or holding an unsent one — owns the row: the input
+  // is inert for the whole time, so a click or Tab can never land in the text
+  // field underneath.
+  const [voiceRowLocked, setVoiceRowLocked] = useState(false);
   const remaining = MAX_LENGTH - plainDraft.length;
 
   const canSend = isEditing
@@ -1279,6 +1283,18 @@ useEffect(() => {
     && pendingAttachments.length === 0
     && uploadingFiles.length === 0;
 
+  // `inert` blocks pointer events, focus and the accessibility tree in one go;
+  // the opaque draft bar covers the row visually.
+  useEffect(() => {
+    const row = rootRef.current?.querySelector(".composer-row");
+    if (!row) return;
+    const targets = Array.from(
+      row.querySelectorAll<HTMLElement>(":scope > .composer-attach-btn-wrap, :scope > .composer-input-pill, :scope > .send-button"),
+    );
+    targets.forEach((element) => element.toggleAttribute("inert", voiceRowLocked));
+    return () => targets.forEach((element) => element.removeAttribute("inert"));
+  }, [voiceRowLocked]);
+
   const sendButton = (
     <button
       type="button"
@@ -1615,7 +1631,11 @@ useEffect(() => {
         </div>
 
         {showVoiceRecorder && onSendVoice ? (
-          <VoiceRecorder onSend={onSendVoice} disabled={isSending} />
+          <VoiceRecorder
+            onSend={onSendVoice}
+            disabled={isSending}
+            onRowLockChange={setVoiceRowLocked}
+          />
         ) : (
           sendButton
         )}

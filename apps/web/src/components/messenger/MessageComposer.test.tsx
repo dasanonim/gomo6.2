@@ -117,6 +117,16 @@ vi.mock("@/components/GomoRichEditor", () => {
   };
 });
 
+vi.mock("./VoiceRecorder", () => ({
+  VoiceRecorder: ({ onRowLockChange }: { onRowLockChange?: (locked: boolean) => void }) => (
+    <div className="voice-record is-ready" data-testid="voice-recorder">
+      <button type="button" aria-label="Открыть черновик" onClick={() => onRowLockChange?.(true)}>
+        open
+      </button>
+    </div>
+  ),
+}));
+
 vi.mock("@/components/EmojiPicker", () => ({
   EmojiPicker: ({ onEmojiSelect, children, onSwapToggle, swapOpen, onSwapClose }: any) => (
     <div data-testid="emoji-picker" data-swap-open={swapOpen ? "true" : "false"}>
@@ -1465,6 +1475,30 @@ describe("MessageComposer", () => {
       );
       return screen.getByPlaceholderText("Напиши сообщение...") as HTMLTextAreaElement;
     }
+
+    it("makes the input inert while a voice draft owns the row", () => {
+      // A recorded draft covers the composer; the text field underneath must be
+      // unreachable — no click, no Tab focus (Telegram disables it the same way).
+      render(
+        <MessageComposer
+          draft=""
+          setDraft={vi.fn()}
+          isSending={false}
+          onSend={vi.fn()}
+          onSendVoice={vi.fn()}
+          composerRef={{ current: null }}
+          onAttachFiles={vi.fn()}
+        />,
+      );
+
+      const inputPill = document.querySelector(".composer-input-pill") as HTMLElement;
+      expect(inputPill.hasAttribute("inert")).toBe(false);
+
+      fireEvent.click(screen.getByRole("button", { name: "Открыть черновик" }));
+
+      expect(inputPill.hasAttribute("inert")).toBe(true);
+      expect(document.querySelector(".composer-attach-btn-wrap")?.hasAttribute("inert")).toBe(true);
+    });
 
     it("forwards pasted files to onAttachFiles exactly once", () => {
       const onAttachFiles = vi.fn();

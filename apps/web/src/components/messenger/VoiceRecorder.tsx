@@ -5,8 +5,8 @@ import { hapticSuccess, hapticTick } from "@/lib/haptics";
 import { messengerApi } from "@/services/messengerApi";
 import type { Attachment } from "./types";
 import { VoicePlayer } from "./VoicePlayer";
+import { WaveformRenderer } from "./core/waveformRenderer";
 import {
-  VOICE_BARS,
   VOICE_MAX_BYTES,
   VOICE_MAX_SECONDS,
   extensionForMime,
@@ -109,6 +109,12 @@ interface Props {
   disabled?: boolean;
   /** Hides the mic entirely (editing an existing message, for instance). */
   hidden?: boolean;
+  /**
+   * The recorder owns the composer row — while recording and while a draft is
+   * held. The parent then makes the input inert (no click, no Tab focus, out of
+   * the a11y tree), the way Telegram's record bar disables the composer.
+   */
+  onRowLockChange?: (locked: boolean) => void;
 }
 
 function describePermissionError(error: unknown): string {
@@ -125,7 +131,7 @@ function describePermissionError(error: unknown): string {
   return "Не удалось начать запись";
 }
 
-export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Props) {
+export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowLockChange }: Props) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [locked, setLocked] = useState(false);
   const [cancelArmed, setCancelArmed] = useState(false);
@@ -142,7 +148,8 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
   const rafRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const barsRef = useRef<HTMLDivElement | null>(null);
+  const waveCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const waveRendererRef = useRef<WaveformRenderer | null>(null);
   const liveBarsRef = useRef<number[]>([]);
   const lastBarAtRef = useRef(0);
   const phaseRef = useRef<Phase>("idle");
@@ -156,17 +163,6 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
   phaseRef.current = phase;
   lockedRef.current = locked;
   cancelRef.current = cancelArmed;
-
-  const paintBars = useCallback(() => {
-    const holder = barsRef.current;
-    if (!holder) return;
-    const bars = liveBarsRef.current;
-    const children = holder.children;
-    for (let i = 0; i < children.length; i += 1) {
-      const value = bars[Math.max(0, bars.length - VOICE_BARS + i)] ?? 0;
-      (children[i] as HTMLElement).style.setProperty("--h", `${Math.max(6, value)}%`);
-    }
-  }, []);
 
   const stopTracks = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -198,7 +194,8 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     setLocked(false);
     setCancelArmed(false);
     setElapsed(0);
-  }, [teardown]);
+    onRowLockChange?.(false);
+  }, [onRowLockChange, teardown]);
 
   useEffect(
     () => () => {
@@ -346,6 +343,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     draftRef.current = next;
     setDraft(next);
     setPhase("ready");
+    // Already locked since the recording started; a draft keeps it locked.
     hapticTick(6);
   }, [reset, teardown]);
 
@@ -403,7 +401,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
         // delivered bars look like the same voice.
         const value = Math.round(Math.min(100, Math.max(6, Math.pow(rms * 4.2, 0.75) * 100)));
         liveBarsRef.current.push(value);
-        paintBars();
+        waveRendererRef.current?.pushPeak(value / 100);
       }
       rafRef.current = requestAnimationFrame(frame);
     };
@@ -418,7 +416,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
         void finish(true);
       }
     }, TICK_MS);
-  }, [paintBars, finish]);
+  }, [finish]);
 
   const cancel = useCallback(() => {
     hapticTick(10);
@@ -525,9 +523,40 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
 
     setPhase("recording");
     setElapsed(0);
+    onRowLockChange?.(true);
     hapticTick(8);
     startLoops();
-  }, [disabled, finish, startLoops]);
+  }, [disabled, finish, onRowLockChange, startLoops]);
+
+  // The live waveform is a canvas (Telegram's renderer): 3px rounded bars that
+  // scroll from the right, silence as a dot. It is created once the bar mounts,
+  // then fed by the sampling loop above.
+  useEffect(() => {
+    if (phase !== "recording") return;
+    const canvas = waveCanvasRef.current;
+    if (!canvas) return;
+    let renderer: WaveformRenderer | null = null;
+    try {
+      renderer = new WaveformRenderer(canvas);
+    } catch {
+      return; // no 2d context: the timer and the hint still work
+    }
+    renderer.setSeekable(false);
+    waveRendererRef.current = renderer;
+    liveBarsRef.current.forEach((value) => renderer?.pushPeak(value / 100));
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => {
+          const rect = canvas.getBoundingClientRect();
+          renderer?.handleResize(rect.width, rect.height);
+        })
+      : null;
+    observer?.observe(canvas);
+    return () => {
+      observer?.disconnect();
+      renderer?.destroy();
+      waveRendererRef.current = null;
+    };
+  }, [phase]);
 
   // A release that arrives while the permission prompt is still open opens a
   // hands-free recording: the user asked to record, and the prompt is ours to
@@ -640,6 +669,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
         </button>
         <div className="voice-record-preview">
           <VoicePlayer
+            variant="draft"
             attachment={{
               url: draft.url,
               type: "audio",
@@ -692,24 +722,14 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
         <Trash2 size={16} />
       </button>
 
-      <div className="voice-record-body">
-        <div className="voice-record-timer">
-          <span className="voice-record-dot" aria-hidden="true" />
-          <span className="voice-record-time" aria-live="off">{formatVoiceTime(elapsed)}</span>
-          {locked && <Lock size={12} className="voice-record-lock" aria-label="Запись закреплена" />}
-        </div>
-        <div className="voice-record-wave" ref={barsRef} aria-hidden="true">
-          {Array.from({ length: VOICE_BARS }).map((_, index) => (
-            <span key={index} className="voice-record-bar" />
-          ))}
-        </div>
-        <div className="voice-record-hint" aria-live="polite">
-          {cancelArmed
-            ? "Отпусти — отмена"
-            : locked
-              ? "Идёт запись — нажми, чтобы отправить"
-              : "Отпусти — отправить · ← отмена · ↑ закрепить"}
-        </div>
+      <div className="voice-record-pill">
+        <span className="voice-record-dot" aria-hidden="true" />
+        <span className="voice-record-time" aria-live="off">{formatVoiceTime(elapsed)}</span>
+        {locked && <Lock size={12} className="voice-record-lock" aria-label="Запись закреплена" />}
+        <canvas ref={waveCanvasRef} className="voice-record-canvas" aria-hidden="true" />
+        <span className="voice-record-hint" aria-live="polite">
+          {cancelArmed ? "Отпусти — отмена" : locked ? "" : "← отмена · ↑ закрепить"}
+        </span>
       </div>
 
       <button

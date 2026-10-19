@@ -2253,20 +2253,25 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   color: oklch(var(--destructive));
 }
 
-.voice-record-body {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: auto auto;
+.voice-record.is-ready .voice-record-pill,
+.voice-record-pill {
+  position: relative;
+  display: flex;
   align-items: center;
-  column-gap: 10px;
+  gap: 8px;
   flex: 1 1 auto;
   min-width: 0;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: oklch(var(--primary) / 0.12);
 }
 
 .voice-record-timer {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -2274,6 +2279,7 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
 }
 
 .voice-record-dot {
+  flex: 0 0 auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -2296,35 +2302,42 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   color: oklch(var(--primary));
 }
 
-.voice-record-wave {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  height: 22px;
+/* The live waveform is Telegram's canvas renderer; the element only carries the
+   colour (`fillStyle` comes from `color`). */
+.voice-record-canvas,
+.voice-draft-canvas {
+  flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  /* The oldest bars fade out on the left instead of snapping away. */
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14%, #000 100%);
-  mask-image: linear-gradient(90deg, transparent 0, #000 14%, #000 100%);
+  width: 100%;
+  height: 26px;
+  display: block;
+  color: oklch(var(--primary));
 }
 
-.voice-record-bar {
-  flex: 0 0 3px;
-  height: var(--h, 6%);
-  max-height: 100%;
-  border-radius: 999px;
-  background: oklch(var(--primary) / 0.7);
-  transition: height 0.08s linear;
+.voice-record-canvas {
+  /* The newest bars fade in from the left edge while recording. */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 100%);
 }
 
+.voice-draft-canvas {
+  height: 100%;
+}
+
+/* Slide hints live inside the pill, over the newest bars, so the bar keeps one
+   line and the composer row never grows. */
 .voice-record-hint {
-  grid-column: 1 / -1;
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding-left: 14px;
   font-size: 10px;
   line-height: 1.2;
   color: oklch(var(--muted-foreground));
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, oklch(var(--primary) / 0.12) 30%, oklch(var(--primary) / 0.12));
 }
 
 .voice-record.is-cancelling .voice-record-dot {
@@ -2335,6 +2348,10 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
 .voice-record.is-cancelling .voice-record-time,
 .voice-record.is-cancelling .voice-record-hint {
   color: oklch(var(--destructive));
+}
+
+.voice-record.is-cancelling .voice-record-pill {
+  background: oklch(var(--destructive) / 0.12);
 }
 
 .voice-record.is-cancelling .voice-record-bar {
@@ -2362,43 +2379,87 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
    ~43px, and content that outgrew the row's box used to paint ABOVE it, out of
    the bar's hit area — clicks there fell through to the input underneath. */
 .voice-record.is-ready {
-  top: auto;
+  /* Covers the WHOLE row (Telegram's record bar is an opaque inset layer): a
+     shorter bar left a strip of the input visible and clickable above it. */
+  top: 0;
   bottom: 0;
-  height: 46px;
-  gap: 8px;
-  padding: 0 6px 0 6px;
+  height: auto;
+  min-height: 46px;
+  gap: 6px;
+  padding: 0 4px;
   align-items: center;
+  background: oklch(var(--background));
+  border: 0;
+  box-shadow: none;
 }
 
 .voice-record-preview {
   display: flex;
   align-items: center;
   flex: 1 1 auto;
-  /* A voice note reads as one at a comfortable width; a full 850px row would
-     stretch the waveform into a ribbon. The send button hugs the right. */
-  max-width: 520px;
   min-width: 0;
 }
 
-.voice-record.is-ready .composer-mic.is-action {
-  margin-left: auto;
+/* Telegram's record pill: a primary-tinted container that the waveform fills,
+   with the play control and the duration centred ON TOP of it. */
+.voice-player.is-draft {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: oklch(var(--primary) / 0.12);
 }
 
-.voice-record.is-ready {
-  border-color: oklch(var(--primary) / 0.35);
+.voice-player.is-draft .voice-main {
+  height: 100%;
+  justify-content: center;
+  gap: 0;
 }
 
-.voice-record.is-ready .voice-bar {
-  background: oklch(var(--primary) / 0.45);
-}
-
-/* Inside the draft bar the player is a preview: no message meta to reserve. */
-.voice-record.is-ready .voice-meta {
-  padding-right: 0;
-}
-
-.voice-record.is-ready .voice-wave {
+.voice-player.is-draft .voice-wave {
+  height: 100%;
   margin-right: 0;
+}
+
+
+
+.voice-draft-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+
+  background: oklch(var(--primary));
+  color: oklch(var(--primary-foreground));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 6px oklch(0 0 0 / 0.18);
+  transition: transform 0.12s ease, filter 0.12s ease;
+
+  -webkit-tap-highlight-color: transparent;
+}
+
+.voice-draft-play:hover {
+  filter: brightness(1.08);
+}
+
+.voice-draft-play:active {
+  transform: translate(-50%, -50%) scale(0.94);
 }
 
 .voice-record-spinner {

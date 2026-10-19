@@ -126,12 +126,24 @@ async function pressMic() {
 }
 
 describe("VoiceRecorder", () => {
+  it("locks the composer row from the first second of recording", async () => {
+    const onRowLockChange = vi.fn();
+    render(<VoiceRecorder onSend={vi.fn()} onRowLockChange={onRowLockChange} />);
+
+    await pressMic();
+    expect(onRowLockChange).toHaveBeenLastCalledWith(true);
+
+    now = 1500;
+    fireEvent.pointerUp(window);
+    await waitFor(() => expect(onRowLockChange).toHaveBeenLastCalledWith(false));
+  });
+
   it("records, then uploads and hands the parent a voice attachment", async () => {
     const onSend = vi.fn();
     render(<VoiceRecorder onSend={onSend} />);
 
     await pressMic();
-    await screen.findByText(/Отпусти — отправить/);
+    await waitFor(() => expect(document.querySelector(".voice-record-pill")).not.toBeNull());
 
     now = 2400; // 2.4s of speech
     fireEvent.pointerUp(window);
@@ -307,12 +319,13 @@ describe("VoiceRecorder", () => {
 
     await pressMic();
     fireEvent.pointerMove(window, { clientX: 12, clientY: -120 });
-    await screen.findByText(/Идёт запись/);
+    // Locked: the bar offers a send button instead of a hint.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Отправить голосовое" })).toBeInTheDocument());
 
     now = 1800;
     fireEvent.pointerUp(window);
     // Still recording after the finger left.
-    expect(screen.getByText(/Идёт запись/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Отправить голосовое" })).toBeInTheDocument();
     expect(onSend).not.toHaveBeenCalled();
 
     now = 2200;
