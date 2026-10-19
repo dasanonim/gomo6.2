@@ -66,6 +66,31 @@ export function barCountForWidth(width: number): number {
 }
 
 /**
+ * RMS of an analyser's time-domain buffer (128 = silence, 0/255 = full swing).
+ *
+ * An all-zero buffer is NOT full volume: it is a buffer the analyser never
+ * wrote — a suspended AudioContext, a stopped source, a freshly allocated
+ * array. Read naively, zeros compute as `(0-128)/128 = -1` for every sample,
+ * i.e. RMS 1.0, which is exactly how a live waveform ends up pinned to the
+ * ceiling before the first sound (and why only the *second* recording showed
+ * it: the first context runs, later ones can start suspended).
+ */
+export function rmsFromTimeDomain(buffer: ArrayLike<number>): number {
+  const length = buffer.length;
+  if (!length) return 0;
+  let sum = 0;
+  let wrote = false;
+  for (let i = 0; i < length; i += 1) {
+    const value = buffer[i];
+    if (value !== 0) wrote = true;
+    const centred = (value - 128) / 128;
+    sum += centred * centred;
+  }
+  if (!wrote) return 0;
+  return Math.sqrt(sum / length);
+}
+
+/**
  * A live analyser's RMS → 0..1 peak, with the same curve the file-based
  * waveform uses. No floor: the renderer normalises against a running maximum
  * that starts at 0.05, so a floored silence would read as full height.

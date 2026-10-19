@@ -3,6 +3,7 @@ import {
   VOICE_BARS,
   barCountForWidth,
   livePeak,
+  rmsFromTimeDomain,
   storedPeak,
   extensionForMime,
   formatVoiceTime,
@@ -38,6 +39,27 @@ describe("formatVoiceTime", () => {
   it("survives garbage", () => {
     expect(formatVoiceTime(Number.NaN)).toBe("0:00");
     expect(formatVoiceTime(-4)).toBe("0:00");
+  });
+});
+
+describe("rmsFromTimeDomain", () => {
+  it("reads a silent analyser buffer as silence", () => {
+    expect(rmsFromTimeDomain(new Uint8Array([128, 128, 128, 128]))).toBe(0);
+    expect(rmsFromTimeDomain(new Uint8Array(1024).fill(128))).toBe(0);
+  });
+
+  it("does not mistake an unwritten buffer for full volume", () => {
+    // The bug: an analyser that never wrote leaves the array at zeros, which
+    // naively computes as RMS 1.0 — a waveform pinned to the ceiling before the
+    // first sound (the second recording, whose context starts suspended).
+    expect(rmsFromTimeDomain(new Uint8Array(1024))).toBe(0);
+    expect(rmsFromTimeDomain([])).toBe(0);
+  });
+
+  it("measures a real signal", () => {
+    // samples are centred on 128 and scaled to -1..1
+    expect(rmsFromTimeDomain([128, 255, 128, 0])).toBeCloseTo(0.704, 3);
+    expect(rmsFromTimeDomain([128, 228, 128, 28])).toBeCloseTo(0.552, 3);
   });
 });
 

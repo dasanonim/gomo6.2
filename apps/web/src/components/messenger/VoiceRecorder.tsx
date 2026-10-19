@@ -8,6 +8,7 @@ import { VoicePlayer } from "./VoicePlayer";
 import { WaveformRenderer } from "./core/waveformRenderer";
 import {
   livePeak,
+  rmsFromTimeDomain,
   storedPeak,
   VOICE_MAX_BYTES,
   VOICE_MAX_SECONDS,
@@ -95,6 +96,32 @@ const BAR_INTERVAL_MS = 70;
 
 type Phase = "idle" | "requesting" | "recording" | "uploading" | "ready";
 
+/**
+ * One AudioContext for every recording.
+ *
+ * Chrome caps how many can coexist and a context created later may start
+ * suspended; a suspended analyser reports no data at all, which is how the live
+ * waveform ended up pinned to the ceiling on a second recording. One context,
+ * resumed on demand, removes that whole class of failure.
+ */
+let audioContext: AudioContext | null = null;
+
+function getAudioContext(): AudioContext | null {
+  const Ctor = typeof window === "undefined"
+    ? undefined
+    : window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctor) return null;
+  if (!audioContext || audioContext.state === "closed") {
+    try {
+      audioContext = new Ctor();
+    } catch {
+      return null;
+    }
+  }
+  if (audioContext.state === "suspended") void audioContext.resume().catch(() => undefined);
+  return audioContext;
+}
+
 /** A finished recording that has not been sent: it lives in the composer. */
 type VoiceDraft = {
   blob: Blob;
@@ -148,7 +175,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
   const startedAtRef = useRef(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const rafRef = useRef<number | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const waveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const waveRendererRef = useRef<WaveformRenderer | null>(null);
@@ -180,8 +207,12 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    void audioCtxRef.current?.close().catch(() => undefined);
-    audioCtxRef.current = null;
+    try {
+      sourceRef.current?.disconnect();
+    } catch {
+      /* already disconnected */
+    }
+    sourceRef.current = null;
     analyserRef.current = null;
     stopTracks();
     recorderRef.current = null;
@@ -386,19 +417,16 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
   // ── Sampling: one rAF loop for the live waveform, one tick for the timer ──
   const startLoops = useCallback(() => {
     const analyser = analyserRef.current;
-    const buffer = analyser ? new Uint8Array(analyser.fftSize) : null;
+    // Filled with 128 (silence) on purpose: a buffer the analyser never writes
+    // must read as silence, not as a full-scale signal (see rmsFromTimeDomain).
+    const buffer = analyser ? new Uint8Array(analyser.fftSize).fill(128) : null;
 
     const frame = () => {
       const now = performance.now();
       if (analyser && buffer && now - lastBarAtRef.current >= BAR_INTERVAL_MS) {
         lastBarAtRef.current = now;
         analyser.getByteTimeDomainData(buffer);
-        let sum = 0;
-        for (let i = 0; i < buffer.length; i += 1) {
-          const centred = (buffer[i] - 128) / 128;
-          sum += centred * centred;
-        }
-        const rms = Math.sqrt(sum / buffer.length);
+        const rms = rmsFromTimeDomain(buffer);
         // Same curve the file-based waveform uses, so the live preview and the
         // delivered bars look like the same voice.
         // Two consumers, two scales: the stored waveform keeps a 6% floor so a
@@ -514,13 +542,13 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
 
     // Live levels. Failure to build the analyser must not break recording.
     try {
-      const Ctor = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (Ctor) {
-        const context = new Ctor();
+      const context = getAudioContext();
+      if (context) {
         const analyser = context.createAnalyser();
         analyser.fftSize = 1024;
-        context.createMediaStreamSource(stream).connect(analyser);
-        audioCtxRef.current = context;
+        const source = context.createMediaStreamSource(stream);
+        source.connect(analyser);
+        sourceRef.current = source;
         analyserRef.current = analyser;
       }
     } catch {
