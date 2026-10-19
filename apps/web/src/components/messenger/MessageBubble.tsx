@@ -351,6 +351,11 @@ export const MessageBubble = memo(function MessageBubble({
 
     const onPointerDown = (e: PointerEvent) => {
       if (actionPanelRef.current?.contains(e.target as Node)) return;
+      // The reaction bar is real UI in the same floated group (a sibling of the
+      // cloned bubble), and this listener runs in the capture phase — React's
+      // own stopPropagation on the bar cannot keep the panel open. Presses on
+      // the bar apply a reaction, they do not dismiss.
+      if ((e.target as Element | null)?.closest?.(".msg-reaction-bar")) return;
       // If the composer's editing surface was engaged when the panel opened,
       // an outside tap dismisses the panel but must not drop that focus: the
       // tap's default action (blurring the active element on a non-focusable

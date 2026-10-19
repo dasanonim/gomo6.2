@@ -2003,6 +2003,10 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
 .msg-action-lift.is-mine > .msg-action-panel { right: 0; }
 .msg-action-lift:not(.is-mine) > .msg-action-panel { left: 0; }
 .msg-action-lift > .msg-action-panel { pointer-events: auto; }
+/* The reaction bar is real UI in the floated group (a sibling of the cloned
+   bubble), so it has to opt back into hit-testing like the panel does —
+   otherwise a press falls through to the scrim and dismisses the panel. */
+.msg-action-lift > .msg-reaction-bar { pointer-events: auto; }
 
 /* Inside the floated group the copy must re-flow EXACTLY as it does in the
    list: the wrapper is pre-sized to the bubble's real width, so the bubble's
