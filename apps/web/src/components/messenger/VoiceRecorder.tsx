@@ -186,10 +186,10 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
       }
 
       setPhase("uploading");
+      const extension = extensionForMime(mime);
+      const file = new File([blob], `voice-${Date.now()}.${extension}`, { type });
       try {
         const waveform = (await extractWaveform(blob)) ?? liveBars;
-        const extension = extensionForMime(mime);
-        const file = new File([blob], `voice-${Date.now()}.${extension}`, { type });
         const uploaded = await messengerApi.uploadFile(file);
         onSend({
           url: uploaded.path,
@@ -200,8 +200,12 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
           meta: JSON.stringify({ voice: true, duration, waveform }),
         });
         hapticSuccess();
-      } catch {
-        toast.error("Не удалось отправить голосовое");
+      } catch (error) {
+        // The server's own reason is worth surfacing: a rejected container, an
+        // expired session and a size cap all look identical without it.
+        const detail = error instanceof Error && error.message ? ` — ${error.message}` : "";
+        console.warn("[voice] upload failed", { name: file.name, mime: type, size: blob.size }, error);
+        toast.error(`Не удалось отправить голосовое${detail}`);
       } finally {
         finishingRef.current = false;
         reset();

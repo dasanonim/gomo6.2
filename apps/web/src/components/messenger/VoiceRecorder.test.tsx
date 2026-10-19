@@ -236,6 +236,21 @@ describe("VoiceRecorder", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  it("surfaces the server's own reason when the upload is rejected", async () => {
+    mockUpload.mockRejectedValueOnce(new Error("file type not allowed: .bin"));
+    render(<VoiceRecorder onSend={vi.fn()} />);
+
+    await pressMic();
+    now = 1500;
+    fireEvent.pointerUp(window);
+
+    await waitFor(() =>
+      expect(mockToast.error).toHaveBeenCalledWith(
+        expect.stringContaining("file type not allowed"),
+      ),
+    );
+  });
+
   it("explains an insecure origin instead of blaming the browser", async () => {
     Object.defineProperty(window, "isSecureContext", { configurable: true, value: false });
     const onSend = vi.fn();
