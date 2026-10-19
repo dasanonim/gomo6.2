@@ -186,8 +186,7 @@ describe("VoiceRecorder", () => {
     expect(onSend).not.toHaveBeenCalled();
     expect(mockUpload).not.toHaveBeenCalled();
     // …the note waits in the composer with its own player.
-    const draft = await screen.findByText(/Запись остановлена/);
-    expect(draft).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector(".voice-record.is-ready")).not.toBeNull());
     expect(document.querySelector(".voice-record.is-ready .voice-player")).not.toBeNull();
 
     // Sending it from there works (and uploads only now).
@@ -209,7 +208,7 @@ describe("VoiceRecorder", () => {
       document.dispatchEvent(new Event("visibilitychange"));
       await new Promise((resolve) => setTimeout(resolve, 120));
     });
-    await screen.findByText(/Запись остановлена/);
+    await waitFor(() => expect(document.querySelector(".voice-record.is-ready")).not.toBeNull());
 
     fireEvent.click(screen.getByRole("button", { name: "Удалить запись" }));
 
@@ -252,7 +251,7 @@ describe("VoiceRecorder", () => {
     });
 
     expect(onSend).not.toHaveBeenCalled();
-    await screen.findByText(/Запись остановлена/);
+    await waitFor(() => expect(document.querySelector(".voice-record.is-ready")).not.toBeNull());
     expect(document.querySelector(".voice-record.is-ready .voice-player")).not.toBeNull();
   });
 

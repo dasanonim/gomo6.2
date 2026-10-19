@@ -2357,27 +2357,24 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
 }
 
 /* The interrupted recording stays where it was made: it covers the composer
-   row, with its own player, so the note can be heard before it is sent. */
+   row, with its own player, so the note can be heard before it is sent.
+   Its height is explicit and anchored to the row's bottom: the player needs
+   ~43px, and content that outgrew the row's box used to paint ABOVE it, out of
+   the bar's hit area — clicks there fell through to the input underneath. */
 .voice-record.is-ready {
+  top: auto;
+  bottom: 0;
+  height: 46px;
   gap: 8px;
-  padding-right: 6px;
+  padding: 0 6px 0 6px;
+  align-items: center;
 }
 
 .voice-record-preview {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.voice-record-note {
-  font-size: 10px;
-  line-height: 1.2;
-  color: oklch(var(--muted-foreground));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Inside the draft bar the player is a preview: no message meta to reserve. */

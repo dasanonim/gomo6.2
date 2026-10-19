@@ -335,6 +335,12 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     }
 
     const waveform = (await extractWaveform(blob)) ?? liveBars;
+    // The draft bar takes the composer row over; a focused editor would keep
+    // the soft keyboard up, resizing the row under the bar.
+    const active = document.activeElement as HTMLElement | null;
+    if (active && (active.isContentEditable || active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
+      active.blur();
+    }
     if (draftRef.current) URL.revokeObjectURL(draftRef.current.url);
     const next: VoiceDraft = { blob, mime, duration, waveform, url: URL.createObjectURL(blob) };
     draftRef.current = next;
@@ -643,8 +649,8 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
               meta: JSON.stringify({ voice: true, duration: draft.duration, waveform: draft.waveform }),
             }}
             src={draft.url}
+            from="черновик"
           />
-          <span className="voice-record-note">Запись остановлена — отправь или удали</span>
         </div>
         <button
           type="button"
