@@ -22,22 +22,41 @@ vi.mock("./voice", async (importOriginal) => {
 // ─── A recorder the browser does not provide in jsdom ──────────────────────
 class FakeMediaRecorder {
   static isTypeSupported = (mime: string) => mime.startsWith("audio/webm");
+  /** What the "browser" opens when nothing is requested. */
+  static defaultMime = "audio/webm";
+  /** Requested containers this "browser" refuses to construct (Safari quirk). */
+  static refuseRequested = false;
+  /** WebKit habit: the final `dataavailable` fires AFTER the `stop` event. */
+  static lateFinalChunk = false;
   state: "inactive" | "recording" = "inactive";
   mimeType: string;
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
+  onerror: (() => void) | null = null;
   private listeners: Record<string, Array<() => void>> = {};
 
   constructor(_stream: unknown, options?: { mimeType?: string }) {
-    this.mimeType = options?.mimeType ?? "audio/webm";
+    if (options?.mimeType && FakeMediaRecorder.refuseRequested) {
+      throw new DOMException("unsupported", "NotSupportedError");
+    }
+    this.mimeType = options?.mimeType ?? FakeMediaRecorder.defaultMime;
   }
   addEventListener(type: string, callback: () => void) {
     (this.listeners[type] ??= []).push(callback);
   }
   start() {
     this.state = "recording";
+    if (FakeMediaRecorder.lateFinalChunk) {
+      // A first chunk while recording, the rest only at stop.
+      setTimeout(() => this.ondataavailable?.({ data: new Blob(["head-bytes"], { type: "audio/webm" }) }), 5);
+    }
   }
   stop() {
     this.state = "inactive";
+    if (FakeMediaRecorder.lateFinalChunk) {
+      (this.listeners.stop ?? []).forEach((callback) => callback());
+      setTimeout(() => this.ondataavailable?.({ data: new Blob(["tail-bytes"], { type: "audio/webm" }) }), 20);
+      return;
+    }
     this.ondataavailable?.({ data: new Blob(["voice-bytes"], { type: "audio/webm" }) });
     (this.listeners.stop ?? []).forEach((callback) => callback());
   }
@@ -51,6 +70,12 @@ let now = 0;
 
 beforeEach(() => {
   now = 0;
+  // jsdom reports an insecure context by default; the recorder refuses that on
+  // purpose (a phone on http://192.168.x.x has no getUserMedia at all).
+  Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
+  FakeMediaRecorder.defaultMime = "audio/webm";
+  FakeMediaRecorder.refuseRequested = false;
+  FakeMediaRecorder.lateFinalChunk = false;
   vi.spyOn(performance, "now").mockImplementation(() => now);
   vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
   Object.defineProperty(navigator, "mediaDevices", {
@@ -102,6 +127,25 @@ describe("VoiceRecorder", () => {
     expect(mockWaveform).toHaveBeenCalledTimes(1);
     expect(meta.waveform.length).toBeGreaterThan(0);
     expect(mockHaptics.success).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a final chunk the browser delivers after `stop` (WebKit)", async () => {
+    // The truncation bug: the note played ~0.5s and went silent because only
+    // the early timeslice made it into the upload.
+    FakeMediaRecorder.lateFinalChunk = true;
+    const onSend = vi.fn();
+    render(<VoiceRecorder onSend={onSend} />);
+
+    await pressMic();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    now = 1500;
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    // Both chunks ("head-bytes" + "tail-bytes") are in the upload.
+    expect(onSend.mock.calls[0][0].size).toBe(20);
   });
 
   it("drops a mis-tap instead of sending an empty voice message", async () => {
@@ -161,6 +205,91 @@ describe("VoiceRecorder", () => {
     await pressMic();
 
     await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(expect.stringMatching(/микрофон/i)));
+    expect(mic()).toBeInTheDocument();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("records in the container the browser actually chose (Safari: mp4/AAC)", async () => {
+    // Safari supports no webm: `pickVoiceMimeType` finds nothing, the recorder
+    // constructs with no options and opens mp4 — the attachment must say so.
+    FakeMediaRecorder.isTypeSupported = () => false;
+    FakeMediaRecorder.defaultMime = "audio/mp4";
+    const onSend = vi.fn();
+    render(<VoiceRecorder onSend={onSend} />);
+
+    await pressMic();
+    now = 1500;
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    const attachment = onSend.mock.calls[0][0];
+    expect(attachment.mime).toBe("audio/mp4");
+    expect(attachment.name.endsWith(".m4a")).toBe(true);
+  });
+
+  it("falls back to the browser default when the requested container is refused", async () => {
+    // Safari threw on `new MediaRecorder(stream, { mimeType })` even though it
+    // reported the type as supported.
+    FakeMediaRecorder.refuseRequested = true;
+    const onSend = vi.fn();
+    render(<VoiceRecorder onSend={onSend} />);
+
+    await pressMic();
+    now = 1200;
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend.mock.calls[0][0].mime).toContain("audio/");
+  });
+
+  it("releases the microphone when no recorder can be built", async () => {
+    FakeMediaRecorder.refuseRequested = true;
+    const stream = fakeStream();
+    const stop = vi.fn();
+    (stream.getTracks as unknown as () => Array<{ stop: () => void }>) = () => [{ stop }];
+    (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockResolvedValueOnce(stream);
+    // No options AND the default constructor also fails.
+    const Original = FakeMediaRecorder;
+    vi.stubGlobal("MediaRecorder", class extends Original {
+      constructor(...args: ConstructorParameters<typeof Original>) {
+        if (!(args[1] as { mimeType?: string } | undefined)?.mimeType) throw new DOMException("nope", "NotSupportedError");
+        super(...args);
+      }
+    });
+    const onSend = vi.fn();
+    render(<VoiceRecorder onSend={onSend} />);
+
+    await pressMic();
+
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(expect.stringMatching(/формат/i)));
+    expect(stop).toHaveBeenCalled();
+    expect(mic()).toBeInTheDocument();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the server's own reason when the upload is rejected", async () => {
+    mockUpload.mockRejectedValueOnce(new Error("file type not allowed: .bin"));
+    render(<VoiceRecorder onSend={vi.fn()} />);
+
+    await pressMic();
+    now = 1500;
+    fireEvent.pointerUp(window);
+
+    await waitFor(() =>
+      expect(mockToast.error).toHaveBeenCalledWith(
+        expect.stringContaining("file type not allowed"),
+      ),
+    );
+  });
+
+  it("explains an insecure origin instead of blaming the browser", async () => {
+    Object.defineProperty(window, "isSecureContext", { configurable: true, value: false });
+    const onSend = vi.fn();
+    render(<VoiceRecorder onSend={onSend} />);
+
+    await pressMic();
+
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(expect.stringMatching(/HTTPS/)));
     expect(mic()).toBeInTheDocument();
     expect(onSend).not.toHaveBeenCalled();
   });

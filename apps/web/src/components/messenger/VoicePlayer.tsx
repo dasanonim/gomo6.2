@@ -44,7 +44,15 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
 
   // The blob is authenticated (fetched with the session cookie) and cached by
   // the shared attachment cache, so remounting a scrolled-away bubble is free.
-  const url = useAuthenticatedAttachmentUrl(attachment);
+  // `enabled` lets the player ask for another attempt: the first one can land
+  // in the window between "object uploaded" and "attachment row committed".
+  const [loadEnabled, setLoadEnabled] = useState(true);
+  const url = useAuthenticatedAttachmentUrl(attachment, attachment.url, loadEnabled);
+  const retriedRef = useRef(false);
+  const retryLoad = useCallback(() => {
+    setLoadEnabled(false);
+    requestAnimationFrame(() => setLoadEnabled(true));
+  }, []);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const waveRef = useRef<HTMLDivElement | null>(null);
@@ -101,9 +109,14 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
   }, [rate, url]);
 
   const toggle = useCallback(() => {
+    if (failed) {
+      setFailed(false);
+      retryLoad();
+      return;
+    }
     if (playing) pause();
     else void play();
-  }, [pause, play, playing]);
+  }, [failed, pause, play, playing, retryLoad]);
 
   const seekTo = useCallback((ratio: number) => {
     const audio = audioRef.current;
@@ -216,6 +229,15 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
     paint();
   }, [paint]);
 
+  // One automatic retry, once: a transient 403/network error must not leave a
+  // voice note permanently unplayable.
+  useEffect(() => {
+    if (url || retriedRef.current) return;
+    retriedRef.current = true;
+    const timer = setTimeout(retryLoad, 900);
+    return () => clearTimeout(timer);
+  }, [retryLoad, url]);
+
   useEffect(() => () => {
     stopLoop();
     const audio = audioRef.current;
@@ -235,10 +257,12 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
       <button
         type="button"
         className="voice-play"
-        onClick={toggle}
-        disabled={!url && !failed}
-        aria-label={`${playing ? "Пауза" : "Воспроизвести"} голосовое сообщение, ${formatVoiceTime(total)}${from ? `, ${from}` : ""}`}
-        title={failed ? "Не удалось загрузить" : undefined}
+        onClick={url ? toggle : retryLoad}
+        disabled={false}
+        aria-label={url
+          ? `${playing ? "Пауза" : "Воспроизвести"} голосовое сообщение, ${formatVoiceTime(total)}${from ? `, ${from}` : ""}`
+          : "Загрузить голосовое сообщение"}
+        title={!url ? "Загрузить" : failed ? "Не удалось загрузить — нажми, чтобы повторить" : undefined}
       >
         {playing ? <Pause size={16} /> : <Play size={16} />}
       </button>

@@ -26,6 +26,8 @@ func contentTypeForUpload(filename string) string {
 		return "video/mp4"
 	case ".webm":
 		return "video/webm"
+	case ".weba":
+		return "audio/webm"
 	case ".mov":
 		return "video/quicktime"
 	case ".mp3":

@@ -155,7 +155,13 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
 
       const duration = (performance.now() - startedAtRef.current) / 1000;
       const stopped = new Promise<void>((resolve) => {
-        recorder.addEventListener("stop", () => resolve(), { once: true });
+        recorder.addEventListener("stop", () => {
+          // WebKit has shipped versions that fire the FINAL `dataavailable`
+          // after `stop`. Reading the chunks right on `stop` kept only the
+          // first timeslice — the note played ~0.5s and then went silent.
+          // One macrotask is enough for that late chunk to land.
+          setTimeout(resolve, 40);
+        }, { once: true });
       });
       try {
         if (recorder.state !== "inactive") recorder.stop();
@@ -186,10 +192,10 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
       }
 
       setPhase("uploading");
+      const extension = extensionForMime(mime);
+      const file = new File([blob], `voice-${Date.now()}.${extension}`, { type });
       try {
         const waveform = (await extractWaveform(blob)) ?? liveBars;
-        const extension = extensionForMime(mime);
-        const file = new File([blob], `voice-${Date.now()}.${extension}`, { type });
         const uploaded = await messengerApi.uploadFile(file);
         onSend({
           url: uploaded.path,
@@ -200,8 +206,12 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
           meta: JSON.stringify({ voice: true, duration, waveform }),
         });
         hapticSuccess();
-      } catch {
-        toast.error("Не удалось отправить голосовое");
+      } catch (error) {
+        // The server's own reason is worth surfacing: a rejected container, an
+        // expired session and a size cap all look identical without it.
+        const detail = error instanceof Error && error.message ? ` — ${error.message}` : "";
+        console.warn("[voice] upload failed", { name: file.name, mime: type, size: blob.size }, error);
+        toast.error(`Не удалось отправить голосовое${detail}`);
       } finally {
         finishingRef.current = false;
         reset();
@@ -255,13 +265,20 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
   // ── Start ────────────────────────────────────────────────────────────────
   const start = useCallback(async () => {
     if (phaseRef.current !== "idle" || disabled) return;
+    // On an insecure origin (a phone on http://192.168.x.x) the browser hides
+    // `mediaDevices` entirely — saying "this browser cannot record" there is a
+    // lie, and the fix is an https address, not another browser.
+    if (!window.isSecureContext) {
+      toast.error("Запись работает только по HTTPS или на localhost — открой https-адрес стенда");
+      return;
+    }
     const mime = pickVoiceMimeType();
     if (mime === null) {
-      toast.error("Этот браузер не умеет записывать звук");
+      toast.error("Этот браузер не умеет записывать звук (нужен Safari 14.5+ или свежий Chrome)");
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
-      toast.error("Запись звука недоступна в этом браузере");
+      toast.error("Браузер не даёт доступ к микрофону");
       return;
     }
 
@@ -285,16 +302,47 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     }
 
     streamRef.current = stream;
-    mimeRef.current = mime || "audio/webm";
     chunksRef.current = [];
     liveBarsRef.current = [];
     lastBarAtRef.current = 0;
 
-    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    // Safari refuses `new MediaRecorder(stream, { mimeType })` in some versions
+    // even when `isTypeSupported` says yes, so the requested container is a
+    // preference, not a demand: retry with the browser's own default.
+    let recorder: MediaRecorder | null = null;
+    const optionSets: (MediaRecorderOptions | undefined)[] = mime ? [{ mimeType: mime }, undefined] : [undefined];
+    for (const options of optionSets) {
+      try {
+        recorder = new MediaRecorder(stream, options);
+        break;
+      } catch {
+        recorder = null;
+      }
+    }
+    if (!recorder) {
+      stream.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setPhase("idle");
+      toast.error("Не удалось начать запись в поддерживаемом формате");
+      return;
+    }
+
+    // What the browser ACTUALLY opened wins: Safari records mp4/AAC even when
+    // nothing was requested, and labelling that file "audio/webm" would upload
+    // a lie (wrong extension, wrong mime) and break playback for the receiver.
+    mimeRef.current = recorder.mimeType || mime || "";
     recorder.ondataavailable = (event) => {
       if (event.data && event.data.size > 0) chunksRef.current.push(event.data);
     };
-    recorder.start(250);
+    recorder.onerror = () => {
+      toast.error("Запись прервалась");
+      void finish(false);
+    };
+    // No timeslice: the recorder buffers the note and hands it over whole at
+    // stop. The live waveform comes from the analyser, so streaming chunks buy
+    // nothing — and a partial chunk stream is exactly how a voice note ends up
+    // truncated on WebKit.
+    recorder.start();
     recorderRef.current = recorder;
 
     // Live levels. Failure to build the analyser must not break recording.
@@ -316,7 +364,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     setElapsed(0);
     hapticTick(8);
     startLoops();
-  }, [disabled, startLoops]);
+  }, [disabled, finish, startLoops]);
 
   // A release that arrives while the permission prompt is still open opens a
   // hands-free recording: the user asked to record, and the prompt is ours to

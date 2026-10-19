@@ -234,7 +234,7 @@ function AttachmentView({
     // its own blob (authenticated + cached), so the `url` computed above is not
     // needed here.
     return (
-      <div style={{ marginTop: 2 }}>
+      <div className="msg-voice">
         <VoicePlayer attachment={attachment} isMine={isMine} />
       </div>
     );

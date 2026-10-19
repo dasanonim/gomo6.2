@@ -101,11 +101,21 @@ export function pickVoiceMimeType(): string | null {
   return "";
 }
 
-/** File extension for a recorder mime type (the upload key is built from it). */
+/**
+ * File extension for a recorder mime type.
+ *
+ * Audio WebM gets `.weba`, never `.webm`: the storage handler treats `.webm` as
+ * a VIDEO input and pushes it through the ffmpeg transcoder, which an audio-only
+ * file fails (or worse, silently becomes a silent mp4). `.weba` is the standard
+ * extension for audio-only WebM and is stored as `audio/webm`.
+ */
 export function extensionForMime(mime: string): string {
   if (mime.includes("mp4") || mime.includes("aac")) return "m4a";
   if (mime.includes("ogg")) return "ogg";
-  return "webm";
+  // An unknown container is safer labelled as audio-only mp4: it can never be
+  // mistaken for a video, and browsers sniff the real format on playback.
+  if (!mime) return "m4a";
+  return "weba";
 }
 
 /**
