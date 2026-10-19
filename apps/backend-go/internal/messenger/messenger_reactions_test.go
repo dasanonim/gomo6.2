@@ -198,6 +198,112 @@ func TestToggleReaction_SurfacesInsertFailure(t *testing.T) {
 	}
 }
 
+func TestToggleReaction_MembershipLookupFails(t *testing.T) {
+	handler, mock := setupMessengerHandler(t)
+
+	claims := &auth.Claims{UserID: testUser1, Username: "testuser"}
+	c, w := testutil.NewPOSTContext(
+		"/api/v1/messenger/conversations/"+testConv1+"/messages/"+testMsg1+"/reactions",
+		map[string]string{"emoji": "❤️"},
+		claims,
+		map[string]string{"id": testConv1, "msgId": testMsg1},
+	)
+
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_members WHERE conversation_id = \$1 AND user_id = \$2\)`).
+		WithArgs(testConv1, testUser1).
+		WillReturnError(errReactionInsert)
+
+	handler.ToggleReaction(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestToggleReaction_MessageLookupFails(t *testing.T) {
+	handler, mock := setupMessengerHandler(t)
+
+	claims := &auth.Claims{UserID: testUser1, Username: "testuser"}
+	c, w := testutil.NewPOSTContext(
+		"/api/v1/messenger/conversations/"+testConv1+"/messages/"+testMsg1+"/reactions",
+		map[string]string{"emoji": "❤️"},
+		claims,
+		map[string]string{"id": testConv1, "msgId": testMsg1},
+	)
+
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_members WHERE conversation_id = \$1 AND user_id = \$2\)`).
+		WithArgs(testConv1, testUser1).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_messages WHERE id = \$1 AND conversation_id = \$2 AND is_deleted = false\)`).
+		WithArgs(testMsg1, testConv1).
+		WillReturnError(errReactionInsert)
+
+	handler.ToggleReaction(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestToggleReaction_DeleteFails(t *testing.T) {
+	handler, mock := setupMessengerHandler(t)
+
+	claims := &auth.Claims{UserID: testUser1, Username: "testuser"}
+	c, w := testutil.NewPOSTContext(
+		"/api/v1/messenger/conversations/"+testConv1+"/messages/"+testMsg1+"/reactions",
+		map[string]string{"emoji": "❤️"},
+		claims,
+		map[string]string{"id": testConv1, "msgId": testMsg1},
+	)
+
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_members WHERE conversation_id = \$1 AND user_id = \$2\)`).
+		WithArgs(testConv1, testUser1).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_messages WHERE id = \$1 AND conversation_id = \$2 AND is_deleted = false\)`).
+		WithArgs(testMsg1, testConv1).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectExec(`DELETE FROM message_reactions WHERE message_id = \$1 AND user_id = \$2 AND emoji = \$3`).
+		WithArgs(testMsg1, testUser1, "❤️").
+		WillReturnError(errReactionInsert)
+
+	handler.ToggleReaction(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestToggleReaction_ChipsLookupFails(t *testing.T) {
+	handler, mock := setupMessengerHandler(t)
+
+	claims := &auth.Claims{UserID: testUser1, Username: "testuser"}
+	c, w := testutil.NewPOSTContext(
+		"/api/v1/messenger/conversations/"+testConv1+"/messages/"+testMsg1+"/reactions",
+		map[string]string{"emoji": "❤️"},
+		claims,
+		map[string]string{"id": testConv1, "msgId": testMsg1},
+	)
+
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_members WHERE conversation_id = \$1 AND user_id = \$2\)`).
+		WithArgs(testConv1, testUser1).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_messages WHERE id = \$1 AND conversation_id = \$2 AND is_deleted = false\)`).
+		WithArgs(testMsg1, testConv1).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectExec(`DELETE FROM message_reactions WHERE message_id = \$1 AND user_id = \$2 AND emoji = \$3`).
+		WithArgs(testMsg1, testUser1, "❤️").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT r.message_id, r.emoji, r.user_id, COALESCE\(u.username, ''\), r.created_at`).
+		WithArgs(testMsg1).
+		WillReturnError(errReactionInsert)
+
+	handler.ToggleReaction(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestToggleReaction_RejectsNonMember(t *testing.T) {
 	handler, mock := setupMessengerHandler(t)
 

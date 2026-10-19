@@ -157,6 +157,74 @@ describe("MessageBubble — touch double-tap", () => {
   });
 });
 
+describe("MessageBubble — reactions", () => {
+  const reaction = {
+    emoji: "🔥",
+    count: 2,
+    mine: false,
+    users: [{ id: "u2", username: "bob" }, { id: "u3", username: "carol" }],
+  };
+
+  it("renders the chips under the bubble and toggles on tap", () => {
+    const onToggleReaction = vi.fn();
+    const { container } = render(
+      <MessageBubble
+        message={createMessage({ reactions: [reaction] })}
+        {...defaultProps}
+        viewerId="u1"
+        onToggleReaction={onToggleReaction}
+      />,
+    );
+
+    const chip = container.querySelector(".msg-reaction-chip") as HTMLButtonElement;
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toBe("🔥2");
+
+    fireEvent.click(chip);
+    expect(onToggleReaction).toHaveBeenCalledWith("msg-1", "🔥");
+    expect(mockHaptics.tick).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers the quick bar in the action panel and applies the pick", async () => {
+    const onToggleReaction = vi.fn();
+    const { container } = render(
+      <div className="chat-panel">
+        <div className="message-scroll">
+          <div className="message-list">
+            <div className="message-row">
+              <MessageBubble
+                message={createMessage()}
+                {...defaultProps}
+                viewerId="u1"
+                onToggleReaction={onToggleReaction}
+              />
+            </div>
+          </div>
+        </div>
+      </div>,
+    );
+
+    fireEvent.contextMenu(screen.getByText("Hello, world!"));
+    await screen.findByRole("menu");
+
+    const bar = container.querySelector(".msg-reaction-bar");
+    expect(bar).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "🔥" }));
+
+    expect(onToggleReaction).toHaveBeenCalledWith("msg-1", "🔥");
+    // The bar closes with the panel: the chip under the message is the answer.
+    await vi.waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  });
+
+  it("keeps reactions out of a surface without a handler", () => {
+    const { container } = render(
+      <MessageBubble message={createMessage({ reactions: [reaction] })} {...defaultProps} />,
+    );
+
+    expect(container.querySelector(".msg-reactions")).toBeNull();
+  });
+});
+
 describe("MessageBubble", () => {
   it("jumps to the quoted message when the quote is tapped", () => {
     const onJumpToMessage = vi.fn();
