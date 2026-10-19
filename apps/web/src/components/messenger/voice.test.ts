@@ -83,10 +83,13 @@ describe("parseVoiceMeta", () => {
 
 describe("recording container", () => {
   it("names the file for the recorder's own container", () => {
-    expect(extensionForMime("audio/webm;codecs=opus")).toBe("webm");
+    // Never ".webm": the server treats that extension as a video input and runs
+    // it through ffmpeg, which an audio-only recording fails.
+    expect(extensionForMime("audio/webm;codecs=opus")).toBe("weba");
     expect(extensionForMime("audio/mp4;codecs=mp4a.40.2")).toBe("m4a");
     expect(extensionForMime("audio/ogg;codecs=opus")).toBe("ogg");
-    expect(extensionForMime("")).toBe("webm");
+    // Unknown container: audio-only mp4, which can never be taken for a video.
+    expect(extensionForMime("")).toBe("m4a");
   });
 
   it("prefers opus in webm, falls back to whatever the browser supports", () => {

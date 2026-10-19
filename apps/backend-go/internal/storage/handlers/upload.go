@@ -118,6 +118,10 @@ func (h *StorageHandler) readUploadFile(c *gin.Context) (data []byte, header *mu
 		// Audio
 		".mp3": true, ".ogg": true, ".wav": true, ".flac": true,
 		".m4a": true, ".aac": true,
+		// Audio-only WebM (a voice note recorded by Chromium). Deliberately not
+		// ".webm": that extension is the video pipeline's, and an audio-only
+		// file cannot be transcoded as a video.
+		".weba": true,
 		// Documents
 		".pdf": true, ".txt": true, ".md": true,
 	}
