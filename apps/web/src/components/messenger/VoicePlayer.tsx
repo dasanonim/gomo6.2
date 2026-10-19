@@ -35,9 +35,14 @@ interface Props {
   isMine?: boolean;
   /** Whose voice it is, for the screen-reader label. */
   from?: string;
+  /**
+   * A local blob URL (a recording that has not been uploaded yet, shown in the
+   * composer). When set, the authenticated loader is skipped entirely.
+   */
+  src?: string;
 }
 
-export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = false, from }: Props) {
+export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = false, from, src }: Props) {
   const meta = parseVoiceMeta(attachment);
   const duration = meta?.duration ?? 0;
   const bars = meta?.waveform ?? [];
@@ -47,7 +52,8 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
   // `enabled` lets the player ask for another attempt: the first one can land
   // in the window between "object uploaded" and "attachment row committed".
   const [loadEnabled, setLoadEnabled] = useState(true);
-  const url = useAuthenticatedAttachmentUrl(attachment, attachment.url, loadEnabled);
+  const authenticatedUrl = useAuthenticatedAttachmentUrl(attachment, attachment.url, loadEnabled && !src);
+  const url = src ?? authenticatedUrl;
   const retriedRef = useRef(false);
   const retryLoad = useCallback(() => {
     setLoadEnabled(false);

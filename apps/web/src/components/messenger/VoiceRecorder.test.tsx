@@ -83,6 +83,9 @@ beforeEach(() => {
     value: { getUserMedia: vi.fn(async () => fakeStream()) },
   });
   mockUpload.mockReset().mockResolvedValue({ path: "u1/messenger/voice-1.webm" });
+  // jsdom has no object URLs; the draft bar owns one for its preview.
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:draft") });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
   mockWaveform.mockClear();
   mockToast.error.mockClear();
   mockHaptics.tick.mockClear();
@@ -146,6 +149,55 @@ describe("VoiceRecorder", () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1), { timeout: 3000 });
     // Both chunks ("head-bytes" + "tail-bytes") are in the upload.
     expect(onSend.mock.calls[0][0].size).toBe(20);
+  });
+
+  it("keeps an interrupted recording in the composer instead of sending it", async () => {
+    const onSend = vi.fn();
+    render(<VoiceRecorder onSend={onSend} />);
+
+    await pressMic();
+    now = 1800;
+    // The reader leaves the page mid-recording.
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    });
+
+    // Nothing was sent…
+    expect(onSend).not.toHaveBeenCalled();
+    expect(mockUpload).not.toHaveBeenCalled();
+    // …the note waits in the composer with its own player.
+    const draft = await screen.findByText(/Запись остановлена/);
+    expect(draft).toBeInTheDocument();
+    expect(document.querySelector(".voice-record.is-ready .voice-player")).not.toBeNull();
+
+    // Sending it from there works (and uploads only now).
+    fireEvent.click(screen.getByRole("button", { name: "Отправить голосовое" }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(mockUpload).toHaveBeenCalledTimes(1);
+    const meta = JSON.parse(onSend.mock.calls[0][0].meta);
+    expect(meta.voice).toBe(true);
+  });
+
+  it("throws an interrupted recording away when asked", async () => {
+    const onSend = vi.fn();
+    render(<VoiceRecorder onSend={onSend} />);
+
+    await pressMic();
+    now = 1500;
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    });
+    await screen.findByText(/Запись остановлена/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Удалить запись" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Записать голосовое" })).toBeInTheDocument());
+    expect(onSend).not.toHaveBeenCalled();
+    expect(mockUpload).not.toHaveBeenCalled();
   });
 
   it("drops a mis-tap instead of sending an empty voice message", async () => {

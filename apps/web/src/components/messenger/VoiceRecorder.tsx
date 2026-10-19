@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { hapticSuccess, hapticTick } from "@/lib/haptics";
 import { messengerApi } from "@/services/messengerApi";
 import type { Attachment } from "./types";
+import { VoicePlayer } from "./VoicePlayer";
 import {
   VOICE_BARS,
   VOICE_MAX_BYTES,
@@ -37,7 +38,16 @@ const MIN_SENT_SECONDS = 0.6;
 const TICK_MS = 100;
 const BAR_INTERVAL_MS = 70;
 
-type Phase = "idle" | "requesting" | "recording" | "uploading";
+type Phase = "idle" | "requesting" | "recording" | "uploading" | "ready";
+
+/** A finished recording that has not been sent: it lives in the composer. */
+type VoiceDraft = {
+  blob: Blob;
+  mime: string;
+  duration: number;
+  waveform: number[];
+  url: string;
+};
 
 interface Props {
   /** Called with the uploaded attachment; the parent sends the message. */
@@ -67,6 +77,8 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
   const [locked, setLocked] = useState(false);
   const [cancelArmed, setCancelArmed] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [draft, setDraft] = useState<VoiceDraft | null>(null);
+  const draftRef = useRef<VoiceDraft | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -219,6 +231,96 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     },
     [onSend, reset, teardown],
   );
+
+  /**
+   * Stop the recorder and keep the note in the composer instead of sending it.
+   *
+   * This is what happens when the page is hidden mid-recording: auto-sending a
+   * note the reader did not finish is worse than keeping it where they left it.
+   */
+  const capture = useCallback(async () => {
+    if (finishingRef.current) return;
+    const recorder = recorderRef.current;
+    if (!recorder) {
+      reset();
+      return;
+    }
+    finishingRef.current = true;
+
+    const duration = (performance.now() - startedAtRef.current) / 1000;
+    // Same grace as the send path: WebKit fires the final chunk after `stop`.
+    const settled = new Promise<void>((resolve) => {
+      recorder.addEventListener("stop", () => setTimeout(resolve, 40), { once: true });
+    });
+
+    try {
+      if (recorder.state !== "inactive") {
+        try {
+          recorder.requestData?.();
+        } catch {
+          /* not implemented everywhere */
+        }
+        recorder.stop();
+      }
+    } catch {
+      /* already stopped */
+    }
+    await settled;
+
+    const mime = mimeRef.current;
+    const liveBars = [...liveBarsRef.current];
+    teardown();
+    finishingRef.current = false;
+
+    const type = mime.split(";")[0] || "audio/webm";
+    const blob = new Blob(chunksRef.current, { type });
+    if (duration < MIN_SENT_SECONDS || blob.size === 0) {
+      reset();
+      return;
+    }
+
+    const waveform = (await extractWaveform(blob)) ?? liveBars;
+    if (draftRef.current) URL.revokeObjectURL(draftRef.current.url);
+    const next: VoiceDraft = { blob, mime, duration, waveform, url: URL.createObjectURL(blob) };
+    draftRef.current = next;
+    setDraft(next);
+    setPhase("ready");
+    hapticTick(6);
+  }, [reset, teardown]);
+
+  const discardDraft = useCallback(() => {
+    if (draftRef.current) URL.revokeObjectURL(draftRef.current.url);
+    draftRef.current = null;
+    setDraft(null);
+    reset();
+  }, [reset]);
+
+  const sendDraft = useCallback(async () => {
+    const current = draftRef.current;
+    if (!current) return;
+    setPhase("uploading");
+    const extension = extensionForMime(current.mime);
+    const type = current.mime.split(";")[0] || "audio/webm";
+    const file = new File([current.blob], `voice-${Date.now()}.${extension}`, { type });
+    try {
+      const uploaded = await messengerApi.uploadFile(file);
+      onSend({
+        url: uploaded.path,
+        type: "audio",
+        name: file.name,
+        size: current.blob.size,
+        mime: type,
+        meta: JSON.stringify({ voice: true, duration: current.duration, waveform: current.waveform }),
+      });
+      hapticSuccess();
+    } catch (error) {
+      const detail = error instanceof Error && error.message ? ` — ${error.message}` : "";
+      toast.error(`Не удалось отправить голосовое${detail}`);
+      setPhase("ready");
+      return;
+    }
+    discardDraft();
+  }, [discardDraft, onSend]);
 
   // ── Sampling: one rAF loop for the live waveform, one tick for the timer ──
   const startLoops = useCallback(() => {
@@ -439,22 +541,68 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     };
   }, [cancel, finish]);
 
-  // Leaving the page or the chat mid-recording must not leave the microphone
-  // hot; a real recording (≥1s) is sent rather than thrown away.
+  // Leaving the page mid-recording must not leave the microphone hot — and it
+  // must not send a note the reader never finished. The recording stops and
+  // stays in the composer: play it, send it, or throw it away.
   useEffect(() => {
     if (phase !== "recording") return;
     const onHidden = () => {
       if (document.visibilityState !== "hidden") return;
-      void finish((performance.now() - startedAtRef.current) / 1000 >= 1);
+      void capture();
     };
     document.addEventListener("visibilitychange", onHidden);
     return () => document.removeEventListener("visibilitychange", onHidden);
-  }, [phase, finish]);
+  }, [phase, capture]);
+
+  // The pending recording holds an object URL; the component owns it.
+  useEffect(() => () => {
+    if (draftRef.current) URL.revokeObjectURL(draftRef.current.url);
+  }, []);
 
   if (hidden) return null;
 
   const recording = phase === "recording" || phase === "requesting";
   const busy = phase === "uploading";
+  const ready = phase === "ready" && draft !== null;
+
+  if (ready && draft) {
+    return (
+      <div className="voice-record is-ready">
+        <button
+          type="button"
+          className="voice-record-cancel"
+          onClick={discardDraft}
+          aria-label="Удалить запись"
+          title="Удалить"
+        >
+          <Trash2 size={16} />
+        </button>
+        <div className="voice-record-preview">
+          <VoicePlayer
+            attachment={{
+              url: draft.url,
+              type: "audio",
+              name: "voice",
+              size: draft.blob.size,
+              mime: draft.mime.split(";")[0] || "audio/webm",
+              meta: JSON.stringify({ voice: true, duration: draft.duration, waveform: draft.waveform }),
+            }}
+            src={draft.url}
+          />
+          <span className="voice-record-note">Запись остановлена — отправь или удали</span>
+        </div>
+        <button
+          type="button"
+          className="composer-mic is-action is-send"
+          onClick={() => void sendDraft()}
+          aria-label="Отправить голосовое"
+          title="Отправить"
+        >
+          <SendHorizontal size={16} />
+        </button>
+      </div>
+    );
+  }
 
   if (!recording && !busy) {
     return (

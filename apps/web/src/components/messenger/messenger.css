@@ -2356,6 +2356,39 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   border-color: transparent;
 }
 
+/* The interrupted recording stays where it was made: it covers the composer
+   row, with its own player, so the note can be heard before it is sent. */
+.voice-record.is-ready {
+  gap: 8px;
+  padding-right: 6px;
+}
+
+.voice-record-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.voice-record-note {
+  font-size: 10px;
+  line-height: 1.2;
+  color: oklch(var(--muted-foreground));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Inside the draft bar the player is a preview: no message meta to reserve. */
+.voice-record.is-ready .voice-meta {
+  padding-right: 0;
+}
+
+.voice-record.is-ready .voice-wave {
+  margin-right: 0;
+}
+
 .voice-record-spinner {
   width: 14px;
   height: 14px;
