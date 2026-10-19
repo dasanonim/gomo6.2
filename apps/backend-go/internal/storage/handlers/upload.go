@@ -625,18 +625,25 @@ func (h *StorageHandler) ServeObject(c *gin.Context) {
 			c.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
-		var allowed bool
-		err := h.db.QueryRowContext(c.Request.Context(), `
-			SELECT EXISTS(
-				SELECT 1
-				FROM message_attachments a
-				JOIN chat_messages m ON m.id = a.message_id
-				JOIN chat_members cm ON cm.conversation_id = m.conversation_id
-				WHERE a.url = $1 AND cm.user_id = $2
-			)`, attachmentKeyForLookup(key), claims.UserID).Scan(&allowed)
-		if err != nil || !allowed {
-			c.AbortWithStatus(http.StatusForbidden)
-			return
+		// The uploader's own namespace is always readable. The client renders an
+		// optimistic message (and starts loading its media) the moment the upload
+		// finishes, which is BEFORE the server commits the attachment row: a
+		// key-only authorization would 403 the sender's own file for that window
+		// and the voice note would stay silent until a reload.
+		if !strings.HasPrefix(key, claims.UserID+"/messenger/") {
+			var allowed bool
+			err := h.db.QueryRowContext(c.Request.Context(), `
+				SELECT EXISTS(
+					SELECT 1
+					FROM message_attachments a
+					JOIN chat_messages m ON m.id = a.message_id
+					JOIN chat_members cm ON cm.conversation_id = m.conversation_id
+					WHERE a.url = $1 AND cm.user_id = $2
+				)`, attachmentKeyForLookup(key), claims.UserID).Scan(&allowed)
+			if err != nil || !allowed {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
 		}
 	}
 

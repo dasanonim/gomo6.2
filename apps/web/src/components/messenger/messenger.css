@@ -1974,8 +1974,8 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 190px;
-  max-width: 320px;
+  width: 100%;
+  min-width: 0;
   padding: 1px 0;
 }
 
@@ -2063,11 +2063,15 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
 .voice-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   font-size: 11px;
   line-height: 1.2;
   color: oklch(var(--muted-foreground));
+  /* The message's own time/status is absolutely positioned at the bubble's
+     bottom-right (≈60px + its 10px inset); this row keeps clear of it instead
+     of running underneath. */
+  padding-right: 74px;
 }
 
 .voice-time {
@@ -2100,11 +2104,40 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   color: oklch(var(--destructive));
 }
 
-/* A voice note is its own bubble shape: the player needs a stable width, and
-   the meta (time/status) sits under it instead of inline. */
+/* A voice note is its own bubble shape: the player needs a stable width, the
+   waveform room to breathe, and the meta (time/status) its own corner. */
+/* The attachment list is a row-flex container, so a block child would keep its
+   content width; the voice wrapper claims the whole row. */
+.msg-voice {
+  width: 100%;
+  margin-top: 2px;
+}
+
 .message-bubble.is-voice-bubble {
-  max-width: min(84%, 360px);
-  min-width: 0;
+  max-width: min(86%, 400px);
+  /* Wide enough for the player to read, narrow enough not to stretch on a
+     desktop chat column. */
+  min-width: min(240px, 100%);
+  padding: 8px 12px 7px;
+}
+
+/* The bubble is the stacking context for the absolutely positioned meta; the
+   player's own row is flow content, so a longer waveform simply wraps under
+   nothing and the two never collide. */
+.message-bubble.is-voice-bubble .message-meta {
+  right: 10px;
+  bottom: 7px;
+}
+
+/* No frosted backing here: the meta no longer sits on top of text. */
+.message-bubble.is-voice-bubble .message-meta::before {
+  display: none;
+}
+
+/* Wider bars: 40 of them across a ~250px bubble read as a waveform, not a
+   barcode (the player's bars are flexible, this is the floor). */
+.message-bubble.is-voice-bubble .voice-bar {
+  min-width: 3px;
 }
 
 @media (prefers-reduced-motion: reduce) {
