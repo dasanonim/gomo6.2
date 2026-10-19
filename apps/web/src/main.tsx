@@ -8,7 +8,9 @@ import { toast } from "@/components/ui/sonner";
 import { setupGlobalErrorHandlers } from "@/lib/logging";
 import { initMobileKeyboard } from "@/lib/mobileKeyboard";
 import { initScrollAnchoringFlag } from "@/lib/scrollAnchoring";
-import { initScrollDiagnostics } from "@/components/messenger/core/scrollDiagnostics";
+import { initScrollDiagnostics, noteStrictViolation } from "@/components/messenger/core/scrollDiagnostics";
+import { enableStrict, setStrictHandler } from "@/components/messenger/core/fasterdom";
+import { initPerfMarks } from "@/components/messenger/core/perfMarks";
 import { initPerfTier } from "@/utils/perfTier";
 import "./index.css";
 import "@/theme/theme.css";
@@ -28,8 +30,15 @@ const disposeMobileKeyboard = initMobileKeyboard();
 // laid out (a skipped row's real height would move the reader — the
 // per-message stutter on iOS Safari). Must run before the first paint.
 initScrollAnchoringFlag();
-// Dev-only: enables the chat scroll counters when ?scrolldebug=1 is present.
-if (import.meta.env.DEV) initScrollDiagnostics();
+// Dev-only tools for the chat scroll engine: the counters overlay (?scrolldebug=1),
+// the read/write discipline (Telegram Web's `stricterdom`: a layout read during the
+// mutation phase is a broken batch), and the commit timings (?perf=1).
+if (import.meta.env.DEV) {
+  initScrollDiagnostics();
+  initPerfMarks();
+  setStrictHandler(noteStrictViolation);
+  enableStrict();
+}
 
 // Classify the device once and put weak hardware on the cheap glass tier
 // (html.perf-lite) before the header ever paints.

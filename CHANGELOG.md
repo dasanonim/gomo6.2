@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.21.1] — 2026-10-19
+
+Инструменты, которые держат движок скролла в форме, и одна видимая мелочь.
+
+### Added
+- **Дисциплина чтения/записи** (`core/fasterdom` + `core/layoutCauses`, порт телеграмного `stricterdom`): в дев-сборке патчатся layout-геттеры и методы DOM, и чтение layout во время мутирующей фазы сообщается — счётчик и имя причины видны в оверлее `?scrolldebug=1`. Инструмент сразу нашёл 66 таких чтений в нашем движке; все объявлены через `forceMeasure`, теперь их ноль
+- **Метки производительности** (`core/perfMarks`, `?perf=1`): коммит публикуется как user-timing записи `gomo6:commit:read-ms` / `gomo6:commit:write-ms` (видно в Performance-панели) и логируется одной строкой; по умолчанию выключено и не стоит ничего
+
+### Fixed
+- Кнопка «к последним» больше не мигает, когда приходит высокое сообщение: на время прихода (350 мс) состояние «читатель следует за чатом» заморожено (телеграмный `TOOLS_FREEZE_TIMEOUT`)
+
 ## [2.21.0] — 2026-10-19
 
 Две видимые детали чата из Telegram Web: плавающая дата и появление сообщения.
