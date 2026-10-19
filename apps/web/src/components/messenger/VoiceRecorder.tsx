@@ -155,7 +155,13 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
 
       const duration = (performance.now() - startedAtRef.current) / 1000;
       const stopped = new Promise<void>((resolve) => {
-        recorder.addEventListener("stop", () => resolve(), { once: true });
+        recorder.addEventListener("stop", () => {
+          // WebKit has shipped versions that fire the FINAL `dataavailable`
+          // after `stop`. Reading the chunks right on `stop` kept only the
+          // first timeslice — the note played ~0.5s and then went silent.
+          // One macrotask is enough for that late chunk to land.
+          setTimeout(resolve, 40);
+        }, { once: true });
       });
       try {
         if (recorder.state !== "inactive") recorder.stop();
@@ -332,7 +338,11 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
       toast.error("Запись прервалась");
       void finish(false);
     };
-    recorder.start(250);
+    // No timeslice: the recorder buffers the note and hands it over whole at
+    // stop. The live waveform comes from the analyser, so streaming chunks buy
+    // nothing — and a partial chunk stream is exactly how a voice note ends up
+    // truncated on WebKit.
+    recorder.start();
     recorderRef.current = recorder;
 
     // Live levels. Failure to build the analyser must not break recording.

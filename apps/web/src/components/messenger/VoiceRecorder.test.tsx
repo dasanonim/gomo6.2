@@ -26,6 +26,8 @@ class FakeMediaRecorder {
   static defaultMime = "audio/webm";
   /** Requested containers this "browser" refuses to construct (Safari quirk). */
   static refuseRequested = false;
+  /** WebKit habit: the final `dataavailable` fires AFTER the `stop` event. */
+  static lateFinalChunk = false;
   state: "inactive" | "recording" = "inactive";
   mimeType: string;
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
@@ -43,9 +45,18 @@ class FakeMediaRecorder {
   }
   start() {
     this.state = "recording";
+    if (FakeMediaRecorder.lateFinalChunk) {
+      // A first chunk while recording, the rest only at stop.
+      setTimeout(() => this.ondataavailable?.({ data: new Blob(["head-bytes"], { type: "audio/webm" }) }), 5);
+    }
   }
   stop() {
     this.state = "inactive";
+    if (FakeMediaRecorder.lateFinalChunk) {
+      (this.listeners.stop ?? []).forEach((callback) => callback());
+      setTimeout(() => this.ondataavailable?.({ data: new Blob(["tail-bytes"], { type: "audio/webm" }) }), 20);
+      return;
+    }
     this.ondataavailable?.({ data: new Blob(["voice-bytes"], { type: "audio/webm" }) });
     (this.listeners.stop ?? []).forEach((callback) => callback());
   }
@@ -64,6 +75,7 @@ beforeEach(() => {
   Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
   FakeMediaRecorder.defaultMime = "audio/webm";
   FakeMediaRecorder.refuseRequested = false;
+  FakeMediaRecorder.lateFinalChunk = false;
   vi.spyOn(performance, "now").mockImplementation(() => now);
   vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
   Object.defineProperty(navigator, "mediaDevices", {
@@ -115,6 +127,25 @@ describe("VoiceRecorder", () => {
     expect(mockWaveform).toHaveBeenCalledTimes(1);
     expect(meta.waveform.length).toBeGreaterThan(0);
     expect(mockHaptics.success).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a final chunk the browser delivers after `stop` (WebKit)", async () => {
+    // The truncation bug: the note played ~0.5s and went silent because only
+    // the early timeslice made it into the upload.
+    FakeMediaRecorder.lateFinalChunk = true;
+    const onSend = vi.fn();
+    render(<VoiceRecorder onSend={onSend} />);
+
+    await pressMic();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    now = 1500;
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    // Both chunks ("head-bytes" + "tail-bytes") are in the upload.
+    expect(onSend.mock.calls[0][0].size).toBe(20);
   });
 
   it("drops a mis-tap instead of sending an empty voice message", async () => {

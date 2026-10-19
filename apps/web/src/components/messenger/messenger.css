@@ -2028,6 +2028,9 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   touch-action: none;
   outline: none;
   border-radius: 6px;
+  /* Bars are flex items with a minimum width: on a narrow bubble they would
+     otherwise paint past the right edge instead of shrinking. */
+  overflow: hidden;
 }
 
 .voice-wave:focus-visible {
@@ -2040,6 +2043,7 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   display: flex;
   align-items: center;
   gap: 2px;
+  overflow: hidden;
   pointer-events: none;
 }
 
@@ -2051,6 +2055,7 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
 .voice-bar {
   flex: 1 1 0;
   min-width: 2px;
+  max-width: 6px;
   height: var(--h);
   border-radius: 999px;
   background: oklch(var(--muted-foreground) / 0.35);
@@ -2134,10 +2139,10 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   display: none;
 }
 
-/* Wider bars: 40 of them across a ~250px bubble read as a waveform, not a
-   barcode (the player's bars are flexible, this is the floor). */
-.message-bubble.is-voice-bubble .voice-bar {
-  min-width: 3px;
+/* A visible lane between the waveform and the bubble's right wall — the
+   player's own meta row already reserves space for the time/✓✓ below it. */
+.message-bubble.is-voice-bubble .voice-wave {
+  margin-right: 6px;
 }
 
 @media (prefers-reduced-motion: reduce) {
