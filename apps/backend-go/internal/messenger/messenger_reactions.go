@@ -96,9 +96,7 @@ func (h *MessengerHandler) fetchReactionsForMessages(c *gin.Context, messageIDs 
 	defer rows.Close()
 
 	type chip struct {
-		emoji     string
-		firstSeen int64
-		summary   ReactionSummary
+		summary ReactionSummary
 	}
 	perMessage := make(map[string]map[string]*chip)
 	order := make(map[string][]string)
@@ -116,7 +114,7 @@ func (h *MessengerHandler) fetchReactionsForMessages(c *gin.Context, messageIDs 
 		}
 		current := chips[emoji]
 		if current == nil {
-			current = &chip{emoji: emoji, summary: ReactionSummary{Emoji: emoji}}
+			current = &chip{summary: ReactionSummary{Emoji: emoji}}
 			chips[emoji] = current
 			order[messageID] = append(order[messageID], emoji)
 		}
