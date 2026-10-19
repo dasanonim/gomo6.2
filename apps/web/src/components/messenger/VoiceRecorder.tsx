@@ -35,6 +35,59 @@ const CANCEL_DISTANCE_PX = 110;
 const LOCK_DISTANCE_PX = 70;
 /** Shorter than this is a mis-tap, not a message. */
 const MIN_SENT_SECONDS = 0.6;
+/** Grace for a final `dataavailable` after the recorder reports it stopped. */
+const CHUNK_GRACE_MS = 100;
+/** Ceiling for the whole wait — a silent recorder must never hang the UI. */
+const CHUNK_HARD_MS = 600;
+
+/**
+ * How often the recorder hands its buffered audio over.
+ *
+ * A timeslice is not about streaming (the live waveform comes from the
+ * analyser): it is what survives a page that is frozen mid-recording. iOS
+ * suspends the tab the moment it is hidden and the recorder's in-memory buffer
+ * goes with it — with no slices there is nothing left to keep and the note is
+ * lost. Every 250ms means losing at most the last quarter second instead.
+ */
+const RECORD_TIMESLICE_MS = 250;
+
+/**
+ * Resolve when the recorder's chunks have stopped arriving.
+ *
+ * Order-independent on purpose: iOS and WebKit stop the recorder BY THEMSELVES
+ * when the page is hidden, so by the time the visibility handler runs the
+ * recorder may already be `inactive` and its `stop` event long gone — waiting
+ * for that event would hang forever and the recording would simply vanish.
+ */
+function settleChunks(recorder: MediaRecorder): Promise<void> {
+  const wasActive = recorder.state !== "inactive";
+  return new Promise((resolve) => {
+    let done = false;
+    let ceiling: ReturnType<typeof setTimeout> | null = null;
+    const finishSettle = () => {
+      if (done) return;
+      done = true;
+      if (ceiling !== null) clearTimeout(ceiling);
+      try {
+        recorder.removeEventListener("stop", onStop);
+      } catch {
+        /* not a full EventTarget — the promise must still resolve */
+      }
+      resolve();
+    };
+    // Hoisted: the finalizer above detaches it (mutual reference).
+    function onStop() {
+      setTimeout(finishSettle, CHUNK_GRACE_MS);
+    }
+    if (wasActive) {
+      recorder.addEventListener("stop", onStop);
+      ceiling = setTimeout(finishSettle, CHUNK_HARD_MS);
+    } else {
+      // Already stopped (or never started): give a trailing chunk its grace.
+      setTimeout(finishSettle, CHUNK_GRACE_MS);
+    }
+  });
+}
 const TICK_MS = 100;
 const BAR_INTERVAL_MS = 70;
 
@@ -166,15 +219,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
       finishingRef.current = true;
 
       const duration = (performance.now() - startedAtRef.current) / 1000;
-      const stopped = new Promise<void>((resolve) => {
-        recorder.addEventListener("stop", () => {
-          // WebKit has shipped versions that fire the FINAL `dataavailable`
-          // after `stop`. Reading the chunks right on `stop` kept only the
-          // first timeslice — the note played ~0.5s and then went silent.
-          // One macrotask is enough for that late chunk to land.
-          setTimeout(resolve, 40);
-        }, { once: true });
-      });
+      const stopped = settleChunks(recorder);
       try {
         if (recorder.state !== "inactive") recorder.stop();
       } catch {
@@ -188,7 +233,13 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
       const liveBars = [...liveBarsRef.current];
       teardown();
 
-      if (!send || duration < MIN_SENT_SECONDS || chunks.length === 0) {
+      if (chunks.length === 0) {
+        finishingRef.current = false;
+        if (send && duration >= MIN_SENT_SECONDS) toast.error("Запись не сохранилась — микрофон отключился");
+        reset();
+        return;
+      }
+      if (!send || duration < MIN_SENT_SECONDS) {
         finishingRef.current = false;
         reset();
         return;
@@ -248,10 +299,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     finishingRef.current = true;
 
     const duration = (performance.now() - startedAtRef.current) / 1000;
-    // Same grace as the send path: WebKit fires the final chunk after `stop`.
-    const settled = new Promise<void>((resolve) => {
-      recorder.addEventListener("stop", () => setTimeout(resolve, 40), { once: true });
-    });
+    const settled = settleChunks(recorder);
 
     try {
       if (recorder.state !== "inactive") {
@@ -274,7 +322,14 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
 
     const type = mime.split(";")[0] || "audio/webm";
     const blob = new Blob(chunksRef.current, { type });
-    if (duration < MIN_SENT_SECONDS || blob.size === 0) {
+    if (blob.size === 0) {
+      // The browser killed the recorder before it handed anything over. Say so
+      // instead of making the recording disappear without a word.
+      if (duration >= MIN_SENT_SECONDS) toast.error("Запись не сохранилась — микрофон отключился");
+      reset();
+      return;
+    }
+    if (duration < MIN_SENT_SECONDS) {
       reset();
       return;
     }
@@ -440,11 +495,11 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
       toast.error("Запись прервалась");
       void finish(false);
     };
-    // No timeslice: the recorder buffers the note and hands it over whole at
-    // stop. The live waveform comes from the analyser, so streaming chunks buy
-    // nothing — and a partial chunk stream is exactly how a voice note ends up
-    // truncated on WebKit.
-    recorder.start();
+    // Periodic slices: see RECORD_TIMESLICE_MS — they are the difference
+    // between "the last quarter second is missing" and "the note is gone" when
+    // the OS freezes the page. The assembly waits for the tail, so slicing
+    // never costs the end of the note.
+    recorder.start(RECORD_TIMESLICE_MS);
     recorderRef.current = recorder;
 
     // Live levels. Failure to build the analyser must not break recording.
