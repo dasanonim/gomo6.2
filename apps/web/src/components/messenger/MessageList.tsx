@@ -15,6 +15,7 @@ import {
 import { ChevronDown } from "lucide-react";
 import { queueMarkRead, useMessengerStore } from "@/stores/messengerStore";
 import { hasScrollAnchoring } from "@/lib/scrollAnchoring";
+import { hapticTick } from "@/lib/haptics";
 import type { MessageView, ReceiptRow } from "./types";
 import { getDateSeparator, isConsecutive } from "./messageListUtils";
 import { indexById, messageKey, sentAtMs } from "./core/messageModel";
@@ -1492,6 +1493,8 @@ export const MessageList = memo(
     const jumpToLatest = useCallback(() => {
       const list = messagesRef.current;
       if (list.length === 0) return;
+      // A deliberate jump deserves the same confirmation as a tap on a button.
+      hapticTick(10);
       followingRef.current = true;
       setFollowing(true);
       setUnread(0);

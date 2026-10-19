@@ -6,6 +6,16 @@ import { MessageComposer } from "./MessageComposer";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
+const { mockHaptics } = vi.hoisted(() => ({
+  mockHaptics: { tick: vi.fn(), success: vi.fn() },
+}));
+
+vi.mock("@/lib/haptics", () => ({
+  hapticTick: mockHaptics.tick,
+  hapticSuccess: mockHaptics.success,
+}));
+
+
 const editorSpies = vi.hoisted(() => ({
   insertEmojiOpts: [] as any[],
   focusCalls: [] as boolean[],
@@ -496,6 +506,15 @@ describe("MessageComposer", () => {
     const { sendButton, onSend } = setup({ draft: "Hello" });
     await userEvent.click(sendButton);
     await waitFor(() => expect(onSend).toHaveBeenCalled());
+  });
+
+  it("confirms a send with the tactile cue", async () => {
+    mockHaptics.success.mockClear();
+    const { sendButton } = setup({ draft: "Hello" });
+
+    await userEvent.click(sendButton);
+
+    expect(mockHaptics.success).toHaveBeenCalledTimes(1);
   });
 
   it("calls onSend when Enter is pressed (desktop)", async () => {

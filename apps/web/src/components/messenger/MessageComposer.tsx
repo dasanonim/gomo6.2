@@ -7,6 +7,7 @@ import { EmojiPicker } from "@/components/EmojiPicker";
 import { useEmojiKeyboardSwap } from "@/hooks/useEmojiKeyboardSwap";
 import { useMobileKeyboard } from "@/hooks/useMobileKeyboard";
 import { getMobileKeyboardState, isEditableElement } from "@/lib/mobileKeyboard";
+import { hapticSuccess, hapticTick } from "@/lib/haptics";
 import { EMPTY_EDITOR_STATE } from "@/utils/contentConverter";
 import {
   prosemirrorToMessengerText,
@@ -380,6 +381,9 @@ export const MessageComposer = memo(function MessageComposer({
       // as long as the request took. clear() emits onChange, so the parent
       // draft lands on "" immediately too.
       editorRef.current?.clear();
+      // The send is the one action a reader wants confirmed by touch; Telegram
+      // ticks here too. Android gets the OS haptic, iOS a very quiet click.
+      hapticSuccess();
       onSend();
     }
   }, [isEditing, draft, editingContent, editingMessageId, onSaveEdit, onCancelEdit, isSending, uploadingFiles, hasContent, pendingAttachments, stopTyping, onSend]);
@@ -522,6 +526,7 @@ export const MessageComposer = memo(function MessageComposer({
       return;
     }
     setActiveSheet("emoji");
+    hapticTick(6);
     if (!swap.open) swap.toggle();
   }, [activeSheet, swap, anchorSheetLift]);
 
@@ -541,6 +546,7 @@ export const MessageComposer = memo(function MessageComposer({
       return;
     }
     setActiveSheet("attach");
+    hapticTick(6);
     if (!swap.open) swap.toggle();
   }, [activeSheet, swap, anchorSheetLift]);
 
