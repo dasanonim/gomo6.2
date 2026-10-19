@@ -7,6 +7,7 @@ import {
   writeMessageScrollAnchor,
 } from "./core/messageScrollAnchors";
 import { INITIAL_WINDOW, MAX_DOM_MESSAGES, RESET_WINDOW, WINDOW_STEP } from "./core/slicing";
+import { getDateSeparator } from "./messageListUtils";
 import { __resetFasterdomForTests } from "./core/fasterdom";
 import { __setScrollDiagnosticsEnabled, readScrollDiagnostics } from "./core/scrollDiagnostics";
 import type { MessageView } from "./types";
@@ -748,6 +749,78 @@ describe("MessageList — jump", () => {
     await flushCommit();
 
     expect(h.loadMoreMessages).toHaveBeenCalled();
+  });
+});
+
+describe("MessageList — floating date", () => {
+  /** Two days, enough rows to scroll between them. */
+  const twoDays = () => [
+    ...longList(12, "d1").map((message) => ({ ...message, sent_at: "2026-08-08T10:00:00.000Z" })),
+    ...longList(12, "d2").map((message) => ({ ...message, sent_at: "2026-08-09T10:00:00.000Z" })),
+  ];
+
+  const pill = (container: HTMLElement) => container.querySelector<HTMLElement>(".chat-sticky-date");
+
+  it("floats the current date only while its own separator is out of view", async () => {
+    setStore({ messages: twoDays() });
+
+    const { container } = await mountList();
+    const sticky = pill(container);
+    expect(sticky).not.toBeNull();
+
+    // At the top the first group's own separator is on screen: no floating date.
+    await scrollTo(container, 0);
+    expect(sticky?.classList.contains("is-visible")).toBe(false);
+
+    // Inside the second day: the separator that carries it is above the fold.
+    const row = container.querySelector<HTMLElement>('.message-item[data-message-id="d23"]')!;
+    await scrollTo(container, row.offsetTop);
+    expect(sticky?.classList.contains("is-visible")).toBe(true);
+    expect(sticky?.textContent).toBe(getDateSeparator(null, makeMessage("x", { sent_at: "2026-08-09T10:00:00.000Z" })));
+
+    // Back to the very top: the first group's separator is visible again.
+    await scrollTo(container, 0);
+    expect(sticky?.classList.contains("is-visible")).toBe(false);
+  });
+
+  it("stays hidden at the top of a chat whose first separator is on screen", async () => {
+    setStore({ messages: longList(5) });
+
+    const { container } = await mountList();
+    await scrollTo(container, 0);
+
+    expect(pill(container)?.classList.contains("is-visible")).toBe(false);
+  });
+});
+
+describe("MessageList — appearance", () => {
+  it("marks exactly the messages that just arrived", async () => {
+    setStore({ messages: longList(20) });
+    const { container } = await mountList();
+
+    setStore({ messages: [...longList(20), makeMessage("new1", { sent_at: "2026-08-08T13:00:00.000Z" })] });
+    await flushFrame();
+
+    const appeared = container.querySelector<HTMLElement>('.message-item[data-message-id="new1"]');
+    expect(appeared?.getAttribute("data-just-added")).toBe("true");
+    // Only that one row: the rest of the list is not "new".
+    expect(container.querySelectorAll('[data-just-added="true"]')).toHaveLength(1);
+
+    // The marker is cleared on the next pass, so it belongs to that arrival only.
+    await flushFrame();
+    expect(container.querySelector('[data-just-added="true"]')).toBeNull();
+  });
+
+  it("does not animate rows mounted by a window slide", async () => {
+    setStore({ messages: longList(600) });
+    const { container } = await mountList();
+    await scrollTo(container, 0);
+    await settle();
+
+    triggerSentinel(".scroll-sentinel-top");
+    await flushCommit();
+
+    expect(container.querySelectorAll('[data-just-added="true"]')).toHaveLength(0);
   });
 });
 

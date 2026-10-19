@@ -865,6 +865,33 @@ main.is-messenger-page {
   animation: message-flash 1.4s ease-out;
 }
 
+/* A message that just arrived, marked by the list's writer for exactly the rows
+   appended since the previous commit (rows mounted by a window slide are not new
+   messages and must not animate). One keyframe animation rather than Telegram's
+   `:not(.open)` → `.open` class flip, so nothing has to run a frame later.
+   Opacity/transform only: it cannot move the list. */
+.message-row[data-just-added="true"] .message-bubble {
+  animation: message-appear 0.22s ease-out;
+}
+
+@keyframes message-appear {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-row[data-just-added="true"] .message-bubble {
+    animation: none;
+  }
+}
+
 @keyframes message-flash {
   0%, 30% { box-shadow: 0 0 0 2px oklch(var(--primary) / 0.55); }
   100% { box-shadow: 0 0 0 2px oklch(var(--primary) / 0); }
@@ -919,6 +946,49 @@ main.is-messenger-page {
   text-transform: lowercase;
   color: oklch(var(--primary-foreground));
   background: oklch(var(--primary) / 0.85);
+}
+
+/* ── Floating date (Telegram's sticky date) ──
+   The date of the group the reader is inside, over the top of the list while that
+   group's own separator has scrolled past. Filled straight from the scroll pass
+   (a direct DOM write) and never part of the list's flow — absolute, outside the
+   scroller, so it cannot take part in the scroll math. */
+.chat-sticky-date {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  z-index: 4;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 2px 10px;
+  border-radius: 999px;
+
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+  text-transform: lowercase;
+  color: white;
+
+  background: var(--action-message-bg);
+
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  user-select: none;
+}
+
+.chat-sticky-date.is-visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-sticky-date {
+    transition: none;
+  }
 }
 
 /* ── Date separator ── */
