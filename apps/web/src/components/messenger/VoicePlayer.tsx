@@ -1,8 +1,8 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import type { Attachment } from "./types";
 import { useAuthenticatedAttachmentUrl } from "./attachmentMedia";
-import { formatVoiceTime, parseVoiceMeta } from "./voice";
+import { barCountForWidth, formatVoiceTime, normalizeWaveform, parseVoiceMeta } from "./voice";
 import { hapticTick } from "@/lib/haptics";
 
 // ─── Voice message player ───────────────────────────────────────────────────
@@ -45,7 +45,13 @@ interface Props {
 export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = false, from, src }: Props) {
   const meta = parseVoiceMeta(attachment);
   const duration = meta?.duration ?? 0;
-  const bars = meta?.waveform ?? [];
+  // The bar count follows the available width, so the waveform reads as a
+  // waveform in a 240px bubble and in a full-width composer row alike.
+  const [barCount, setBarCount] = useState<number>(() => (meta?.waveform?.length ?? 0) || 40);
+  const bars = useMemo(
+    () => normalizeWaveform(meta?.waveform, barCount),
+    [meta?.waveform, barCount],
+  );
 
   // The blob is authenticated (fetched with the session cookie) and cached by
   // the shared attachment cache, so remounting a scrolled-away bubble is free.
@@ -62,6 +68,8 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const waveRef = useRef<HTMLDivElement | null>(null);
+  const barsCountRef = useRef(0);
+  barsCountRef.current = barCount;
   const rafRef = useRef<number | null>(null);
   const draggingRef = useRef(false);
 
@@ -234,6 +242,21 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
   useEffect(() => {
     paint();
   }, [paint]);
+
+  // Resample to the wave's real width (a fixed count turns into sticks in a
+  // wide composer row). One observer, one state update per resize.
+  useEffect(() => {
+    const wave = waveRef.current;
+    if (!wave || typeof ResizeObserver === "undefined") return;
+    const update = () => {
+      const next = barCountForWidth(wave.getBoundingClientRect().width);
+      if (next !== barsCountRef.current) setBarCount(next);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(wave);
+    return () => observer.disconnect();
+  }, []);
 
   // One automatic retry, once: a transient 403/network error must not leave a
   // voice note permanently unplayable.

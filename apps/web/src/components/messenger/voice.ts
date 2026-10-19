@@ -52,6 +52,19 @@ export function normalizeWaveform(values: number[] | undefined, bars = VOICE_BAR
 }
 
 /** The voice metadata of an attachment, or null when it is not a voice note. */
+/**
+ * How many bars fit a given pixel width.
+ *
+ * A fixed 40 bars looks right in a 240px bubble and like scattered sticks in a
+ * wide composer row, so the count follows the width: ~3px per bar plus a 2px
+ * gap, within sane bounds. The waveform is resampled to it (see `normalizeWaveform`).
+ */
+export function barCountForWidth(width: number): number {
+  if (!Number.isFinite(width) || width <= 0) return VOICE_BARS;
+  const perBar = 3 + 2;
+  return Math.min(160, Math.max(16, Math.round(width / perBar)));
+}
+
 export function parseVoiceMeta(attachment: Attachment | undefined | null): VoiceMeta | null {
   if (!attachment || attachment.type !== "audio" || !attachment.meta) return null;
   try {

@@ -2374,7 +2374,22 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   display: flex;
   align-items: center;
   flex: 1 1 auto;
+  /* A voice note reads as one at a comfortable width; a full 850px row would
+     stretch the waveform into a ribbon. The send button hugs the right. */
+  max-width: 520px;
   min-width: 0;
+}
+
+.voice-record.is-ready .composer-mic.is-action {
+  margin-left: auto;
+}
+
+.voice-record.is-ready {
+  border-color: oklch(var(--primary) / 0.35);
+}
+
+.voice-record.is-ready .voice-bar {
+  background: oklch(var(--primary) / 0.45);
 }
 
 /* Inside the draft bar the player is a preview: no message meta to reserve. */

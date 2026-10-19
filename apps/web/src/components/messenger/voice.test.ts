@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   VOICE_BARS,
+  barCountForWidth,
   extensionForMime,
   formatVoiceTime,
   isVoiceAttachment,
@@ -35,6 +36,20 @@ describe("formatVoiceTime", () => {
   it("survives garbage", () => {
     expect(formatVoiceTime(Number.NaN)).toBe("0:00");
     expect(formatVoiceTime(-4)).toBe("0:00");
+  });
+});
+
+describe("barCountForWidth", () => {
+  it("sizes the bar count to the width so a waveform always reads as one", () => {
+    // 240px bubble: about 3px per bar with a 2px gap.
+    expect(barCountForWidth(240)).toBe(48);
+    // A full-width composer row would stretch 40 bars into sticks; the count
+    // grows (and stays sane at absurd widths).
+    expect(barCountForWidth(700)).toBe(140);
+    expect(barCountForWidth(5000)).toBe(160);
+    expect(barCountForWidth(10)).toBe(16);
+    // Unknown width: the message's own stored count.
+    expect(barCountForWidth(0)).toBe(VOICE_BARS);
   });
 });
 
