@@ -47,7 +47,7 @@ import {
   type ScrollDirection,
   type ScrollPosition,
 } from "./core/animateScroll";
-import { requestForcedReflow, requestMeasure } from "./core/fasterdom";
+import { requestForcedReflow, requestMeasure, requestMutation } from "./core/fasterdom";
 import {
   isScrollDiagnosticsEnabled,
   noteCommitDuration,
@@ -116,6 +116,14 @@ const FOCUS_MARGIN = 20;
  * (which is exactly a jump-to-bottom or a jump-to-message here).
  */
 const BOTTOM_FOCUS_DISTANCE = 500;
+/**
+ * Telegram's `body.is-scrolling-messages`: set while the reader is scrolling and
+ * removed a beat after they stop. The floating date is gated on it in CSS, so at
+ * rest the date steps aside instead of hanging over the list (their rule, their
+ * delay — 1s of `runDebounced`).
+ */
+const SCROLLING_CLASS = "is-scrolling-messages";
+const SCROLLING_FLAG_MS = 900;
 /** Distance the unread divider keeps from the top when a chat opens on it. */
 const UNREAD_DIVIDER_TOP = 12;
 /** Redisplays a jumped-to message for this long. */
@@ -236,6 +244,37 @@ function findRowById(rows: HTMLElement[], id: string): HTMLElement | null {
     if (row.dataset.messageId === id) return row;
   }
   return null;
+}
+
+/** The message behind a row, or undefined when it is no longer loaded. */
+function messageAt(
+  row: HTMLElement,
+  index: ReadonlyMap<string, number>,
+  messages: readonly MessageView[],
+): MessageView | undefined {
+  const key = row.dataset.messageKey;
+  if (key === undefined) return undefined;
+  const at = index.get(key);
+  return at === undefined ? undefined : messages[at];
+}
+
+/** The first row that intersects the viewport (its bottom is below the fold). */
+function findTopVisibleRowIndex(rows: HTMLElement[], scrollTop: number): number {
+  let low = 0;
+  let high = rows.length - 1;
+  let candidate = -1;
+
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (rows[mid].offsetTop + rows[mid].offsetHeight > scrollTop) {
+      candidate = mid;
+      high = mid - 1;
+    } else {
+      low = mid + 1;
+    }
+  }
+
+  return candidate;
 }
 
 /**
@@ -376,6 +415,8 @@ export const MessageList = memo(
     const topSentinelRef = useRef<HTMLDivElement | null>(null);
     const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
     const bottomTriggerRef = useRef<HTMLDivElement | null>(null);
+    /** The floating date (Telegram's sticky date): written straight to the DOM. */
+    const stickyDateRef = useRef<HTMLDivElement | null>(null);
 
     // ── Window state ───────────────────────────────────────────────────
     // Seeded once per mount (the list is keyed by conversation in ChatView):
@@ -493,6 +534,8 @@ export const MessageList = memo(
     const pendingTopMountRef = useRef(false);
     const pinnedTailRef = useRef<string | null>(null);
     const lastReadKeyRef = useRef<string | null>(null);
+    const lastStickyDateRef = useRef<string | null>(null);
+    const scrollingFlagTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastRequestAtRef = useRef(0);
     const olderBusyRef = useRef(false);
     /** A pointer is on the list: nothing may move content under it (WebKit). */
@@ -830,6 +873,69 @@ export const MessageList = memo(
       }
     }, []);
 
+    /**
+     * The reader is scrolling: publishes Telegram's `is-scrolling-messages` on
+     * `<body>` and takes it back a beat after the last scroll event.
+     */
+    const markScrolling = useCallback(() => {
+      document.body.classList.add(SCROLLING_CLASS);
+      if (scrollingFlagTimerRef.current !== null) clearTimeout(scrollingFlagTimerRef.current);
+      scrollingFlagTimerRef.current = setTimeout(() => {
+        scrollingFlagTimerRef.current = null;
+        document.body.classList.remove(SCROLLING_CLASS);
+      }, SCROLLING_FLAG_MS);
+    }, []);
+
+    /**
+     * The floating date. Telegram keeps a date pinned to the top while the
+     * separator it belongs to has scrolled out of view (`useStickyDates`); this is
+     * the same idea, computed from the mounted rows instead of a `sticky` element
+     * (our separators live *inside* a row, so they cannot stick).
+     *
+     * Shown only when the topmost visible message is not the first of its date
+     * group — i.e. exactly when the group's own separator is above the fold, so
+     * the reader never sees the same date twice.
+     */
+    const updateStickyDate = useCallback(() => {
+      const pill = stickyDateRef.current;
+      const scroller = scrollerRef.current;
+      if (!pill || !scroller) return;
+
+      const rows = rowsRef.current;
+      const messages = messagesRef.current;
+      const index = indexByKeyRef.current;
+      const scrollTop = readContainerScrollTop(scroller);
+      const at = findTopVisibleRowIndex(rows, scrollTop);
+
+      let label: string | null = null;
+      let isInsideGroup = false;
+
+      if (at >= 0) {
+        const message = messageAt(rows[at], index, messages);
+        if (message) {
+          label = getDateSeparator(null, message);
+          // Walk back over the rows of the same day: if there are any, this date
+          // group's own separator is already above the viewport.
+          for (let back = at - 1; back >= 0; back -= 1) {
+            const previous = messageAt(rows[back], index, messages);
+            if (!previous) break;
+            if (getDateSeparator(previous, message) !== null) break;
+            isInsideGroup = true;
+            break;
+          }
+        }
+      }
+
+      const shouldShow = Boolean(label) && isInsideGroup;
+      if (label && label !== lastStickyDateRef.current) {
+        lastStickyDateRef.current = label;
+        pill.textContent = label;
+      }
+      if (shouldShow !== pill.classList.contains("is-visible")) {
+        pill.classList.toggle("is-visible", shouldShow);
+      }
+    }, []);
+
     // ── Scroll pass ────────────────────────────────────────────────────
     const handleScroll = useCallback(() => {
       if (justWrotePositionRef.current) {
@@ -852,9 +958,11 @@ export const MessageList = memo(
         bestPositionRef.current = readContainerScrollTop(scroller);
         updateFollowing();
         syncBottomSnap();
+        markScrolling();
+        updateStickyDate();
         prefetchOlder();
       });
-    }, [armRest, updateFollowing, syncBottomSnap, prefetchOlder]);
+    }, [armRest, updateFollowing, syncBottomSnap, markScrolling, updateStickyDate, prefetchOlder]);
 
     // ── Pointer/touch gate ─────────────────────────────────────────────
     // A release can happen outside the list (a flick that ends off-screen), so
@@ -1079,6 +1187,27 @@ export const MessageList = memo(
             pinnedTailRef.current = tailKey;
             glideTarget = bottomTriggerRef.current ?? (rows.length > 0 ? rows[rows.length - 1] : null);
           }
+          // …and mark what actually arrived, so CSS can bring it in. Only the
+          // rows appended since the previous commit: rows mounted by a window
+          // slide are not new messages and must not animate (Telegram's
+          // `is-just-added` vs a plain mount).
+          if (previous?.tailKey) {
+            const from = indexByKeyRef.current.get(previous.tailKey);
+            if (from !== undefined) {
+              for (let at = from + 1; at < messages.length; at += 1) {
+                const row = findRowByKey(rows, messageKey(messages[at]));
+                row?.setAttribute("data-just-added", "true");
+              }
+              // Cleared on the next mutation pass: the attribute belongs to this
+              // arrival only, and a row must be able to animate again if it is
+              // ever re-mounted.
+              requestMutation(() => {
+                scroller
+                  .querySelectorAll('[data-just-added="true"]')
+                  .forEach((node) => node.removeAttribute("data-just-added"));
+              });
+            }
+          }
         } else if (pendingBottomGlide) {
           // Telegram Web's scroll-to-bottom button: cover everything the reader
           // cannot see at once, then glide the last stretch down.
@@ -1147,6 +1276,9 @@ export const MessageList = memo(
           // After the write: "is the reader at the bottom" is a property of the
           // new position, and snapping is armed from it.
           syncBottomSnap();
+          // The date is part of the chrome too: a commit can move the reader
+          // (a jump, a send) without a scroll event to recompute it.
+          updateStickyDate();
           bestPositionRef.current = readContainerScrollTop(scroller);
           prevCommitRef.current = {
             ...nextCommit,
@@ -1181,6 +1313,7 @@ export const MessageList = memo(
       initial.restore,
       flashMessage,
       syncBottomSnap,
+      updateStickyDate,
       armRest,
     ]);
 
@@ -1309,6 +1442,8 @@ export const MessageList = memo(
         if (restTimerRef.current !== null) clearTimeout(restTimerRef.current);
         if (flashTimerRef.current !== null) clearTimeout(flashTimerRef.current);
         if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+        if (scrollingFlagTimerRef.current !== null) clearTimeout(scrollingFlagTimerRef.current);
+        document.body.classList.remove(SCROLLING_CLASS);
       };
     }, []);
 
@@ -1403,6 +1538,12 @@ export const MessageList = memo(
         onTouchStart={markPointerDown}
         onMouseDown={markPointerDown}
       >
+        {/* The date of the group the reader is inside, floating over the top of
+            the list while the separator that carries it has scrolled past. Filled
+            from the scroll pass with a direct DOM write: no React work per frame,
+            and no part in the scroll math (absolute, outside the scroller). */}
+        <div ref={stickyDateRef} className="chat-sticky-date" aria-hidden="true" />
+
         {/* Loader floats over the list — it must not take part in the scroll
             math, and it is explicitly excluded from scroll anchoring. */}
         {isLoadingMore && hasMoreMessages && (
