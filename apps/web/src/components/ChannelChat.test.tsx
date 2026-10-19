@@ -69,6 +69,7 @@ const ROW = 60;
 const VIEWPORT = 600;
 let scrollTopValue = 0;
 const savedLayout: Array<[string, PropertyDescriptor | undefined]> = [];
+let savedRect: PropertyDescriptor | undefined;
 
 // ── IntersectionObserver stand-in ──────────────────────────────────────────
 // jsdom never intersects anything, so the window sentinels are driven
@@ -162,6 +163,30 @@ function installLayout() {
       return top;
     },
   });
+  // Viewport coordinates: a row's rect is its document offset minus the scroll
+  // position. The writer's anchor invariant lives in this space (it is what a
+  // reader actually sees), and without it every rect is 0 in jsdom.
+  savedRect = Object.getOwnPropertyDescriptor(proto, "getBoundingClientRect");
+  Object.defineProperty(proto, "getBoundingClientRect", {
+    configurable: true,
+    value(this: HTMLElement) {
+      if (!this.classList.contains("channel-message-row")) {
+        return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON() {} };
+      }
+      const top = this.offsetTop - scrollTopValue;
+      return {
+        top,
+        bottom: top + ROW,
+        left: 0,
+        right: 0,
+        width: 0,
+        height: ROW,
+        x: 0,
+        y: top,
+        toJSON() {},
+      };
+    },
+  });
 }
 
 function restoreLayout() {
@@ -169,6 +194,9 @@ function restoreLayout() {
     if (descriptor) Object.defineProperty(HTMLElement.prototype, key, descriptor);
     else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key];
   }
+  if (savedRect) Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", savedRect);
+  else delete (HTMLElement.prototype as unknown as Record<string, unknown>).getBoundingClientRect;
+  savedRect = undefined;
 }
 
 beforeEach(() => {
@@ -322,6 +350,44 @@ it("loads an older history page on scroll-to-top", async () => {
   );
   // The prepended page lands at the top of the virtual list.
   await waitFor(() => expect(screen.getByText("old--49")).toBeInTheDocument());
+});
+
+it("keeps the reader's message still when a page is mounted above", async () => {
+  const mk = (id: number, content: string) => ({
+    id,
+    channel_id: CH,
+    user_id: "u9",
+    username: "bob",
+    avatar_url: null,
+    content,
+    created_at: "2026-08-20T10:00:00Z",
+  });
+  const firstPage = Array.from({ length: 50 }, (_, i) => mk(i + 1, `msg-${i + 1}`));
+  const olderPage = Array.from({ length: 50 }, (_, i) => mk(i - 49, `old-${i - 49}`));
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(jsonResponse(firstPage))
+    .mockResolvedValueOnce(jsonResponse(olderPage));
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<ChannelChat channelId={CH} currentUserId={ME} />);
+  await waitFor(() => expect(screen.getByText("msg-4")).toBeInTheDocument());
+
+  // The reader is near the top of the history (the loader zone) with msg-4 in
+  // view — that row is the anchor the prepend must not move.
+  act(() => {
+    document.documentElement.scrollTop = 200;
+    window.dispatchEvent(new Event("scroll"));
+  });
+  const row = () => screen.getByText("msg-4").closest(".channel-message-row") as HTMLElement;
+  const before = row().getBoundingClientRect().top;
+
+  await waitFor(() => expect(screen.getByText("old--49")).toBeInTheDocument());
+
+  // The page landed above the viewport: the reader's row did not move, and the
+  // scroll position grew by exactly the height that was inserted above it.
+  expect(row().getBoundingClientRect().top).toBeCloseTo(before, 0);
+  expect(document.documentElement.scrollTop).toBeGreaterThan(200);
 });
 
 it("mounts only the windowed slice for a long history", async () => {

@@ -430,7 +430,8 @@ side, and the same step never both mounts and trims more than the overflow.
   jump target; the read line (own/deleted skipped, fold-aware, deduped); the
   chrome writer (stays glued when the viewport shrinks, keeps the reader's place
   when the top edge moves).
-  GomoSub's `ChannelChat.test.tsx` still covers its own window.
+  GomoSub's `ChannelChat.test.tsx` covers the document-scrolled variant of the
+  same engine (its window, its anchor, its device table).
 * Dev counters — `core/scrollDiagnostics.test.ts` (gesture accounting) and a
   `MessageList` case that scrolls a real list with the overlay on and asserts the
   per-gesture write count is 0.
@@ -489,6 +490,30 @@ one independently reversible:
   `import.meta.env.DEV`, i.e. on for every developer; now
   `localStorage.setItem("kb-diag", "1")` + reload.
 
+## 9.1 GomoSub channels: the same engine, a document scroller
+
+`ChannelChat.tsx` (GomoSub text channels) runs the same model — one writer per
+commit, the anchor invariant, the verified rest, the anchoring gate, a glide for
+"to the newest" — with three deliberate differences that come from its layout:
+
+* **The scroller is the window** (`document.scrollingElement`), not an inner
+  overflow container. The composer is the page's last flow element, so focusing
+  it makes iOS pan the whole page, which is the only keyboard behaviour Safari
+  does natively. The engine's primitives take an element, and the root element is
+  one: `scrollTop`/`scrollHeight`/`clientHeight` read the document, and the
+  anchor switches to **content coordinates** (`rect.top + scrollTop`) because the
+  root's own `getBoundingClientRect().top` is `-scrollY`.
+* **`content-visibility` stays on channel rows** (a channel keeps a much larger
+  window), gated on the behavioural flag — the trade-off from §5 was measured on
+  the messenger's per-row layout, where it is not worth it.
+* **No bottom snap.** There is no composer overlay above the rows, so a send
+  cannot grow a container under a held thumb; the document's own scroll is
+  enough.
+
+The channel also keeps its own window ceiling and paging, and its fetch inserts
+immediately where the engine anchors scroll (the page arrives mid-coast without
+moving the reader) and waits for the rest where it does not.
+
 ## 10. Known gaps
 
 Deliberately not in this pass (each is independent and additive). Ranked by
@@ -497,19 +522,16 @@ value against the reference client's feature set:
 1. **Sticky date pills.** Telegram keeps a floating date at the top of the list
    while scrolling (`useStickyDates`, `position: sticky` + `body.is-scrolling-
    messages`). gomo6's date separator is a centred rule inside the row, so this
-   needs a visual decision, not just plumbing.
-2. **GomoSub `ChannelChat` on the same engine.** It still runs its own copy of the
-   old settle machinery (document-scrolled, window ≤ ceiling). The engine is now
-   small and self-contained; extracting it into a hook and deleting the second
-   copy is the natural next step.
-3. **Store-level viewport.** The store keeps every loaded message; the list bounds
+   needs a visual decision, not just plumbing. (The messenger has the floating
+   pill; GomoSub channels still render the centred rule only.)
+2. **Store-level viewport.** The store keeps every loaded message; the list bounds
    the DOM instead. Telegram bounds the *store* (`MESSAGE_LIST_VIEWPORT_LIMIT`)
    and re-fetches a slice around the reader. gomo6's pagination is
    backward-only, so this needs a forward fetch (`since_event_id`) to be complete.
-4. **Mobile keyboard.** `syncChrome` compensates a scroller that shrinks while the
+3. **Mobile keyboard.** `syncChrome` compensates a scroller that shrinks while the
    reader is glued, but the full mobile behaviour (`lib/mobileKeyboard.ts`, visual
    viewport, `kb-open` class) has not been checked against the new list on a
    device.
-5. **`scrollToMessage` for a very distant target** currently mounts the window
+4. **`scrollToMessage` for a very distant target** currently mounts the window
    around the target and glides; a dedicated "jump over N pages" animation would
    read better on slow networks.
