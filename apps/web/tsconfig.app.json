@@ -15,6 +15,13 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Incremental type-check: the .tsbuildinfo lets `tsc --noEmit` re-check only
+       the files affected by a diff instead of the whole program (CI restores it
+       from the actions/cache, ~25s → ~5s). Lives under node_modules/ so it is
+       already gitignored. */
+    "incremental": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.app.tsbuildinfo",
+
     /* Linting */
     "strict": false,
     "noUnusedLocals": false,

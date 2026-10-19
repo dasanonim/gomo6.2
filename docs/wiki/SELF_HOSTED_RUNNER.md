@@ -10,10 +10,11 @@ BuildKit-кэш (`$HOME/gomo6-buildx-cache/<service>`) и cache-mounts из Dock
 | Что | Где | Почему |
 |---|---|---|
 | Проверки CI (`ci.yml`) | GitHub-hosted `ubuntu-latest` | бесплатно, параллельно и не занимает Mac |
-| Сборка и выкат (`deploy.yml` → `ship`) | self-hosted Mac | тёплый кэш |
+| Сборка образов (`deploy.yml` → `build`) | self-hosted Mac | тёплый кэш |
+| Выкат (`deploy.yml` → `deploy`) | GitHub-hosted `ubuntu-latest` | только SSH, слоты Mac'а не занимает |
 | Полные тесты, сканеры безопасности | GitHub-hosted | по расписанию |
 
-**Mac никогда не задействован в PR-прогонах.** PR-проверки идут на GitHub-hosted, а `ship` срабатывает только на
+**Mac никогда не задействован в PR-прогонах.** PR-проверки идут на GitHub-hosted, а `build` срабатывает только на
 push в `main` или ручной запуск. Благодаря этому код из форка не может попасть на вашу машину. Не добавляйте
 self-hosted раннер в job, который триггерится на `pull_request` — это откроет ровно ту дыру, которой здесь нет.
 

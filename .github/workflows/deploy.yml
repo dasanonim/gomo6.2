@@ -3,11 +3,18 @@
 # =============================================================================
 # Поток:
 #   push в main (или ручной запуск)
-#     → job `ci`   — те же проверки, что на PR (переиспользует ci.yml) — ГЕЙТ
-#     → job `plan` — что реально изменилось (git diff по github.event.before)
-#     → job `ship` — matrix по 4 сервисам: buildx build --push → pull+restart
-#                    на VPS. Каждый сервис выкатывается сразу, как только
-#                    собрался, а не ждёт самый медленный.
+#     → job `ci`     — те же проверки, что на PR (переиспользует ci.yml) — ГЕЙТ
+#     → job `plan`   — что реально изменилось (git diff по github.event.before)
+#     → job `build`  — matrix по сервисам: buildx build --push в ghcr.io
+#     → job `deploy` — matrix по сервисам: pull + restart на VPS
+#
+# Гейт идёт ПАРАЛЛЕЛЬНО сборке: `build` не зависит от `ci`, а `deploy` ждёт и
+# гейт, и свою сборку. На VPS попадает только то, что прошло CI. Раньше `ci`
+# шёл первым и его время целиком вычиталось из выката (замер на реальном
+# прогоне: гейт ~105s при сборке ~80s — это треть типичного выката в 3m22s).
+# Плата: образ коммита, упавшего на гейте, уже лежит в ghcr (но не на VPS и
+# не перетегивается в :latest по факту выката — :latest двигает только build,
+# а VPS тянет тег явно в `deploy`).
 #
 # VPS (1 vCPU / 1 GB) НИКОГДА не собирает: только `docker pull` из ghcr.io и
 # `docker compose up -d --no-build <service>`. Образы берутся из ghcr.io,
@@ -25,7 +32,7 @@
 #     дольше.
 #
 # ── Переменная PRIMARY_FORGE ─────────────────────────────────────────────────
-# Пока она не равна `github`, workflow не трогает прод: job `ship` пропускается.
+# Пока она не равна `github`, workflow не трогает прод: jobs `build` и `deploy` пропускаются.
 # Это нужно, чтобы можно было спокойно закоммитить новые воркфлоу, пока каноном
 # ещё остаётся Codeberg, и не получить двойной деплой.
 # Переключение: Settings → Secrets and variables → Actions → Variables →
@@ -82,10 +89,11 @@ jobs:
   # План: какие сервисы пересобирать. Диффаем реальные коммиты, а не эвристику:
   # github.event.before — это предыдущий tip main, поэтому пачка коммитов
   # (в т.ч. merge и rebase) видна целиком. Если базы нет (force push) — собираем всё.
+  # Намеренно БЕЗ `needs: ci`: дифф не зависит от проверок, а от него зависит
+  # сборка — так она стартует, не дожидаясь гейта.
   # ---------------------------------------------------------------------------
   plan:
     name: План сборки
-    needs: ci
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -203,11 +211,13 @@ jobs:
           echo "Итог: has_work=$HAS_WORK caddy=$CADDY matrix=$MATRIX"
 
   # ---------------------------------------------------------------------------
-  # Сборка и выкат. Набор сервисов приезжает матрицей из plan: одна нога на
+  # Сборка образов. Набор сервисов приезжает матрицей из plan: одна нога на
   # сервис, все параллельно (насколько позволяет число инстансов раннера).
+  # Гейт `ci` тут СОЗНАТЕЛЬНО не в needs: сборка идёт параллельно проверкам,
+  # а решает, попадёт ли образ на VPS, только job `deploy`.
   # ---------------------------------------------------------------------------
-  ship:
-    name: ${{ matrix.service }} → сборка и выкат
+  build:
+    name: ${{ matrix.service }} → сборка образа
     needs: plan
     if: needs.plan.outputs.has_work == 'true' && vars.PRIMARY_FORGE == 'github'
     runs-on: ${{ fromJSON(vars.BUILD_RUNNER || '["self-hosted","macOS","ARM64"]') }}
@@ -284,6 +294,27 @@ jobs:
             -f "${{ matrix.dockerfile }}" \
             "${{ matrix.context }}"
 
+  # ---------------------------------------------------------------------------
+  # Выкат на VPS. Отдельным job'ом от сборки по двум причинам: (1) он ждёт
+  # гейт, а сборка — нет, поэтому гейт не вычитается из времени выката;
+  # (2) на ubuntu-latest, а не на сборочном Mac — SSH-шаг не занимает один из
+  # четырёх слотов раннера, пока собираются образы.
+  # Образ к этому моменту уже в ghcr; на VPS он попадёт только при зелёном `ci`.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: ${{ matrix.service }} → выкат на VPS
+    needs: [plan, build, ci]
+    if: needs.plan.outputs.has_work == 'true' && vars.PRIMARY_FORGE == 'github'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Restart ${{ matrix.service }} on VPS
         run: |
           set -eo pipefail
@@ -316,7 +347,7 @@ jobs:
   # ---------------------------------------------------------------------------
   reindex:
     name: Reindex Meilisearch
-    needs: ship
+    needs: deploy
     if: github.event_name == 'workflow_dispatch' && inputs.reindex && vars.PRIMARY_FORGE == 'github'
     runs-on: ubuntu-latest
     steps:
