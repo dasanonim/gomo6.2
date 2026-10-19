@@ -29,6 +29,9 @@ const SWIPE_MAX_ANGLE_TAN = Math.tan((40 * Math.PI) / 180);
  *  direction is locked — small enough to beat the browser's own scroll slop,
  *  large enough to ignore idle finger wiggles. */
 const SWIPE_LOCK_SLOP = 5;
+/** Telegram's `useMultiClick` window, and how far a tap may wander to still be one. */
+const DOUBLE_TAP_WINDOW_MS = 300;
+const DOUBLE_TAP_SLOP = 12;
 
 interface Props {
   message: MessageView;
@@ -390,6 +393,30 @@ export const MessageBubble = memo(function MessageBubble({
     if (!isTouchDevice) onReply(message);
   }, [isTouchDevice, onReply, message]);
 
+  // ── Double-tap on touch: the reply equivalent of the desktop double-click ──
+  // Native `dblclick` is not reliable on touch (and the bubble also owns a swipe
+  // and a long press), so the taps are counted here: two taps inside Telegram's
+  // 300ms window, neither of them a drag. The second one is a reply — the gesture
+  // a double-tap means in a messenger that has no reactions yet.
+  const lastTapRef = useRef<{ at: number; x: number; y: number } | null>(null);
+  const handleRowPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== "touch") return;
+
+    const now = Date.now();
+    const previous = lastTapRef.current;
+    const isTap = !previous
+      || Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= DOUBLE_TAP_SLOP;
+
+    if (previous && isTap && now - previous.at <= DOUBLE_TAP_WINDOW_MS) {
+      lastTapRef.current = null;
+      hapticSuccess();
+      onReply(message);
+      return;
+    }
+
+    lastTapRef.current = { at: now, x: event.clientX, y: event.clientY };
+  }, [onReply, message]);
+
   const hasVisualAttachments = message.attachments?.some(
     (attachment) => attachment.type === "image" || attachment.type === "video",
   ) ?? false;
@@ -476,6 +503,7 @@ export const MessageBubble = memo(function MessageBubble({
       <div
         className={`bubble-row${isMine ? " is-mine" : ""}${isConsecutive ? " is-consecutive" : ""}`}
         onDoubleClick={handleRowDoubleClick}
+        onPointerUp={handleRowPointerUp}
       >
         <div className="message-bubble deleted-bubble">
           <em>Сообщение удалено</em>
@@ -488,6 +516,7 @@ export const MessageBubble = memo(function MessageBubble({
     <div
       className={`bubble-row${isMine ? " is-mine" : ""}${isConsecutive ? " is-consecutive" : ""}`}
       onDoubleClick={handleRowDoubleClick}
+      onPointerUp={handleRowPointerUp}
     >
       <div
         ref={rowInnerRef}
@@ -632,6 +661,9 @@ export const MessageBubble = memo(function MessageBubble({
             role="menu"
             tabIndex={-1}
             onDoubleClick={(e) => e.stopPropagation()}
+            // One tactile cue for every action in the panel (Telegram ticks on the
+            // menu item, not on the menu itself).
+            onClickCapture={() => hapticTick(8)}
           >
             <button type="button" role="menuitem" className="msg-action-item" onClick={() => { dismissMenu(); onReply(message); }}>
               <Reply size={15} /><span>Ответить</span>

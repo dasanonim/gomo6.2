@@ -9,6 +9,15 @@ import type { MessageView } from "./types";
 // Emoji messages resolve their images through the shared emoji data context;
 // a bare Map keeps them on the neutral inline-placeholder path so the bubble
 // layout can be asserted without a provider + network.
+const { mockHaptics } = vi.hoisted(() => ({
+  mockHaptics: { tick: vi.fn(), success: vi.fn() },
+}));
+
+vi.mock("@/lib/haptics", () => ({
+  hapticTick: mockHaptics.tick,
+  hapticSuccess: mockHaptics.success,
+}));
+
 vi.mock("@/contexts/EmojiDataContext", () => ({
   useEmojiData: () => ({
     allEmojis: new Map(),
@@ -20,6 +29,8 @@ vi.mock("@/contexts/EmojiDataContext", () => ({
 beforeEach(() => {
   localStorage.clear();
   __resetAttachmentRatioCacheForTests();
+  mockHaptics.tick.mockClear();
+  mockHaptics.success.mockClear();
 });
 
 function createMessage(overrides: Partial<MessageView> = {}): MessageView {
@@ -51,6 +62,60 @@ const defaultProps = {
   onReply: noop,
   onCopy: noop,
 };
+
+describe("MessageBubble — touch double-tap", () => {
+  const rowOf = () => screen.getByText("Hello, world!").closest(".bubble-row")!;
+  const touchAt = (x: number, y: number) => {
+    fireEvent.pointerUp(rowOf(), { pointerType: "touch", clientX: x, clientY: y });
+  };
+
+  it("replies on a double tap, with the confirmation cue", () => {
+    const onReply = vi.fn();
+    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+
+    touchAt(100, 100);
+    touchAt(102, 103);
+
+    expect(onReply).toHaveBeenCalledTimes(1);
+    expect(mockHaptics.success).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reply when the two taps are too far apart in time", () => {
+    // A controllable clock: `Date.now` is read by plenty of other code during a
+    // render, so a once-per-call mock would be consumed by them.
+    let clock = 1_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const onReply = vi.fn();
+    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+
+    touchAt(100, 100);
+    clock = 1_500;
+    touchAt(100, 100);
+
+    expect(onReply).not.toHaveBeenCalled();
+    now.mockRestore();
+  });
+
+  it("does not reply when the second tap is a drag", () => {
+    const onReply = vi.fn();
+    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+
+    touchAt(100, 100);
+    touchAt(160, 100);
+
+    expect(onReply).not.toHaveBeenCalled();
+  });
+
+  it("leaves the mouse to the native double-click", () => {
+    const onReply = vi.fn();
+    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+
+    fireEvent.pointerUp(rowOf(), { pointerType: "mouse", clientX: 100, clientY: 100 });
+    fireEvent.pointerUp(rowOf(), { pointerType: "mouse", clientX: 100, clientY: 100 });
+
+    expect(onReply).not.toHaveBeenCalled();
+  });
+});
 
 describe("MessageBubble", () => {
   it("jumps to the quoted message when the quote is tapped", () => {
