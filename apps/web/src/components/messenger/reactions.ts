@@ -22,6 +22,13 @@ export const REACTION_SET = [
   "🤪", "🤮", "🥳", "😇", "🫡", "👀", "⚡",
 ] as const;
 
+/**
+ * How many different reactions one person may hold on one message — the same
+ * cap the server enforces. At the cap a new reaction REPLACES the oldest one
+ * (Telegram's model), never "does nothing".
+ */
+export const MAX_MY_REACTIONS = 3;
+
 const RECENT_KEY = "gomo6:reactions:recent";
 const DEFAULT_QUICK_REACTION = "❤️";
 
@@ -60,6 +67,38 @@ export function sortChips(chips: ReactionSummary[]): ReactionSummary[] {
     .map(({ chip }) => chip);
 }
 
+/**
+ * Keeps the reader's own chips within the cap after an optimistic add.
+ *
+ * The server evicts by `created_at` and its answer replaces this list a moment
+ * later; locally the least popular of the reader's own chips is dropped as the
+ * closest guess, so the UI never shows a fourth reaction of your own even for a
+ * single frame.
+ */
+function evictViewerOverflow(chips: ReactionSummary[], viewerId: string): ReactionSummary[] {
+  let list = chips;
+  for (;;) {
+    const mine = list.filter((chip) => hasUser(chip, viewerId));
+    if (mine.length <= MAX_MY_REACTIONS) return list;
+    // The reader's OLDEST chip, by the same timestamp the server evicts by —
+    // so the optimistic list and the server's answer agree and nothing jumps
+    // twice (an optimistic add carries `mineAt`; a server chip always does).
+    const victim = mine.reduce((oldest, chip) => {
+      const at = chip.mineAt ?? "";
+      const oldestAt = oldest.mineAt ?? "";
+      return at < oldestAt ? chip : oldest;
+    }, mine[0]);
+    list = list.flatMap((chip) => {
+      if (chip !== victim) return [chip];
+      const users = chip.users.filter((user) => user.id !== viewerId);
+      if (users.length === 0) return [];
+      // The viewer's own timestamp goes with their row — a chip the reader is
+      // no longer part of must not carry `mineAt`.
+      return [{ ...chip, count: users.length, users, mine: false, mineAt: undefined }];
+    });
+  }
+}
+
 function hasUser(chip: ReactionSummary, userId: string): boolean {
   return chip.users.some((user) => user.id === userId);
 }
@@ -88,8 +127,14 @@ export function applyReaction(
 
   if (resolved === "add") {
     if (!existing) {
-      list.push({ emoji, count: 1, mine: viewerId === user.id, users: [user] });
-      return sortChips(list);
+      list.push({
+        emoji,
+        count: 1,
+        mine: viewerId === user.id,
+        users: [user],
+        ...(user.id === viewerId ? { mineAt: new Date().toISOString() } : {}),
+      });
+      return sortChips(user.id === viewerId ? evictViewerOverflow(list, viewerId) : list);
     }
     if (present) {
       // A repeated add (a retried request): only the flag can be stale.
@@ -103,8 +148,9 @@ export function applyReaction(
       count: users.length,
       users,
       mine: hasUser({ ...existing, users }, viewerId),
+      ...(user.id === viewerId ? { mineAt: new Date().toISOString() } : {}),
     };
-    return sortChips(list);
+    return sortChips(user.id === viewerId ? evictViewerOverflow(list, viewerId) : list);
   }
 
   if (!existing || !present) return list;
@@ -118,6 +164,7 @@ export function applyReaction(
     count: users.length,
     users,
     mine: hasUser({ ...existing, users }, viewerId),
+    mineAt: hasUser({ ...existing, users }, viewerId) ? existing.mineAt : undefined,
   };
   return sortChips(list);
 }

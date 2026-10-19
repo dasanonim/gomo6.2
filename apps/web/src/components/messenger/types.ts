@@ -61,6 +61,8 @@ export type ReactionSummary = {
   count: number;
   mine: boolean;
   users: ReactionUser[];
+  /** When the viewer chose this emoji (RFC3339) — the cap evicts by it. */
+  mineAt?: string;
 };
 
 export type MessageView = {

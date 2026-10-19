@@ -452,6 +452,45 @@ func TestHub_ForceUnsubscribeFromChatRooms_EmptyIDsNoop(t *testing.T) {
 	}
 }
 
+func TestHub_DispatchRealtimeBroadcast_RoutesReactionToConversationRoom(t *testing.T) {
+	hub := NewHub(nil, nil)
+	member := newTestClient(hub, "user-1", "Alice")
+	outsider := newTestClient(hub, "user-2", "Bob")
+	hub.SubscribeToRoom(member, "chat_conv-1")
+	hub.SubscribeToRoom(outsider, "chat_conv-2")
+
+	payload := map[string]interface{}{
+		"message_id":      "msg-1",
+		"conversation_id": "conv-1",
+		"emoji":           "❤️",
+		"user_id":         "user-2",
+		"username":        "Bob",
+		"action":          "add",
+	}
+	message := Message{Type: MessageTypeMessageReaction}
+	messageBytes := []byte(`{"type":"message_reaction"}`)
+
+	hub.dispatchRealtimeBroadcast(MessageTypeMessageReaction, payload, message, messageBytes)
+	waitForBuffer()
+
+	// A reaction is a messenger housekeeping event: it has to reach the
+	// conversation room in realtime (the peer's chip updates without a reload)
+	// and must never leak into another conversation's room.
+	select {
+	case <-member.Send:
+		// expected
+	default:
+		t.Fatal("the reaction must reach the conversation room")
+	}
+
+	select {
+	case <-outsider.Send:
+		t.Fatal("a reaction must not reach another conversation's room")
+	default:
+		// expected
+	}
+}
+
 func TestHub_BroadcastToRoom(t *testing.T) {
 	hub := NewHub(nil, nil)
 	client1 := newTestClient(hub, "user-1", "Alice")

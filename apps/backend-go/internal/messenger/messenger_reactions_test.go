@@ -351,7 +351,7 @@ func TestToggleReaction_RejectsDeletedMessage(t *testing.T) {
 	}
 }
 
-func TestToggleReaction_EnforcesPerMessageCeiling(t *testing.T) {
+func TestToggleReaction_ReplacesTheOldestAtTheCeiling(t *testing.T) {
 	handler, mock := setupMessengerHandler(t)
 
 	claims := &auth.Claims{UserID: testUser1, Username: "testuser"}
@@ -374,11 +374,71 @@ func TestToggleReaction_EnforcesPerMessageCeiling(t *testing.T) {
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM message_reactions WHERE message_id = \$1 AND user_id = \$2`).
 		WithArgs(testMsg1, testUser1).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(maxReactionsPerUser))
+	// At the cap the oldest one the reader holds is evicted (Telegram's model),
+	// not refused.
+	mock.ExpectExec(`DELETE FROM message_reactions\s+WHERE id = \(\s+SELECT id FROM message_reactions\s+WHERE message_id = \$1 AND user_id = \$2\s+ORDER BY created_at ASC\s+LIMIT 1\s+\)`).
+		WithArgs(testMsg1, testUser1).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO message_reactions`).
+		WithArgs(testMsg1, testConv1, testUser1, "🎉").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	now := time.Now()
+	mock.ExpectQuery(`SELECT r.message_id, r.emoji, r.user_id, COALESCE\(u.username, ''\), r.created_at`).
+		WithArgs(testMsg1).
+		WillReturnRows(sqlmock.NewRows([]string{"message_id", "emoji", "user_id", "username", "created_at"}).
+			AddRow(testMsg1, "❤️", testUser1, "testuser", now).
+			AddRow(testMsg1, "🎉", testUser1, "testuser", now.Add(time.Second)))
 
 	handler.ToggleReaction(c)
 
-	if w.Code != http.StatusConflict {
-		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (the new reaction replaces the oldest), got %d: %s", w.Code, w.Body.String())
+	}
+	data, err := stripJSON(w.Body.Bytes())
+	if err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if data["action"] != "add" {
+		t.Fatalf("expected action=add, got %v", data["action"])
+	}
+	chips, ok := data["reactions"].([]interface{})
+	if !ok || len(chips) != 2 {
+		t.Fatalf("expected the surviving chips, got %v", data["reactions"])
+	}
+}
+
+func TestToggleReaction_SurfacesEvictionFailure(t *testing.T) {
+	handler, mock := setupMessengerHandler(t)
+
+	claims := &auth.Claims{UserID: testUser1, Username: "testuser"}
+	c, w := testutil.NewPOSTContext(
+		"/api/v1/messenger/conversations/"+testConv1+"/messages/"+testMsg1+"/reactions",
+		map[string]string{"emoji": "🎉"},
+		claims,
+		map[string]string{"id": testConv1, "msgId": testMsg1},
+	)
+
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_members WHERE conversation_id = \$1 AND user_id = \$2\)`).
+		WithArgs(testConv1, testUser1).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM chat_messages WHERE id = \$1 AND conversation_id = \$2 AND is_deleted = false\)`).
+		WithArgs(testMsg1, testConv1).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectExec(`DELETE FROM message_reactions WHERE message_id = \$1 AND user_id = \$2 AND emoji = \$3`).
+		WithArgs(testMsg1, testUser1, "🎉").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM message_reactions WHERE message_id = \$1 AND user_id = \$2`).
+		WithArgs(testMsg1, testUser1).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(maxReactionsPerUser))
+	mock.ExpectExec(`DELETE FROM message_reactions\s+WHERE id = \(`).
+		WithArgs(testMsg1, testUser1).
+		WillReturnError(errReactionInsert)
+
+	handler.ToggleReaction(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

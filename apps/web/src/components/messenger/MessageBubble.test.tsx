@@ -209,7 +209,14 @@ describe("MessageBubble — reactions", () => {
 
     const bar = container.querySelector(".msg-reaction-bar");
     expect(bar).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "🔥" }));
+
+    // A press on the bar must not reach the panel's outside-tap dismissal — it
+    // is real UI in the same floated group, not part of the scrim.
+    const pick = screen.getByRole("button", { name: "🔥" });
+    fireEvent.pointerDown(pick);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+
+    fireEvent.click(pick);
 
     expect(onToggleReaction).toHaveBeenCalledWith("msg-1", "🔥");
     // The bar closes with the panel: the chip under the message is the answer.
