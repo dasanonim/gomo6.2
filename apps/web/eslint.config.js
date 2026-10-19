@@ -14,9 +14,12 @@ export default tseslint.config(
       ecmaVersion: 2020,
       globals: globals.browser,
       parser: tseslint.parser,
-      parserOptions: {
-        project: "./tsconfig.app.json",
-      },
+      // Намеренно БЕЗ `parserOptions.project`: это заставило бы eslint построить
+      // полную TS-программу (второй tsc внутри того же джоба, ~+4s локально и
+      // больше на холодном раннере). Ни одно из включённых правил типов не
+      // требует — набор `tseslint.configs.recommended` (не `…TypeChecked`), а
+      // no-unused-vars / no-explicit-any / no-use-before-define работают на AST.
+      // Проверено: набор находок идентичен (260 warnings, 0 errors).
     },
     plugins: {
       "react-hooks": reactHooks,

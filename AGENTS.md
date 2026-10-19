@@ -146,7 +146,7 @@ the backend + Docker infra can stay up across restarts.
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | PR, `workflow_call`, dispatch | The gate. Jobs: `Changes`, `Go · build · vet · fmt · test` (+coverage→Codecov), `Go · lint · vuln` (golangci-lint + govulncheck), `Frontend · checks` (tsc ×3 · eslint · turbo build), `Frontend · tests` (3 shards + coverage), `Secrets scan` (gitleaks), `Dockerfile lint` (hadolint), `Images` (PR-only, only when Docker files changed). |
-| `deploy.yml` | push to `main` (tags ignored), dispatch | `ci` gate → `plan` (git-diff which services to rebuild) → `ship` matrix: `buildx build --push` to ghcr + SSH restart on the VPS. Manual dispatch can pick `services` and a `reindex` flag. |
+| `deploy.yml` | push to `main` (tags ignored), dispatch | `plan` (git-diff which services to rebuild) → `build` matrix (`buildx build --push` to ghcr) **in parallel with the `ci` gate** → `deploy` matrix (SSH pull + restart on the VPS, only after the gate is green). Manual dispatch can pick `services` and a `reindex` flag. |
 | `tests-full.yml` | daily 06:00 UTC, dispatch | `backend-race` (real Postgres/Redis), `smoke` (register → upload → board → thread → post → like), `privacy`. |
 | `security.yml` | Mon 03:00 UTC, dispatch | CodeQL (`go` + `javascript-typescript`, suite `security-and-quality`) and Trivy fs scan → Security / code-scanning (SARIF). No auto-issues. |
 | `mirror.yml` | push (any branch/tag) | Force-mirror GitHub → Codeberg + GitLab. |
@@ -157,7 +157,9 @@ Deploy pipeline details, secrets/variables, rollback and VPS setup live in
 `VPS_HOST` / `VPS_USER` / `VPS_SSH_KEY` (+ optional `VPS_PORT`), and web build args
 `VITE_TURNSTILE_SITEKEY` / `VITE_SENTRY_DSN` / `VITE_DEPAY_INTEGRATION_ID`.
 
-**Deploy only ships after the `ci` gate is green.** Never merge/deploy on red CI.
+**Deploy only ships after the `ci` gate is green.** The image build starts as soon
+as `plan` is done (parallel with the gate), but the VPS restart job `needs` both the
+build and `ci` — so red CI never reaches the VPS. Never merge/deploy on red CI.
 
 ## Self-hosted build runner (this Mac)
 
@@ -166,16 +168,18 @@ runners — everything else (PR checks, scheduled tests, scanners) is GitHub-hos
 Full guide: [docs/wiki/SELF_HOSTED_RUNNER.md](docs/wiki/SELF_HOSTED_RUNNER.md).
 
 ```bash
-# Docker Desktop must be running (ship uses buildx)
+# Docker Desktop must be running (the image build uses buildx)
 docker info >/dev/null && echo "docker: UP"
 # runners live in ~/github-runner/runner-{1..4}, managed by launchd (svc.sh)
 gh api repos/elcrazycol/gomo6.2/actions/runners --jq '.runners[] | "\(.name)\t\(.status)"'
 ```
 
-Runner labels: base `self-hosted` / `macOS` / `ARM64` + `gomo6-build`; `ship` runs on
-`fromJSON(vars.BUILD_RUNNER || '["self-hosted","macOS","ARM64"]')`. BuildKit cache:
-`$HOME/gomo6-buildx-cache/<service>`. **Never** attach a self-hosted runner to a
-`pull_request` job. The old `forgejo-runner` (Codeberg) is retired.
+Runner labels: base `self-hosted` / `macOS` / `ARM64` + `gomo6-build`; the `build`
+matrix runs on `fromJSON(vars.BUILD_RUNNER || '["self-hosted","macOS","ARM64"]')`
+(the `deploy` matrix needs only SSH, so it runs on `ubuntu-latest` and does not
+occupy a Mac slot). BuildKit cache: `$HOME/gomo6-buildx-cache/<service>`. **Never**
+attach a self-hosted runner to a `pull_request` job. The old `forgejo-runner`
+(Codeberg) is retired.
 
 ## Pre-commit hook
 
