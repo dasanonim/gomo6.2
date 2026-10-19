@@ -11,6 +11,7 @@ package messenger
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"regexp"
@@ -305,6 +306,38 @@ func (h *MessengerHandler) areFriends(c *gin.Context, user1, user2 string) (bool
 }
 
 // hasHTML checks if content contains HTML tags — we only allow plaintext.
+// validateAudioMeta checks the metadata a voice note carries: the duration and
+// the peaks the UI draws with. It is a pure function so the rules can be tested
+// without a storage client.
+func validateAudioMeta(meta string) error {
+	// A voice note carries only what the UI needs to draw it: the duration and
+	// the peaks. Validated so a client cannot store a megabyte of JSON in `meta`
+	// and have every receiver parse it.
+	if len(meta) > 4096 {
+		return fmt.Errorf("audio metadata is too large")
+	}
+	var parsed struct {
+		Duration float64 `json:"duration"`
+		Waveform []int   `json:"waveform"`
+		Voice    bool    `json:"voice"`
+	}
+	if err := json.Unmarshal([]byte(meta), &parsed); err != nil {
+		return fmt.Errorf("invalid audio metadata")
+	}
+	if parsed.Duration < 0 || parsed.Duration > 600 {
+		return fmt.Errorf("invalid audio duration")
+	}
+	if len(parsed.Waveform) > 128 {
+		return fmt.Errorf("invalid audio waveform")
+	}
+	for _, peak := range parsed.Waveform {
+		if peak < 0 || peak > 100 {
+			return fmt.Errorf("invalid audio waveform")
+		}
+	}
+	return nil
+}
+
 func hasHTML(s string) bool {
 	return htmlTagRegex.MatchString(s)
 }
@@ -362,6 +395,24 @@ func (h *MessengerHandler) FindOrCreateConversation(c *gin.Context, user1, user2
 		return "", fmt.Errorf("find_or_create_conversation: %w", err)
 	}
 	return convID, nil
+}
+
+// voicePreviewLabel returns the conversation-list label for a message that
+// carries only a voice note: its content is blank, and a blank preview in the
+// chat list reads like a bug.
+func voicePreviewLabel(attachments []AttachmentInput) string {
+	for _, att := range attachments {
+		if att.Type != "audio" || att.Meta == nil {
+			continue
+		}
+		var meta struct {
+			Voice bool `json:"voice"`
+		}
+		if json.Unmarshal([]byte(*att.Meta), &meta) == nil && meta.Voice {
+			return "Голосовое сообщение"
+		}
+	}
+	return ""
 }
 
 // truncatePreview truncates message content to 80 chars for conversation preview.

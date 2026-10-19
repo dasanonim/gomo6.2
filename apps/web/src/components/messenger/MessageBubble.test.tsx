@@ -157,6 +157,40 @@ describe("MessageBubble — touch double-tap", () => {
   });
 });
 
+describe("MessageBubble — voice messages", () => {
+  const voice: MessageView["attachments"] = [{
+    url: "u1/messenger/voice.webm",
+    type: "audio",
+    name: "voice.webm",
+    size: 2048,
+    mime: "audio/webm",
+    meta: JSON.stringify({ voice: true, duration: 7, waveform: new Array(40).fill(50) }),
+  }];
+
+  it("renders the voice player instead of a browser audio bar", () => {
+    const { container } = render(
+      <MessageBubble message={createMessage({ attachments: voice })} {...defaultProps} />,
+    );
+
+    expect(container.querySelector(".voice-player")).not.toBeNull();
+    expect(container.querySelector("audio[controls]")).toBeNull();
+    // Its own bubble shape: the meta must not try to sit inline over the player.
+    expect(container.querySelector(".message-bubble")?.className).toContain("is-voice-bubble");
+  });
+
+  it("keeps an ordinary audio file a file row", () => {
+    const { container } = render(
+      <MessageBubble
+        message={createMessage({ attachments: [{ ...voice![0], name: "song.mp3", meta: null }] })}
+        {...defaultProps}
+      />,
+    );
+
+    expect(container.querySelector(".voice-player")).toBeNull();
+    expect(container.querySelector(".msg-attachment-file")).not.toBeNull();
+  });
+});
+
 describe("MessageBubble — reactions", () => {
   const reaction = {
     emoji: "🔥",
