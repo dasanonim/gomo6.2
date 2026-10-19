@@ -9,6 +9,9 @@ import { MessageActionOverlay } from "./MessageActionOverlay";
 import type { MessageView } from "./types";
 import { useLanguageStore } from "@/stores/languageStore";
 import { hapticTick, hapticSuccess } from "@/lib/haptics";
+import { ReactionChips } from "./ReactionChips";
+import { ReactionBar } from "./ReactionBar";
+import { getQuickReaction } from "./reactions";
 
 const LONG_PRESS_DELAY = 400;
 /** Max horizontal pull of the swipe reply, in px (leftwards) — 40% shorter
@@ -47,6 +50,8 @@ interface Props {
   onEdit: (id: string, content: string) => void;
   onDelete: (id: string) => void;
   onTogglePin: (id: string) => void;
+  /** Toggles my reaction; absent in read-only surfaces (a shared card, a test). */
+  onToggleReaction?: (messageId: string, emoji: string) => void;
   onRetry: (message: MessageView) => void;
   /** Sets the reply. `focus: false` arms it mid-swipe (banner only — the
    *  keyboard must NOT pop up under the moving finger); the default focuses
@@ -62,6 +67,8 @@ interface Props {
   onJumpToMessage?: (messageId: string) => void;
   peerReadAt?: string | null;
   peerDeliveredAt?: string | null;
+  /** The reader's user id — reaction labels say "Вы" for their own chip. */
+  viewerId?: string;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -76,6 +83,7 @@ export const MessageBubble = memo(function MessageBubble({
   onEdit,
   onDelete,
   onTogglePin,
+  onToggleReaction,
   onRetry,
   onReply,
   onCopy,
@@ -83,6 +91,7 @@ export const MessageBubble = memo(function MessageBubble({
   onJumpToMessage,
   peerReadAt,
   peerDeliveredAt,
+  viewerId = "",
 }: Props) {
   // Message bubbles are memoized; subscribe explicitly so their timestamps
   // refresh when the language changes even if message props stay identical.
@@ -393,12 +402,22 @@ export const MessageBubble = memo(function MessageBubble({
     if (!isTouchDevice) onReply(message);
   }, [isTouchDevice, onReply, message]);
 
-  // ── Double-tap on touch: the reply equivalent of the desktop double-click ──
+  // ── Double-tap on touch: the quick reaction ──────────────────────────────
   // Native `dblclick` is not reliable on touch (and the bubble also owns a swipe
   // and a long press), so the taps are counted here: two taps inside Telegram's
-  // 300ms window, neither of them a drag. The second one is a reply — the gesture
-  // a double-tap means in a messenger that has no reactions yet.
+  // 300ms window, neither of them a drag. The second one applies the reader's
+  // quick reaction — Telegram's gesture model, where a swipe is the reply and a
+  // double-tap is the reaction (desktop keeps double-click → reply).
   const lastTapRef = useRef<{ at: number; x: number; y: number } | null>(null);
+  // The reaction a double-tap just applied, floated over the bubble while its
+  // chip pops in (Telegram's double-tap feedback).
+  const [floatingEmoji, setFloatingEmoji] = useState<string | null>(null);
+  const floatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showFloatingEmoji = useCallback((emoji: string) => {
+    if (floatTimerRef.current) clearTimeout(floatTimerRef.current);
+    setFloatingEmoji(emoji);
+    floatTimerRef.current = setTimeout(() => setFloatingEmoji(null), 700);
+  }, []);
   const handleRowPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== "touch") return;
 
@@ -409,13 +428,27 @@ export const MessageBubble = memo(function MessageBubble({
 
     if (previous && isTap && now - previous.at <= DOUBLE_TAP_WINDOW_MS) {
       lastTapRef.current = null;
+      const emoji = getQuickReaction();
       hapticSuccess();
-      onReply(message);
+      onToggleReaction?.(message.id, emoji);
+      showFloatingEmoji(emoji);
       return;
     }
 
     lastTapRef.current = { at: now, x: event.clientX, y: event.clientY };
-  }, [onReply, message]);
+  }, [message.id, onToggleReaction, showFloatingEmoji]);
+
+  useEffect(() => () => {
+    if (floatTimerRef.current) clearTimeout(floatTimerRef.current);
+  }, []);
+
+  // The long-press panel applies a reaction and closes: the chip under the
+  // message is the result, so the panel has nothing left to say.
+  const handlePickReaction = useCallback((emoji: string) => {
+    dismissMenu();
+    onToggleReaction?.(message.id, emoji);
+    showFloatingEmoji(emoji);
+  }, [dismissMenu, message.id, onToggleReaction, showFloatingEmoji]);
 
   const hasVisualAttachments = message.attachments?.some(
     (attachment) => attachment.type === "image" || attachment.type === "video",
@@ -601,6 +634,12 @@ export const MessageBubble = memo(function MessageBubble({
             )}
           </div>
 
+          {floatingEmoji && (
+            <span className="reaction-float" key={floatingEmoji} aria-hidden="true">
+              {floatingEmoji}
+            </span>
+          )}
+
           {notesControls && (message.notesFolder || (message.notesTags?.length ?? 0) > 0) && (
             <div className="notes-bubble-chips">
               {message.notesFolder && (
@@ -630,6 +669,14 @@ export const MessageBubble = memo(function MessageBubble({
           )}
         </div>
 
+        {message.reactions && message.reactions.length > 0 && onToggleReaction && (
+          <ReactionChips
+            chips={message.reactions}
+            viewerId={viewerId}
+            onToggle={(emoji) => onToggleReaction(message.id, emoji)}
+          />
+        )}
+
         {/* Notes quick pin — sibling of the bubble so media bubbles' overflow
             cannot clip it; notes are a self-chat, so the bubble always sits at
             the row's right edge and the button lands on its corner. */}
@@ -654,7 +701,18 @@ export const MessageBubble = memo(function MessageBubble({
           not fit, the MessageActionOverlay glides the whole group up — the
           chat itself never scrolls, the other messages never move. */}
       {chatPanelEl && hostBubbleEl && createPortal(
-        <MessageActionOverlay hostEl={hostBubbleEl} portalEl={chatPanelEl} isMine={isMine}>
+        <MessageActionOverlay
+          hostEl={hostBubbleEl}
+          portalEl={chatPanelEl}
+          isMine={isMine}
+          topSlot={onToggleReaction ? (
+            <ReactionBar
+              chips={message.reactions ?? []}
+              viewerId={viewerId}
+              onPick={handlePickReaction}
+            />
+          ) : undefined}
+        >
           <div
             ref={actionPanelRef}
             className="msg-action-panel"

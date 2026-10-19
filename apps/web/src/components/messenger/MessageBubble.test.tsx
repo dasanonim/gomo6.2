@@ -68,51 +68,91 @@ describe("MessageBubble — touch double-tap", () => {
   const touchAt = (x: number, y: number) => {
     fireEvent.pointerUp(rowOf(), { pointerType: "touch", clientX: x, clientY: y });
   };
+  const onToggleReaction = vi.fn();
+  beforeEach(() => onToggleReaction.mockClear());
 
-  it("replies on a double tap, with the confirmation cue", () => {
+  it("applies the quick reaction on a double tap, with the confirmation cue", () => {
     const onReply = vi.fn();
-    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+    render(
+      <MessageBubble
+        message={createMessage()}
+        {...defaultProps}
+        onReply={onReply}
+        onToggleReaction={onToggleReaction}
+      />,
+    );
 
     touchAt(100, 100);
     touchAt(102, 103);
 
-    expect(onReply).toHaveBeenCalledTimes(1);
+    // Telegram's model: the double-tap is the reaction, the swipe is the reply.
+    expect(onToggleReaction).toHaveBeenCalledWith("msg-1", "❤️");
+    expect(onReply).not.toHaveBeenCalled();
     expect(mockHaptics.success).toHaveBeenCalledTimes(1);
+    // …and the emoji floats over the bubble as the feedback.
+    expect(rowOf().querySelector(".reaction-float")?.textContent).toBe("❤️");
   });
 
-  it("does not reply when the two taps are too far apart in time", () => {
+  it("uses the reader's last reaction as the quick one", () => {
+    localStorage.setItem("gomo6:reactions:recent", "🔥");
+    render(<MessageBubble message={createMessage()} {...defaultProps} onToggleReaction={onToggleReaction} />);
+
+    touchAt(100, 100);
+    touchAt(100, 100);
+
+    expect(onToggleReaction).toHaveBeenCalledWith("msg-1", "🔥");
+  });
+
+  it("does nothing on a double tap without a reaction handler", () => {
+    const onReply = vi.fn();
+    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+
+    touchAt(100, 100);
+    touchAt(100, 100);
+
+    expect(onToggleReaction).not.toHaveBeenCalled();
+    expect(onReply).not.toHaveBeenCalled();
+  });
+
+  it("does not react when the two taps are too far apart in time", () => {
     // A controllable clock: `Date.now` is read by plenty of other code during a
     // render, so a once-per-call mock would be consumed by them.
     let clock = 1_000;
     const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
-    const onReply = vi.fn();
-    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+    render(<MessageBubble message={createMessage()} {...defaultProps} onToggleReaction={onToggleReaction} />);
 
     touchAt(100, 100);
     clock = 1_500;
     touchAt(100, 100);
 
-    expect(onReply).not.toHaveBeenCalled();
+    expect(onToggleReaction).not.toHaveBeenCalled();
     now.mockRestore();
   });
 
-  it("does not reply when the second tap is a drag", () => {
-    const onReply = vi.fn();
-    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+  it("does not react when the second tap is a drag", () => {
+    render(<MessageBubble message={createMessage()} {...defaultProps} onToggleReaction={onToggleReaction} />);
 
     touchAt(100, 100);
     touchAt(160, 100);
 
-    expect(onReply).not.toHaveBeenCalled();
+    expect(onToggleReaction).not.toHaveBeenCalled();
   });
 
-  it("leaves the mouse to the native double-click", () => {
+  it("leaves the mouse to the native double-click (reply)", () => {
     const onReply = vi.fn();
-    render(<MessageBubble message={createMessage()} {...defaultProps} onReply={onReply} />);
+    render(
+      <MessageBubble
+        message={createMessage()}
+        {...defaultProps}
+        onReply={onReply}
+        onToggleReaction={onToggleReaction}
+      />,
+    );
 
     fireEvent.pointerUp(rowOf(), { pointerType: "mouse", clientX: 100, clientY: 100 });
     fireEvent.pointerUp(rowOf(), { pointerType: "mouse", clientX: 100, clientY: 100 });
 
+    expect(onToggleReaction).not.toHaveBeenCalled();
     expect(onReply).not.toHaveBeenCalled();
   });
 });

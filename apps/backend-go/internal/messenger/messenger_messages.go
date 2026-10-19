@@ -210,6 +210,14 @@ func (h *MessengerHandler) fetchMessagePage(c *gin.Context, conversationID strin
 		}
 	}
 
+	// Reactions for the whole page in one query (the same batching as
+	// attachments): the chips travel with the message so the list has them on
+	// first paint, and realtime only has to deliver deltas.
+	if err := h.addReactionsToMessages(c, messages); err != nil {
+		httpx.ServerError(c, "get reactions", err)
+		return nil, false
+	}
+
 	// Backward pages are returned by sent_at DESC and must be reversed. Delta
 	// pages are already event_id ASC so they can be appended directly.
 	if !delta {

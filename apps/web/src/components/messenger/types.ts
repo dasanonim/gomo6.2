@@ -46,6 +46,23 @@ export type ConversationView = {
   is_notes?: boolean;
 };
 
+/** One person behind a reaction chip. */
+export type ReactionUser = {
+  id: string;
+  username: string;
+};
+
+/**
+ * One chip under a message: an emoji, how many people chose it, whether the
+ * viewer is one of them, and who they are (for the "who reacted" affordance).
+ */
+export type ReactionSummary = {
+  emoji: string;
+  count: number;
+  mine: boolean;
+  users: ReactionUser[];
+};
+
 export type MessageView = {
   id: string;
   /** Monotonic PostgreSQL BIGINT cursor serialized as a decimal string. */
@@ -61,6 +78,8 @@ export type MessageView = {
   sent_at: string;
   client_id: string;
   attachments?: Attachment[];
+  /** Reaction chips, ordered by popularity (see `reactions.ts`). */
+  reactions?: ReactionSummary[];
   // Notes self-chat: client-side E2E-encrypted metadata (pin/folder/tags).
   // notes_meta is the wire ciphertext; notesPinned/notesFolder/notesTags are
   // the decrypted values the store exposes to the UI.

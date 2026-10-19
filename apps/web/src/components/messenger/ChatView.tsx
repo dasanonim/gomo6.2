@@ -60,6 +60,7 @@ export const ChatView = memo(function ChatView({
   const editMessage = useMessengerStore((s) => s.editMessage);
   const deleteMessage = useMessengerStore((s) => s.deleteMessage);
   const togglePin = useMessengerStore((s) => s.togglePin);
+  const toggleReaction = useMessengerStore((s) => s.toggleReaction);
   const toggleNotesPin = useMessengerStore((s) => s.toggleNotesPin);
 
   const [pinnedText, setPinnedText] = useState<string | null>(null);
@@ -473,6 +474,8 @@ export const ChatView = memo(function ChatView({
             onEdit={handleStartEdit}
             onDelete={deleteMessage}
             onTogglePin={conversation.is_notes ? toggleNotesPin : togglePin}
+            onToggleReaction={conversation.is_notes ? undefined : toggleReaction}
+            viewerId={me.id}
             onRetry={(m) => sendMessage(m.content, m.client_id)}
             onReply={handleReply}
             onCopy={handleCopy}
@@ -496,6 +499,7 @@ export const ChatView = memo(function ChatView({
       handleReply,
       handleCopy,
       handleJumpToMessage,
+      toggleReaction,
     ],
   );
 
