@@ -23,6 +23,8 @@
  * hold by construction (it both reads and writes, and that is the point).
  */
 
+import LAYOUT_CAUSES from "./layoutCauses";
+
 type Task = () => void;
 type ReflowTask = () => Task | void;
 
@@ -169,6 +171,132 @@ export function forceMutation<T>(cb: () => T): T {
 /** Current phase — for assertions in tests, never for branching in app code. */
 export function getPhase(): Phase {
   return phase;
+}
+
+// ── Strict mode: the read/write discipline, enforced ────────────────────────
+//
+// Ported from Telegram Web's `stricterdom` (enabled by `DEBUG` there, and here in
+// a dev build). It patches the layout-causing properties and methods of the DOM
+// so a read that happens while the mutation phase is running is reported: at that
+// point the pass has already written, so the read forces a synchronous reflow and
+// the batching is pointless. This is the tool that keeps an engine honest — the
+// scroll list writes the position in the mutation phase, and every read it needs
+// belongs to a measure pass.
+//
+// Deliberately NOT ported: their MutationObserver half (a DOM write outside the
+// mutation phase). Telegram's own renderer batches its writes into the mutation
+// phase, so the observer is meaningful there; React commits the DOM on its own
+// schedule, which would report every render as a violation. The read half is
+// exactly as meaningful for us, because the phases are ours.
+
+const nativeAccessors = new Map<string, PropertyDescriptor | undefined>();
+const nativeMethods = new Map<string, unknown>();
+
+let isStrict = false;
+let onViolation: (cause: string) => void = (cause) => {
+  console.warn(
+    `[fasterdom] layout read during the mutation phase: \`${cause}\`. ` +
+    "Move it to a measure pass or wrap it in forceMeasure().",
+  );
+};
+
+/** Where violations go: the dev overlay counts them, the console warns. */
+export function setStrictHandler(handler: (cause: string) => void): void {
+  onViolation = handler;
+}
+
+export function isStrictEnabled(): boolean {
+  return isStrict;
+}
+
+export function enableStrict(): void {
+  if (isStrict || typeof window === "undefined") return;
+  isStrict = true;
+
+  for (const [name, causes] of Object.entries(LAYOUT_CAUSES)) {
+    const entity = (globalThis as Record<string, unknown>)[name] as
+      | { prototype?: object }
+      | object
+      | undefined;
+    if (!entity) continue;
+    const prototype = ("prototype" in entity ? entity.prototype : entity) as Record<string, unknown> | undefined;
+    if (!prototype) continue;
+
+    for (const prop of "props" in causes ? causes.props : []) {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, prop);
+      const getter = descriptor?.get;
+      if (!getter) continue;
+
+      nativeAccessors.set(`${name}#${prop}`, descriptor);
+      Object.defineProperty(prototype, prop, {
+        ...descriptor,
+        get(this: unknown) {
+          onMeasure(prop);
+
+          return getter.call(this);
+        },
+      });
+    }
+
+    for (const method of "methods" in causes ? causes.methods : []) {
+      const native = prototype[method];
+      if (typeof native !== "function") continue;
+
+      nativeMethods.set(`${name}#${method}`, native);
+      prototype[method] = function patched(this: unknown, ...args: unknown[]) {
+        onMeasure(method);
+
+        return (native as (...innerArgs: unknown[]) => unknown).apply(this, args);
+      };
+    }
+  }
+}
+
+export function disableStrict(): void {
+  if (!isStrict) return;
+  isStrict = false;
+
+  for (const [key, descriptor] of nativeAccessors) {
+    const [name, prop] = key.split("#");
+    const entity = (globalThis as Record<string, unknown>)[name] as
+      | { prototype?: object }
+      | object
+      | undefined;
+    if (!entity) continue;
+    const prototype = ("prototype" in entity ? entity.prototype : entity) as Record<string, unknown> | undefined;
+    if (!prototype) continue;
+
+    if (descriptor) Object.defineProperty(prototype, prop, descriptor);
+    else delete prototype[prop];
+  }
+  nativeAccessors.clear();
+
+  for (const [key, native] of nativeMethods) {
+    const [name, method] = key.split("#");
+    const entity = (globalThis as Record<string, unknown>)[name] as
+      | { prototype?: object }
+      | object
+      | undefined;
+    if (!entity) continue;
+    const prototype = ("prototype" in entity ? entity.prototype : entity) as Record<string, unknown> | undefined;
+    if (prototype) prototype[method] = native;
+  }
+  nativeMethods.clear();
+}
+
+/** Run code that legitimately reads layout mid-mutation (canvas work, focus). */
+export function suppressStrict<T>(cb: () => T): T {
+  if (!isStrict) return cb();
+  disableStrict();
+  try {
+    return cb();
+  } finally {
+    enableStrict();
+  }
+}
+
+function onMeasure(cause: string): void {
+  if (phase !== "measure") onViolation(cause);
 }
 
 /** Test-only: drop pending work so one test cannot leak into the next. */

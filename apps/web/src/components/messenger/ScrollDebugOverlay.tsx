@@ -73,6 +73,12 @@ export const ScrollDebugOverlay = memo(function ScrollDebugOverlay() {
         <span>длинных кадров (&ge;{snapshot.longFrameMs} мс)</span>
         <b>{snapshot.longFrames}</b>
       </div>
+      {snapshot.strictViolations > 0 && (
+        <div className="scroll-debug-row is-bad">
+          <span>чтений layout в мутирующей фазе</span>
+          <b>{snapshot.strictViolations}{snapshot.lastStrictCause ? ` (${snapshot.lastStrictCause})` : ""}</b>
+        </div>
+      )}
       <div className="scroll-debug-row">
         <span>запросов истории / покоев</span>
         <b>{snapshot.pageRequests} / {snapshot.restPasses}</b>

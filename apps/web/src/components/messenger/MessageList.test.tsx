@@ -8,7 +8,7 @@ import {
 } from "./core/messageScrollAnchors";
 import { INITIAL_WINDOW, MAX_DOM_MESSAGES, RESET_WINDOW, WINDOW_STEP } from "./core/slicing";
 import { getDateSeparator } from "./messageListUtils";
-import { __resetFasterdomForTests } from "./core/fasterdom";
+import { __resetFasterdomForTests, disableStrict, enableStrict, setStrictHandler } from "./core/fasterdom";
 import { __setScrollDiagnosticsEnabled, readScrollDiagnostics } from "./core/scrollDiagnostics";
 import type { MessageView } from "./types";
 
@@ -906,6 +906,51 @@ describe("MessageList — unread marker", () => {
     const { container } = await mountList();
 
     expect(container.querySelector(".chat-unread-divider")).toBeNull();
+  });
+});
+
+describe("MessageList — the engine's own discipline", () => {
+  it("never reads layout during the mutation phase", async () => {
+    const violations: string[] = [];
+    setStrictHandler((cause) => violations.push(cause));
+    enableStrict();
+    try {
+      setStore({ messages: longList(200) });
+      const { container } = await mountList();
+      await scrollTo(container, 0);
+      await settle();
+
+      // An arrival, a slide into loaded rows, a jump — every commit path.
+      setStore({ messages: [...longList(200), makeMessage("new1", { sent_at: "2026-08-08T13:00:00.000Z" })] });
+      await flushCommit();
+      triggerSentinel(".scroll-sentinel-top");
+      await flushCommit();
+      await settle();
+
+      expect(violations).toEqual([]);
+    } finally {
+      disableStrict();
+    }
+  });
+
+  it("does not flash the newest-message button while an arrival is settling", async () => {
+    setStore({ messages: longList(200) });
+    const { container } = await mountList();
+
+    // An arrival while the reader is at the bottom arms the freeze…
+    setStore({ messages: [...longList(200), makeMessage("new1", { sent_at: "2026-08-08T13:00:00.000Z" })] });
+    await flushCommit();
+
+    // …so scrolling up in that window must not make the button appear and vanish.
+    await scrollTo(container, 0);
+    expect(container.querySelector(".scroll-to-bottom-btn")).toBeNull();
+
+    // Past the window the button is offered as usual.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    await scrollTo(container, 0);
+    expect(container.querySelector(".scroll-to-bottom-btn")).not.toBeNull();
   });
 });
 

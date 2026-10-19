@@ -50,6 +50,9 @@ export interface ScrollDiagnosticsSnapshot {
   /** Frames longer than this in the overlay's own loop (set while visible). */
   longFrameMs: number;
   longFrames: number;
+  /** Layout reads caught in the mutation phase by the strict pass (dev only). */
+  strictViolations: number;
+  lastStrictCause: string | null;
 }
 
 const state: ScrollDiagnosticsSnapshot = {
@@ -67,6 +70,8 @@ const state: ScrollDiagnosticsSnapshot = {
   worstGestureWrites: 0,
   longFrameMs: 50,
   longFrames: 0,
+  strictViolations: 0,
+  lastStrictCause: null,
 };
 
 let enabled = false;
@@ -170,6 +175,27 @@ export function noteCommitDuration(ms: number): void {
   notify();
 }
 
+/**
+ * A layout read that happened while the mutation phase was running (the strict
+ * pass in `core/fasterdom`). Counted and named here so the overlay can show it,
+ * and warned once per cause — a repeated cause is one bug, not a stream.
+ */
+const reportedStrictCauses = new Set<string>();
+
+export function noteStrictViolation(cause: string): void {
+  if (!enabled) return;
+  state.strictViolations += 1;
+  state.lastStrictCause = cause;
+  notify();
+
+  if (reportedStrictCauses.has(cause)) return;
+  reportedStrictCauses.add(cause);
+  console.warn(
+    `[scroll] layout read during the mutation phase: \`${cause}\` — ` +
+    "move it to a measure pass or wrap it in forceMeasure()",
+  );
+}
+
 export function notePageRequest(): void {
   if (!enabled) return;
   state.pageRequests += 1;
@@ -198,6 +224,9 @@ export function resetScrollDiagnostics(): void {
   state.mountedRows = 0;
   state.worstGestureWrites = 0;
   state.longFrames = 0;
+  state.strictViolations = 0;
+  state.lastStrictCause = null;
+  reportedStrictCauses.clear();
   gestureOpen = false;
   notify();
 }

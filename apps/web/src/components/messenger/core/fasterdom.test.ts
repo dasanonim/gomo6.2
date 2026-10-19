@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installManualRaf, type ManualRaf } from "@/test/manualRaf";
 import {
   __resetFasterdomForTests,
+  disableStrict,
+  enableStrict,
+  isStrictEnabled,
+  setStrictHandler,
+  suppressStrict,
   forceMeasure,
   forceMutation,
   getPhase,
@@ -21,6 +26,7 @@ describe("fasterdom", () => {
   });
 
   afterEach(() => {
+    disableStrict();
     __resetFasterdomForTests();
     vi.unstubAllGlobals();
     vi.useRealTimers();
@@ -141,6 +147,57 @@ describe("fasterdom", () => {
     await runPass();
 
     expect(seen).toEqual(["measure", "mutate", "measure", "mutate", "measure", "mutate"]);
+  });
+
+  it("reports a layout read made while the mutation phase is running", async () => {
+    const reported: string[] = [];
+    setStrictHandler((cause) => reported.push(cause));
+    enableStrict();
+    expect(isStrictEnabled()).toBe(true);
+
+    // A read inside a mutation is exactly what the batched pass exists to avoid:
+    // the write has already happened, so it forces a synchronous reflow.
+    requestMutation(() => {
+      void document.body.clientHeight;
+    });
+    await runPass();
+    expect(reported).toEqual(["clientHeight"]);
+
+    // The same read in a measure pass is what the phase is for.
+    requestMeasure(() => {
+      void document.body.clientHeight;
+    });
+    await runPass();
+    expect(reported).toEqual(["clientHeight"]);
+  });
+
+  it("stays quiet outside a pass, and can be suppressed and restored", async () => {
+    const reported: string[] = [];
+    setStrictHandler((cause) => reported.push(cause));
+    enableStrict();
+
+    // No pass is running: the phase is `measure`, so an ordinary read is fine.
+    void document.body.offsetHeight;
+    expect(reported).toEqual([]);
+
+    requestMutation(() => {
+      void document.body.offsetHeight;
+    });
+    await runPass();
+    expect(reported).toEqual(["offsetHeight"]);
+
+    requestMutation(() => {
+      suppressStrict(() => {
+        void document.body.offsetHeight;
+      });
+    });
+    await runPass();
+    expect(reported).toEqual(["offsetHeight"]);
+
+    // Disabling restores the engine's own accessors.
+    disableStrict();
+    expect(isStrictEnabled()).toBe(false);
+    expect(document.body.offsetHeight).toBe(0);
   });
 
   it("still runs the batch when the frame callback never fires", async () => {

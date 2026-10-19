@@ -47,7 +47,20 @@ import {
   type ScrollDirection,
   type ScrollPosition,
 } from "./core/animateScroll";
-import { requestForcedReflow, requestMeasure, requestMutation } from "./core/fasterdom";
+import {
+  forceMeasure,
+  requestForcedReflow,
+  requestMeasure,
+  requestMutation,
+} from "./core/fasterdom";
+import {
+  PERF_COMMIT_READ,
+  PERF_COMMIT_START,
+  PERF_SCROLL_PASS_START,
+  logCommitTiming,
+  perfMark,
+  perfMeasure,
+} from "./core/perfMarks";
 import {
   isScrollDiagnosticsEnabled,
   noteCommitDuration,
@@ -126,6 +139,13 @@ const SCROLLING_CLASS = "is-scrolling-messages";
 const SCROLLING_FLAG_MS = 900;
 /** Distance the unread divider keeps from the top when a chat opens on it. */
 const UNREAD_DIVIDER_TOP = 12;
+/**
+ * How long an arrival keeps the "the reader is following" state pinned
+ * (Telegram Web's `TOOLS_FREEZE_TIMEOUT`): while a tall incoming message is being
+ * brought in, the position is momentarily further from the bottom than the slack,
+ * and without the freeze the "to the newest message" button would flash on and off.
+ */
+const FOLLOWING_FREEZE_MS = 350;
 /** Redisplays a jumped-to message for this long. */
 const FLASH_MS = 1400;
 /** How many pages `scrollToMessage` may fetch while looking for its target. */
@@ -533,6 +553,8 @@ export const MessageList = memo(
     const pendingBottomGlideRef = useRef(false);
     const pendingTopMountRef = useRef(false);
     const pinnedTailRef = useRef<string | null>(null);
+    /** While `Date.now()` is below this, an arrival is settling (see the freeze). */
+    const followingFreezeUntilRef = useRef(0);
     const lastReadKeyRef = useRef<string | null>(null);
     const lastStickyDateRef = useRef<string | null>(null);
     const scrollingFlagTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -848,6 +870,10 @@ export const MessageList = memo(
       const isFollowing =
         scroller.scrollHeight - readContainerScrollTop(scroller) - scroller.clientHeight <= FOLLOW_SLACK;
       if (isFollowing === followingRef.current) return;
+      // An arrival in flight: the reader is following, the position is briefly
+      // further from the bottom than the slack. Leaving the follow state here is
+      // what makes the button flash.
+      if (!isFollowing && Date.now() < followingFreezeUntilRef.current) return;
 
       if (isFollowing) {
         followingRef.current = true;
@@ -953,6 +979,7 @@ export const MessageList = memo(
       if (scrollRafRef.current !== null) return;
       scrollRafRef.current = requestAnimationFrame(() => {
         scrollRafRef.current = null;
+        perfMark(PERF_SCROLL_PASS_START);
         const scroller = scrollerRef.current;
         if (!scroller) return;
         bestPositionRef.current = readContainerScrollTop(scroller);
@@ -961,6 +988,7 @@ export const MessageList = memo(
         markScrolling();
         updateStickyDate();
         prefetchOlder();
+        perfMeasure("gomo6:scroll-pass-ms", PERF_SCROLL_PASS_START);
       });
     }, [armRest, updateFollowing, syncBottomSnap, markScrolling, updateStickyDate, prefetchOlder]);
 
@@ -1078,8 +1106,10 @@ export const MessageList = memo(
       pendingBottomGlideRef.current = false;
 
       const commitStartedAt = performance.now();
+      perfMark(PERF_COMMIT_START);
 
       requestForcedReflow(() => {
+        perfMark(PERF_COMMIT_READ);
         const scrollTop = readContainerScrollTop(scroller);
         const scrollHeight = scroller.scrollHeight;
         const clientHeight = scroller.clientHeight;
@@ -1187,6 +1217,7 @@ export const MessageList = memo(
             pinnedTailRef.current = tailKey;
             glideTarget = bottomTriggerRef.current ?? (rows.length > 0 ? rows[rows.length - 1] : null);
           }
+          followingFreezeUntilRef.current = Date.now() + FOLLOWING_FREEZE_MS;
           // …and mark what actually arrived, so CSS can bring it in. Only the
           // rows appended since the previous commit: rows mounted by a window
           // slide are not new messages and must not animate (Telegram's
@@ -1273,17 +1304,23 @@ export const MessageList = memo(
               justWrotePositionRef.current = false;
             });
           }
-          // After the write: "is the reader at the bottom" is a property of the
-          // new position, and snapping is armed from it.
-          syncBottomSnap();
-          // The date is part of the chrome too: a commit can move the reader
-          // (a jump, a send) without a scroll event to recompute it.
-          updateStickyDate();
-          bestPositionRef.current = readContainerScrollTop(scroller);
-          prevCommitRef.current = {
-            ...nextCommit,
-            bottomOffset: scroller.scrollHeight - bestPositionRef.current,
-          };
+          // The chrome (snap state, floating date, the position bookkeeping) has
+          // to *read* the geometry it decides from, and this is the mutation
+          // phase — so the reads are declared. Without this the strict pass
+          // reports them, and rightly so: an undeclared read here forces the
+          // synchronous reflow the batched pass exists to avoid.
+          forceMeasure(() => {
+            // "Is the reader at the bottom" is a property of the new position.
+            syncBottomSnap();
+            // The date is part of the chrome too: a commit can move the reader
+            // (a jump, a send) without a scroll event to recompute it.
+            updateStickyDate();
+            bestPositionRef.current = readContainerScrollTop(scroller);
+            prevCommitRef.current = {
+              ...nextCommit,
+              bottomOffset: scroller.scrollHeight - bestPositionRef.current,
+            };
+          });
           // The restore has landed; triggers may fire again.
           requestMeasure(() => {
             replacingHistoryRef.current = false;
@@ -1298,6 +1335,10 @@ export const MessageList = memo(
             noteMountedRows(derived.end - derived.start, 0, derived.end - derived.start);
           }
           noteCommitDuration(performance.now() - commitStartedAt);
+          logCommitTiming(
+            perfMeasure("gomo6:commit:read-ms", PERF_COMMIT_START),
+            perfMeasure("gomo6:commit:write-ms", PERF_COMMIT_READ),
+          );
         };
       });
 
