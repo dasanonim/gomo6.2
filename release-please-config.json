@@ -21,7 +21,6 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "package-name": "gomo6",
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md"
     }
