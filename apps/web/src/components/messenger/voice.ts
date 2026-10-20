@@ -131,8 +131,13 @@ export function peakScale(peaks: ArrayLike<number>): number {
  */
 export type AgcState = { ref: number };
 
-const AGC_GATE = 0.02;
-const AGC_MIN_REF = 0.08;
+/**
+ * Absolute gate on the level scale (0..1). Everything below it is drawn as a
+ * dot: room tone, the hiss of a laptop fan, the tail of a previous word. This is
+ * the threshold that keeps silence silent — without it the gain lifts noise.
+ */
+const AGC_GATE = 0.045;
+const AGC_MIN_REF = 0.1;
 const AGC_ATTACK_LIMIT = 1.4;
 const AGC_ATTACK_STEP = 0.02;
 /** Slow release while the level stays near the reference… */
@@ -149,6 +154,12 @@ export function createAgc(): AgcState {
 /** One sampled level (0..1, absolute) → its bar height (0..1, relative). */
 export function agcPeak(level: number, state: AgcState): number {
   const signal = Math.max(0, Math.min(1, level) - AGC_GATE);
+  // Nothing above the gate means nothing to gain up: keep the reference still
+  // so silence cannot pump it.
+  if (signal === 0) {
+    state.ref = Math.max(AGC_MIN_REF, state.ref * AGC_DECAY);
+    return 0;
+  }
   const attacked = Math.min(signal, state.ref * AGC_ATTACK_LIMIT + AGC_ATTACK_STEP);
   const decay = signal < state.ref * AGC_DROP_RATIO ? AGC_DROP_DECAY : AGC_DECAY;
   state.ref = Math.max(AGC_MIN_REF, attacked, state.ref * decay);

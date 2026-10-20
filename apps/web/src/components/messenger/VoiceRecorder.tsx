@@ -499,7 +499,12 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        // Telegram records raw (`getUserMedia({ audio: true })`): its waveform is
+        // honest about silence. Browser AGC is the thing that "pumps" — it lifts
+        // room tone to full scale the moment the room is quiet, which is exactly
+        // the wave that grew by itself. Noise suppression stays (it removes the
+        // steady hiss, so the dots really are dots).
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
       });
     } catch (error) {
       releasedWhileRequestingRef.current = false;

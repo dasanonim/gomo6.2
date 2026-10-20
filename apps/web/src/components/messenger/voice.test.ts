@@ -57,13 +57,15 @@ describe("live AGC", () => {
     expect(run([0, 0, 0], state)).toEqual([0, 0, 0]);
   });
 
-  it("lifts a quiet voice into view instead of drawing dots", () => {
-    const [first] = run([0.05]);
-    expect(first).toBeGreaterThan(0.1);
-    // …and a whisper is still visibly lower than normal speech.
-    const quiet = run([0.05, 0.05, 0.05]);
-    const normal = run([0.15, 0.15, 0.15]);
-    expect(Math.min(...quiet)).toBeLessThan(Math.max(...normal));
+  it("keeps room tone at zero and lifts a quiet voice into view", () => {
+    // Levels sit on the same 0..1 scale as the gate: ~0.02 is room tone,
+    // ~0.08 a quiet voice, ~0.3 normal speech.
+    expect(run([0.02, 0.02, 0.03, 0.02])).toEqual([0, 0, 0, 0]);
+    const quiet = run([0.08, 0.08, 0.08]);
+    expect(Math.max(...quiet)).toBeGreaterThan(0.1);
+    // …and it stays visibly below normal speech.
+    const normal = run([0.3, 0.3, 0.3]);
+    expect(Math.max(...quiet)).toBeLessThan(Math.max(...normal));
   });
 
   it("does not let one spike own the scale", () => {
@@ -78,7 +80,7 @@ describe("live AGC", () => {
   it("lifts a whisper back into view after a shout", () => {
     const state = createAgc();
     run(new Array(10).fill(0.5), state); // a loud passage sets a high reference
-    const whisper = run(new Array(20).fill(0.06), state);
+    const whisper = run(new Array(20).fill(0.12), state);
     // It starts quiet and recovers within about a second of frames.
     expect(whisper[0]).toBeLessThan(0.2);
     expect(whisper[whisper.length - 1]).toBeGreaterThan(0.4);
