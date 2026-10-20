@@ -24,6 +24,8 @@ export type StoryViewerState = {
   ownerType: StoryOwnerType;
   ownerId: string;
   storyId: string;
+  /** Owner display name, known by the entry point (board name, profile name). */
+  ownerName?: string;
   /** Origin for the open animation and analytics: rail / profile / board / deep-link. */
   origin?: string;
   /** Groups to walk after this one; absent means "this owner only". */
@@ -323,36 +325,44 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
   },
 
   openViewer: (state) => {
-    // Build the walk order from the rail (the watch list) when the owner is in
-    // it, otherwise keep the viewer scoped to that owner (profile / board /
-    // deep link). IDs are snapshotted; content still comes from the store, so a
-    // slide deleted mid-session simply disappears from the resolved list.
-    const rail = get().rail;
-    const inRail = rail.some(
-      (group) => group.owner.type === state.ownerType && group.owner.id === state.ownerId,
-    );
-    let queue: StoryViewerGroup[] | undefined;
-    if (inRail) {
-      queue = rail
-        .filter((group) => group.stories.length > 0)
+    // The queue is a snapshot of IDs, but the CURRENT owner's list is taken from
+    // the store (the same array the viewer resolves slides from), not from the
+    // rail: the rail can be stale, can exclude "only me" slides, and a profile
+    // can open a slide the rail never carried. A queue whose ids do not contain
+    // the opened slide used to send "next" past the end and close the player.
+    const live = get().byOwner[ownerKey(state.ownerType, state.ownerId)] ?? [];
+    const current: StoryViewerGroup = {
+      ownerType: state.ownerType,
+      ownerId: state.ownerId,
+      storyIds: live.map((story) => story.id),
+    };
+
+    let queue: StoryViewerGroup[] = current.storyIds.length ? [current] : [];
+
+    // Only the rail continues into other owners — the same rule Telegram uses
+    // for `isSinglePeer`: opening from a profile/board stays on that owner.
+    if (state.origin === "rail") {
+      const rail = get().rail;
+      const groups = rail
         .map((group) => ({
           ownerType: group.owner.type,
           ownerId: group.owner.id,
-          storyIds: group.stories.map((story) => story.id),
-        }));
-    } else {
-      const stories = get().byOwner[ownerKey(state.ownerType, state.ownerId)] ?? [];
-      if (stories.length > 0) {
-        queue = [
-          {
-            ownerType: state.ownerType,
-            ownerId: state.ownerId,
-            storyIds: stories.map((story) => story.id),
-          },
-        ];
-      }
+          storyIds:
+            group.owner.type === state.ownerType && group.owner.id === state.ownerId
+              ? current.storyIds
+              : group.stories.map((story) => story.id),
+        }))
+        .filter((group) => group.storyIds.length > 0);
+      const index = groups.findIndex(
+        (group) => group.ownerType === state.ownerType && group.ownerId === state.ownerId,
+      );
+      if (index !== -1) queue = groups;
+      else if (current.storyIds.length) queue = [...groups, current];
     }
-    set({ viewer: { ...state, queue } });
+
+    // No list at all (a deep link before the fetch): leave the queue undefined
+    // and let walkViewer keep the viewer on this owner instead of closing it.
+    set({ viewer: { ...state, queue: queue.length ? queue : undefined } });
   },
   closeViewer: () => set({ viewer: null }),
 
@@ -361,6 +371,7 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
     if (!viewer) return;
     const step = walkViewer(viewer, 1);
     if (step) set({ viewer: { ...viewer, ...step } });
+    else if (!viewer.queue?.length) return; // a deep link with no fetched list: stay put
     else set({ viewer: null });
   },
 
@@ -369,6 +380,7 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
     if (!viewer) return;
     const step = walkViewer(viewer, -1);
     if (step) set({ viewer: { ...viewer, ...step } });
+    else if (!viewer.queue?.length) return;
     else set({ viewer: null });
   },
   openComposer: (target) => set({ composer: target }),

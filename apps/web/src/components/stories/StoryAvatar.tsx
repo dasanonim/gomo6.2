@@ -75,7 +75,7 @@ export function StoryAvatar({
       if (showAdd) openComposer({ ownerType, ownerId, ownerName });
       return;
     }
-    openViewer({ ownerType, ownerId, storyId: firstUnread.id, origin });
+    openViewer({ ownerType, ownerId, ownerName, storyId: firstUnread.id, origin });
   };
 
   const label = live.length

@@ -109,7 +109,7 @@ describe("StoryViewer", () => {
     expect(screen.getByText("Bob")).toBeInTheDocument();
   });
 
-  it("moves to the next slide and closes after the last one", () => {
+  it("moves to the next slide and closes after the last one", async () => {
     seed([story({ id: "s1" }), story({ id: "s2", kind: "text", text: "привет" })]);
     renderViewer();
 
@@ -117,8 +117,24 @@ describe("StoryViewer", () => {
     expect(useStoriesStore.getState().viewer?.storyId).toBe("s2");
     expect(screen.getByText("привет")).toBeInTheDocument();
 
+    // Past the slide-transition lock, like a real second tap.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
     fireEvent.click(screen.getByRole("button", { name: "Следующая история" }));
     expect(useStoriesStore.getState().viewer).toBeNull();
+  });
+
+  it("ignores a double tap that lands within the transition lock", () => {
+    seed([story({ id: "s1" }), story({ id: "s2" }), story({ id: "s3" })]);
+    renderViewer();
+
+    const next = screen.getByRole("button", { name: "Следующая история" });
+    fireEvent.click(next);
+    fireEvent.click(next);
+
+    // One intent, one slide — a second event must not skip (or close) ahead.
+    expect(useStoriesStore.getState().viewer?.storyId).toBe("s2");
   });
 
   it("goes back to the previous slide", () => {

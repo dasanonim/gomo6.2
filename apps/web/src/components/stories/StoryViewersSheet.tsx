@@ -67,7 +67,7 @@ export function StoryViewersSheet({ open, onOpenChange, story }: StoryViewersShe
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="z-[260] sm:max-w-md" overlayClassName="z-[250]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Eye className="h-4 w-4" />

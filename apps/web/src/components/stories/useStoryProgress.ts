@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, type RefObject } from "react";
 
 export type StoryProgressOptions = {
   /** Slide duration in ms (0 disables the timer). */
@@ -7,72 +7,85 @@ export type StoryProgressOptions = {
   onComplete: () => void;
   /** Changing this resets the progress (the slide changed). */
   resetKey: string;
+  /** The active segment's fill element. Written directly — see below. */
+  targetRef: RefObject<HTMLElement | null>;
+  /** Optional progressbar element whose aria-valuenow mirrors the bar. */
+  ariaRef?: RefObject<HTMLElement | null>;
 };
 
+const scaleX = (progress: number) => `scaleX(${Math.max(0, Math.min(1, progress))})`;
+
 /**
- * Drives the progress bar of a non-video slide. Progress is measured with
- * `Date.now()` inside requestAnimationFrame so pausing (hold, tab hidden, a
- * dialog) freezes the bar and resuming continues from the same place instead of
- * restarting the slide — the behaviour Telegram users expect.
+ * Drives the progress bar of a non-video slide.
+ *
+ * Two deliberate decisions:
+ *
+ *  1. **No React state.** A bar that advances at 60fps must not re-render the
+ *     whole player (media element, header, footer, Radix dialogs) sixty times a
+ *     second — that is what made the previous version stutter. The hook writes
+ *     `transform: scaleX()` straight to the segment element, so the bar is
+ *     composited on the GPU and React does nothing per frame.
+ *
+ *  2. **Deltas from the frame clock.** The elapsed time is accumulated as the
+ *     difference between consecutive requestAnimationFrame timestamps, never
+ *     by mixing `Date.now()` with the frame timestamp (two different clocks —
+ *     the old bug: the bar never advanced in a real browser). Pausing simply
+ *     stops scheduling; resuming restarts the clock, so the pause gap is not
+ *     counted and the slide continues where it stopped.
  */
-export function useStoryProgress({ duration, paused, onComplete, resetKey }: StoryProgressOptions): number {
-  const [progress, setProgress] = useState(0);
+export function useStoryProgress({
+  duration,
+  paused,
+  onComplete,
+  resetKey,
+  targetRef,
+  ariaRef,
+}: StoryProgressOptions): void {
   const elapsedRef = useRef(0);
-  const startedAtRef = useRef<number | null>(null);
-  const rafRef = useRef<number | null>(null);
+  const lastFrameRef = useRef<number | null>(null);
   const finishedRef = useRef(false);
   const completeRef = useRef(onComplete);
   completeRef.current = onComplete;
 
+  const paint = useCallback(
+    (progress: number) => {
+      if (targetRef.current) targetRef.current.style.transform = scaleX(progress);
+      if (ariaRef?.current) {
+        ariaRef.current.setAttribute("aria-valuenow", String(Math.round(progress * 100)));
+      }
+    },
+    [targetRef, ariaRef],
+  );
+
   useEffect(() => {
     elapsedRef.current = 0;
-    startedAtRef.current = null;
+    lastFrameRef.current = null;
     finishedRef.current = false;
-    setProgress(0);
-  }, [resetKey]);
+    paint(0);
+  }, [resetKey, paint]);
 
   useEffect(() => {
-    if (duration <= 0 || finishedRef.current) return;
+    if (duration <= 0 || paused || finishedRef.current) return;
+    // A fresh run starts from a clean baseline: the first frame only records
+    // the clock, so neither the pause gap nor the previous slide leaks in.
+    lastFrameRef.current = null;
 
-    if (paused) {
-      if (startedAtRef.current !== null) {
-        elapsedRef.current += Date.now() - startedAtRef.current;
-        startedAtRef.current = null;
-      }
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      setProgress(Math.min(1, elapsedRef.current / duration));
-      return;
-    }
-
-    startedAtRef.current = Date.now();
+    let frame = 0;
     const tick = (now: number) => {
-      const elapsed = elapsedRef.current + (now - (startedAtRef.current ?? now));
-      const next = Math.min(1, elapsed / duration);
-      setProgress(next);
-      if (next >= 1) {
+      if (lastFrameRef.current !== null) {
+        elapsedRef.current += Math.max(0, now - lastFrameRef.current);
+      }
+      lastFrameRef.current = now;
+      const progress = Math.min(1, elapsedRef.current / duration);
+      paint(progress);
+      if (progress >= 1) {
         finishedRef.current = true;
-        rafRef.current = null;
         completeRef.current();
         return;
       }
-      rafRef.current = requestAnimationFrame(tick);
+      frame = requestAnimationFrame(tick);
     };
-    rafRef.current = requestAnimationFrame(tick);
-
-    return () => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      if (startedAtRef.current !== null) {
-        elapsedRef.current += Date.now() - startedAtRef.current;
-        startedAtRef.current = null;
-      }
-    };
-  }, [paused, duration, resetKey]);
-
-  return progress;
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [duration, paused, resetKey, paint]);
 }

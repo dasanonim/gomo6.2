@@ -239,3 +239,123 @@ describe("walkViewer", () => {
     expect(walkViewer({ ...base, storyId: "a" }, -1)).toBeNull();
   });
 });
+
+describe("openViewer queue", () => {
+  beforeEach(() => {
+    useStoriesStore.getState().reset();
+    vi.clearAllMocks();
+  });
+
+  const railGroup = (ownerId: string, storyIds: string[]) => ({
+    owner: { type: "user" as const, id: ownerId, name: ownerId },
+    stories: storyIds.map((id) => ({
+      ...({
+        id,
+        owner_type: "user",
+        owner_id: ownerId,
+        author_id: ownerId,
+        kind: "photo",
+        text: "",
+        privacy: "everyone",
+        is_pinned: false,
+        views_count: 0,
+        reactions_count: 0,
+        created_at: "2026-10-20T10:00:00.000Z",
+        expires_at: "2099-10-21T10:00:00.000Z",
+        is_viewed: false,
+        is_own: false,
+        my_reaction: null,
+      } as Story),
+    })),
+    has_unread: true,
+  });
+
+  it("keeps a profile-opened viewer on its owner even when the rail is stale", () => {
+    // The rail knows only one slide of this author; the profile loaded three.
+    useStoriesStore.setState({
+      rail: [railGroup("u1", ["s1"])],
+      byOwner: {
+        "user:u1": ["s1", "s2", "s3"].map((id) => ({
+          id,
+          owner_type: "user",
+          owner_id: "u1",
+          author_id: "u1",
+          kind: "photo",
+          text: "",
+          privacy: "everyone",
+          is_pinned: false,
+          views_count: 0,
+          reactions_count: 0,
+          created_at: "2026-10-20T10:00:00.000Z",
+          expires_at: "2099-10-21T10:00:00.000Z",
+          is_viewed: false,
+          is_own: false,
+          my_reaction: null,
+        })) as Story[],
+      },
+    });
+
+    useStoriesStore.getState().openViewer({
+      ownerType: "user",
+      ownerId: "u1",
+      storyId: "s2",
+      origin: "profile",
+    });
+    useStoriesStore.getState().viewerNext();
+
+    expect(useStoriesStore.getState().viewer?.storyId).toBe("s3");
+  });
+
+  it("does not jump to another owner when opened from a profile", () => {
+    useStoriesStore.setState({
+      rail: [railGroup("u1", ["s1"]), railGroup("u2", ["x1"])],
+      byOwner: {
+        "user:u1": [railGroup("u1", ["s1"]).stories[0]],
+        "user:u2": [railGroup("u2", ["x1"]).stories[0]],
+      },
+    });
+
+    useStoriesStore.getState().openViewer({
+      ownerType: "user",
+      ownerId: "u1",
+      storyId: "s1",
+      origin: "profile",
+    });
+    useStoriesStore.getState().viewerNext();
+
+    // End of this owner and not opened from the rail → the viewer closes.
+    expect(useStoriesStore.getState().viewer).toBeNull();
+  });
+
+  it("crosses into the next owner when opened from the rail", () => {
+    useStoriesStore.setState({
+      rail: [railGroup("u1", ["s1"]), railGroup("u2", ["x1"])],
+      byOwner: {
+        "user:u1": [railGroup("u1", ["s1"]).stories[0]],
+        "user:u2": [railGroup("u2", ["x1"]).stories[0]],
+      },
+    });
+
+    useStoriesStore.getState().openViewer({
+      ownerType: "user",
+      ownerId: "u1",
+      storyId: "s1",
+      origin: "rail",
+    });
+    useStoriesStore.getState().viewerNext();
+
+    expect(useStoriesStore.getState().viewer).toMatchObject({ ownerId: "u2", storyId: "x1" });
+  });
+
+  it("stays on a deep-linked slide when no list has been fetched yet", () => {
+    useStoriesStore.getState().openViewer({
+      ownerType: "user",
+      ownerId: "u9",
+      storyId: "deep",
+      origin: "link",
+    });
+    useStoriesStore.getState().viewerNext();
+
+    expect(useStoriesStore.getState().viewer?.storyId).toBe("deep");
+  });
+});

@@ -64,6 +64,8 @@ const IMAGE_DURATION_MS = 6000;
 const EMPTY_STORIES: Story[] = [];
 const SWIPE_CLOSE_PX = 120;
 const HOLD_MS = 220;
+/** Slide transition lock; also swallows click+pointerup double events. */
+const NAV_LOCK_MS = 180;
 
 /** Slides that are gone (deleted, expired, hidden mid-session) are skipped. */
 function resolveStory(state: ReturnType<typeof useStoriesStore.getState>, viewer: StoryViewerState) {
@@ -121,12 +123,24 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [viewersOpen, setViewersOpen] = useState(false);
   const [muted, setMuted] = useState(true);
-  const [videoProgress, setVideoProgress] = useState(0);
-  const [dragY, setDragY] = useState(0);
   const [loadFailed, setLoadFailed] = useState(false);
 
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const pointerStart = useRef<{ x: number; y: number; at: number; moved: boolean } | null>(null);
+  const activeBarRef = useRef<HTMLSpanElement | null>(null);
+  const progressTrackRef = useRef<HTMLDivElement | null>(null);
+  const pointerStart = useRef<{
+    x: number;
+    y: number;
+    at: number;
+    moved: boolean;
+    onButton: boolean;
+  } | null>(null);
+  // Two inputs can mean one intent (click + pointerup, or a fast double tap).
+  // A short lock mirrors Telegram's slide transition and stops the player from
+  // skipping a slide or closing on a stray second event.
+  const navLockRef = useRef(0);
 
   // The slide may not be in the store yet (deep link, a group the rail has not
   // fetched). One owner-scoped fetch is enough; a 404/timeout shows the error
@@ -167,16 +181,44 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
 
   const isPaused = paused || menuOpen || privacyOpen || deleteOpen || viewersOpen;
 
-  const goNext = useCallback(() => viewerNext(), [viewerNext]);
-  const goPrev = useCallback(() => viewerPrev(), [viewerPrev]);
+  const navigateOnce = useCallback((move: () => void) => {
+    const now = Date.now();
+    if (now - navLockRef.current < NAV_LOCK_MS) return;
+    navLockRef.current = now;
+    move();
+  }, []);
+
+  const goNext = useCallback(() => navigateOnce(viewerNext), [navigateOnce, viewerNext]);
+  const goPrev = useCallback(() => navigateOnce(viewerPrev), [navigateOnce, viewerPrev]);
 
   const isVideo = story?.kind === "video";
-  const imageProgress = useStoryProgress({
+  useStoryProgress({
     duration: story && !isVideo ? IMAGE_DURATION_MS : 0,
     paused: isPaused,
     onComplete: goNext,
     resetKey: story?.id ?? "none",
+    targetRef: activeBarRef,
+    ariaRef: progressTrackRef,
   });
+
+  // The video bar follows the element's own clock on every frame: pausing or
+  // buffering stops `currentTime`, so the bar freezes with the picture, and a
+  // 60-second clip still gets a smooth bar (timeupdate alone fires ~4×/s).
+  useEffect(() => {
+    if (!isVideo || !story) return;
+    let frame = 0;
+    const tick = () => {
+      const video = videoRef.current;
+      if (video && video.duration > 0) {
+        const value = Math.min(1, video.currentTime / video.duration);
+        if (activeBarRef.current) activeBarRef.current.style.transform = `scaleX(${value})`;
+        progressTrackRef.current?.setAttribute("aria-valuenow", String(Math.round(value * 100)));
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [isVideo, story]);
 
   // Video follows the element's own clock: pausing the element pauses the bar,
   // and buffering cannot desynchronise the two.
@@ -254,12 +296,24 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
     );
   }
 
-  const ownerName = group?.owner.name ?? story.author?.username ?? "";
+  const ownerName =
+    group?.owner.name ??
+    viewer.ownerName ??
+    story.author?.display_name ??
+    story.author?.username ??
+    "";
   const isGosub = story.owner_type === "gosub";
   const canEdit = story.is_own;
 
   const onPointerDown = (event: ReactPointerEvent) => {
-    pointerStart.current = { x: event.clientX, y: event.clientY, at: Date.now(), moved: false };
+    const target = event.target as HTMLElement | null;
+    pointerStart.current = {
+      x: event.clientX,
+      y: event.clientY,
+      at: Date.now(),
+      moved: false,
+      onButton: Boolean(target?.closest("button")),
+    };
     setPaused(true);
   };
   const onPointerMove = (event: ReactPointerEvent) => {
@@ -267,23 +321,35 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
     if (!start) return;
     const dy = event.clientY - start.y;
     if (Math.abs(dy) > 8) start.moved = true;
-    if (dy > 0 && Math.abs(dy) > Math.abs(event.clientX - start.x)) setDragY(dy);
+    if (dy > 0 && Math.abs(dy) > Math.abs(event.clientX - start.x)) {
+      // Direct write: a swipe produces ~60 pointer events/second and must not
+      // re-render the player each time.
+      dragRef.current = dy;
+      if (rootRef.current) {
+        rootRef.current.style.transition = "none";
+        rootRef.current.style.transform = `translateY(${dy}px)`;
+      }
+    }
   };
   const onPointerUp = (event: ReactPointerEvent) => {
     const start = pointerStart.current;
     pointerStart.current = null;
     setPaused(false);
     if (!start) return;
-    if (dragY > SWIPE_CLOSE_PX) {
-      setDragY(0);
+    const dragged = dragRef.current;
+    dragRef.current = 0;
+    if (rootRef.current) {
+      rootRef.current.style.transition = "transform 180ms ease";
+      rootRef.current.style.transform = "";
+    }
+    if (dragged > SWIPE_CLOSE_PX) {
       closeViewer();
       return;
     }
-    setDragY(0);
-    // The accessible prev/next buttons handle their own clicks; without this
-    // guard a single tap would navigate twice (button + half-screen tap).
-    const target = event.target as HTMLElement | null;
-    if (target?.closest("button")) return;
+    // A press that STARTED on a control (prev/next/close) navigates through
+    // that control's click handler; running the half-screen tap too would
+    // double-advance and, at the end of the queue, close the viewer.
+    if (start.onButton) return;
     const held = Date.now() - start.at;
     if (held < HOLD_MS && !start.moved) {
       const rect = event.currentTarget.getBoundingClientRect();
@@ -304,15 +370,13 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
     await updateStory(story, { privacy }).catch(() => undefined);
   };
 
-  const progress = isVideo ? videoProgress : imageProgress;
-
   return (
     <div
+      ref={rootRef}
       className="fixed inset-0 z-[200] flex flex-col bg-black text-white"
       role="dialog"
       aria-modal="true"
       aria-label={t("stories.viewerTitle")}
-      style={{ transform: dragY ? `translateY(${dragY}px)` : undefined, transition: dragY ? "none" : "transform 180ms ease" }}
       data-testid="story-viewer"
     >
       {/* Header */}
@@ -361,7 +425,7 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
                 <MoreVertical className="h-4 w-4" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="z-[260]">
               {!isGosub && (
                 <DropdownMenuItem onSelect={() => setPrivacyOpen(true)}>
                   {t("stories.menuPrivacy")}
@@ -399,15 +463,25 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
       </div>
 
       {/* Progress segments */}
-      <div className="relative z-20 mt-2 flex gap-1 px-3 sm:px-5" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
+      <div
+        ref={progressTrackRef}
+        className="relative z-20 mt-2 flex gap-1 px-3 sm:px-5"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={0}
+      >
         {Array.from({ length: Math.max(totalSlides, 1) }, (_, index) => {
-          const before = slideIndex === -1 ? 0 : index < slideIndex;
+          const before = slideIndex !== -1 && index < slideIndex;
           const current = index === slideIndex;
           return (
             <span key={index} className="h-0.5 flex-1 overflow-hidden rounded-full bg-white/30">
+              {/* scaleX is written straight to the DOM by useStoryProgress —
+                  no React render per frame. */}
               <span
-                className="block h-full rounded-full bg-white"
-                style={{ width: before ? "100%" : current ? `${progress * 100}%` : "0%" }}
+                ref={current ? activeBarRef : undefined}
+                className={`block h-full rounded-full bg-white ${before ? "scale-x-100" : "scale-x-0"}`}
+                style={{ transformOrigin: "left center" }}
               />
             </span>
           );
@@ -422,6 +496,17 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       >
+        {story.kind !== "text" && (
+          // Telegram's desktop look: a blurred copy of the slide fills the
+          // letterbox instead of flat black, so the media reads as a card.
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 scale-110 bg-cover bg-center opacity-25 blur-2xl"
+            style={{
+              backgroundImage: `url(${storageUrl("stories", story.preview_key ?? story.media_key) ?? ""})`,
+            }}
+          />
+        )}
         {story.kind === "text" ? (
           <div
             className="flex h-full w-full items-center justify-center px-8 text-center text-2xl font-semibold sm:text-3xl"
@@ -439,10 +524,6 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
             playsInline
             autoPlay
             muted={muted}
-            onTimeUpdate={(event) => {
-              const video = event.currentTarget;
-              if (video.duration > 0) setVideoProgress(video.currentTime / video.duration);
-            }}
             onEnded={goNext}
             data-testid="story-video"
           />
@@ -460,7 +541,7 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
           type="button"
           aria-label={t("stories.previous")}
           onClick={goPrev}
-          className="absolute left-0 top-0 z-10 flex h-full w-1/5 items-center justify-start pl-2 text-white/0 focus-visible:text-white/80"
+          className="absolute left-0 top-0 z-10 flex h-full w-1/5 items-center justify-start pl-2 text-white/0 transition-colors hover:text-white/70 focus-visible:text-white/80"
         >
           <ChevronLeft className="h-6 w-6" />
         </button>
@@ -468,7 +549,7 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
           type="button"
           aria-label={t("stories.next")}
           onClick={goNext}
-          className="absolute right-0 top-0 z-10 flex h-full w-1/5 items-center justify-end pr-2 text-white/0 focus-visible:text-white/80"
+          className="absolute right-0 top-0 z-10 flex h-full w-1/5 items-center justify-end pr-2 text-white/0 transition-colors hover:text-white/70 focus-visible:text-white/80"
         >
           <ChevronRight className="h-6 w-6" />
         </button>
@@ -544,7 +625,7 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
       </div>
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="z-[260]" overlayClassName="z-[250]">
           <AlertDialogHeader>
             <AlertDialogTitle>{t("stories.deleteTitle")}</AlertDialogTitle>
             <AlertDialogDescription>{t("stories.deleteHint")}</AlertDialogDescription>
@@ -559,7 +640,7 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
       </AlertDialog>
 
       <Dialog open={privacyOpen} onOpenChange={setPrivacyOpen}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="z-[260] sm:max-w-sm" overlayClassName="z-[250]">
           <DialogHeader>
             <DialogTitle>{t("stories.menuPrivacy")}</DialogTitle>
           </DialogHeader>
