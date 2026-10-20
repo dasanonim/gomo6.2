@@ -47,6 +47,7 @@ const { storeMocks, queueMarkDeliveredMock, queueMarkReadMock } = vi.hoisted(() 
     updateConversationFromWs: vi.fn(),
     loadReceipts: vi.fn(),
     applyReactionEvent: vi.fn(),
+    applyVoiceListenedEvent: vi.fn(),
   };
   const queueMarkDeliveredMock = vi.fn();
   const queueMarkReadMock = vi.fn();
@@ -89,6 +90,7 @@ describe("messengerWebSocket", () => {
       expect(mockWsService.on).toHaveBeenCalledWith("message_notes_meta", expect.any(Function));
       expect(mockWsService.on).toHaveBeenCalledWith("message_deleted", expect.any(Function));
       expect(mockWsService.on).toHaveBeenCalledWith("message_reaction", expect.any(Function));
+      expect(mockWsService.on).toHaveBeenCalledWith("message_voice_listened", expect.any(Function));
       expect(mockWsService.on).toHaveBeenCalledWith("read_receipt", expect.any(Function));
       expect(mockWsService.on).toHaveBeenCalledWith("chat_typing", expect.any(Function));
       // Presence (user_online/user_offline) is handled by the presence rooms
@@ -100,7 +102,7 @@ describe("messengerWebSocket", () => {
     it("does not double-register handlers", () => {
       messengerWs.connect();
       messengerWs.connect();
-      expect(mockWsService.on).toHaveBeenCalledTimes(8);
+      expect(mockWsService.on).toHaveBeenCalledTimes(9);
     });
   });
 
@@ -164,6 +166,18 @@ describe("messengerWebSocket", () => {
       emitToHandlers("message_reaction", { message_id: "msg-1", emoji: "🔥", user_id: "", action: "add" });
 
       expect(storeMocks.applyReactionEvent).not.toHaveBeenCalled();
+    });
+
+    it("handles message_voice_listened as a listener delta", () => {
+      emitToHandlers("message_voice_listened", { message_id: "msg-1", conversation_id: "conv-1", user_id: "u2" });
+
+      expect(storeMocks.applyVoiceListenedEvent).toHaveBeenCalledWith({ message_id: "msg-1", user_id: "u2" });
+    });
+
+    it("ignores a message_voice_listened without ids", () => {
+      emitToHandlers("message_voice_listened", { message_id: "", user_id: "u2" });
+      emitToHandlers("message_voice_listened", { message_id: "msg-1", user_id: "" });
+      expect(storeMocks.applyVoiceListenedEvent).not.toHaveBeenCalled();
     });
 
     it("handles message_notes_meta", () => {

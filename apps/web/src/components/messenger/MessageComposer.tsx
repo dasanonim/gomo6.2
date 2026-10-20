@@ -200,6 +200,11 @@ export const MessageComposer = memo(function MessageComposer({
   const swap = useEmojiKeyboardSwap(editorRef);
   const { keyboardInset, viewportHeight, isTouch } = useMobileKeyboard();
   const [activeSheet, setActiveSheet] = useState<"emoji" | "attach" | null>(null);
+  /**
+   * The keyboard slot belongs to the emoji panel unless the attach sheet owns it.
+   * A single derived value — no third "null" state to desync from `swap.open`.
+   */
+  const emojiPanelOpen = swap.open && activeSheet !== "attach";
   // The sheet/panel height: swap.height is the *keyboard height*, but the
   // lifted composer sits at the full visual slot (URL bar included) — the
   // panels must match it so no gap shows between the composer and the sheet.
@@ -524,13 +529,20 @@ export const MessageComposer = memo(function MessageComposer({
     // zero it synchronously in the blur, before anchorSheetLift reads it.
     const liveInset = getMobileKeyboardState().keyboardInset;
     anchorSheetLift(liveInset);
+    if (swap.open && activeSheet === "attach") {
+      setActiveSheet("emoji");
+      return;
+    }
     if (swap.open && activeSheet === "emoji") {
       setActiveSheet(null);
       swap.closePanel(true);
       return;
     }
-    if (swap.open && activeSheet === "attach") {
-      setActiveSheet("emoji");
+    // Already closing (the exit slide keeps it visible for ~300ms): a press in
+    // that window means "close", and closing always returns the keyboard.
+    if (!swap.open && swap.isSheetVisible()) {
+      setActiveSheet(null);
+      swap.closePanel(true);
       return;
     }
     setActiveSheet("emoji");
@@ -551,6 +563,12 @@ export const MessageComposer = memo(function MessageComposer({
     }
     if (swap.open && activeSheet === "emoji") {
       setActiveSheet("attach");
+      return;
+    }
+    // Same exit-slide rule as the emoji trigger.
+    if (!swap.open && swap.isSheetVisible()) {
+      setActiveSheet(null);
+      swap.closePanel(true);
       return;
     }
     setActiveSheet("attach");
@@ -1313,7 +1331,7 @@ useEffect(() => {
       onEmojiSelect={handleEmojiSelect}
       triggerRef={emojiButtonRef}
       keyboardSwap
-      swapOpen={swap.open && activeSheet === "emoji"}
+      swapOpen={emojiPanelOpen}
       swapHeight={sheetSlot || swap.height}
       swapTop={sheetTop}
       onSwapToggle={handleEmojiTrigger}
@@ -1321,9 +1339,10 @@ useEffect(() => {
     >
       <button
         type="button"
-        className="composer-emoji-btn"
-        title="Добавить эмодзи"
-        aria-label="Добавить эмодзи"
+        className={`composer-emoji-btn${emojiPanelOpen ? " is-active" : ""}`}
+        title={emojiPanelOpen ? "Скрыть эмодзи" : "Добавить эмодзи"}
+        aria-label={emojiPanelOpen ? "Скрыть эмодзи" : "Добавить эмодзи"}
+        aria-pressed={emojiPanelOpen}
       >
         <Smile size={15} />
       </button>

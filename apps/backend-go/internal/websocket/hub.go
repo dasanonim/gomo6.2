@@ -50,6 +50,7 @@ const (
 	MessageTypeMessageEdited   = "message_edited"
 	MessageTypeMessageDeleted  = "message_deleted"
 	MessageTypeMessageReaction = "message_reaction"
+	MessageTypeVoiceListened   = "message_voice_listened"
 	MessageTypeReadReceipt     = "read_receipt"
 	MessageTypeChatTyping      = "chat_typing"
 	MessageTypeSessionRevoked  = "session_revoked"
@@ -528,7 +529,7 @@ func (h *Hub) dispatchRealtimeBroadcast(eventType string, payload interface{}, m
 		messageBytes = decryptChatMessage(payload, message, messageBytes, eventType)
 		h.broadcastChatEvent(payload, messageBytes, false)
 
-	case MessageTypeMessageDeleted, MessageTypeMessageReaction, MessageTypeReadReceipt, MessageTypeChatTyping, "member_left",
+	case MessageTypeMessageDeleted, MessageTypeMessageReaction, MessageTypeVoiceListened, MessageTypeReadReceipt, MessageTypeChatTyping, "member_left",
 		// Messenger housekeeping events (conversation metadata, notes meta,
 		// reactions). They carry no encrypted content and route to the
 		// conversation room — a reaction delta has to reach the peer in

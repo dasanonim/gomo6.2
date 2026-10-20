@@ -178,6 +178,16 @@ describe("MessageBubble — voice messages", () => {
     expect(container.querySelector(".message-bubble")?.className).toContain("is-voice-bubble");
   });
 
+  it("renders the unheard dot when the chat view says the note is unheard", () => {
+    const { container, rerender } = render(
+      <MessageBubble message={createMessage({ attachments: voice })} {...defaultProps} isMine={false} voiceUnheard />,
+    );
+    expect(container.querySelector(".message-unheard-dot")).not.toBeNull();
+
+    rerender(<MessageBubble message={createMessage({ attachments: voice })} {...defaultProps} isMine={false} voiceUnheard={false} />);
+    expect(container.querySelector(".message-unheard-dot")).toBeNull();
+  });
+
   it("keeps an ordinary audio file a file row", () => {
     const { container } = render(
       <MessageBubble

@@ -30,7 +30,7 @@ class FakeMediaRecorder {
   static lateFinalChunk = false;
   /** The instance the component is holding, for OS-level simulations. */
   static last: FakeMediaRecorder | null = null;
-  state: "inactive" | "recording" = "inactive";
+  state: "inactive" | "recording" | "paused" = "inactive";
   mimeType: string;
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
   onerror: (() => void) | null = null;
@@ -59,6 +59,15 @@ class FakeMediaRecorder {
   }
   removeEventListener(type: string, callback: () => void) {
     this.listeners[type] = (this.listeners[type] ?? []).filter((entry) => entry !== callback);
+  }
+  requestData() {
+    this.ondataavailable?.({ data: new Blob(["voice-bytes"], { type: "audio/webm" }) });
+  }
+  pause() {
+    this.state = "paused";
+  }
+  resume() {
+    this.state = "recording";
   }
   start() {
     this.state = "recording";
@@ -207,6 +216,50 @@ describe("VoiceRecorder", () => {
     expect(mockUpload).toHaveBeenCalledTimes(1);
     const meta = JSON.parse(onSend.mock.calls[0][0].meta);
     expect(meta.voice).toBe(true);
+  });
+
+  it("pauses a locked recording, plays it back, and resumes", async () => {
+    // jsdom has no media engine.
+    HTMLMediaElement.prototype.play = vi.fn(async () => undefined) as unknown as () => Promise<void>;
+    HTMLMediaElement.prototype.pause = vi.fn();
+
+    render(<VoiceRecorder onSend={vi.fn()} />);
+    await pressMic();
+    fireEvent.pointerMove(window, { clientX: 12, clientY: -120 }); // lock
+    await waitFor(() => expect(screen.getByRole("button", { name: "Пауза записи" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Пауза записи" }));
+
+    // Paused: a replay control replaces the record dot, resume is offered, and
+    // the captured audio is a local blob nobody uploaded.
+    expect(screen.getByRole("button", { name: "Прослушать запись" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Продолжить запись" })).toBeInTheDocument();
+    const audio = document.querySelector("audio.voice-record-preview-audio") as HTMLAudioElement;
+    expect(audio).not.toBeNull();
+    expect(audio.getAttribute("src")).toContain("blob:");
+    expect(mockUpload).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Прослушать запись" }));
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Продолжить запись" }));
+    expect(screen.getByRole("button", { name: "Пауза записи" })).toBeInTheDocument();
+  });
+
+  it("sends a paused recording", async () => {
+    const onSend = vi.fn();
+    render(<VoiceRecorder onSend={onSend} />);
+    await pressMic();
+    fireEvent.pointerMove(window, { clientX: 12, clientY: -120 }); // lock
+    await waitFor(() => expect(screen.getByRole("button", { name: "Пауза записи" })).toBeInTheDocument());
+    now = 1500; // the recorded segment the pause freezes
+    fireEvent.click(screen.getByRole("button", { name: "Пауза записи" }));
+    now = 4000; // time spent paused must not count
+
+    fireEvent.click(screen.getByRole("button", { name: "Отправить голосовое" }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(onSend.mock.calls[0][0].meta).voice).toBe(true);
   });
 
   it("throws an interrupted recording away when asked", async () => {

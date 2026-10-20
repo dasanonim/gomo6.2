@@ -218,6 +218,12 @@ func (h *MessengerHandler) fetchMessagePage(c *gin.Context, conversationID strin
 		return nil, false
 	}
 
+	// …and the same for the per-user voice "listened" state.
+	if err := h.addVoiceListensToMessages(c, messages); err != nil {
+		httpx.ServerError(c, "get voice listens", err)
+		return nil, false
+	}
+
 	// Backward pages are returned by sent_at DESC and must be reversed. Delta
 	// pages are already event_id ASC so they can be appended directly.
 	if !delta {

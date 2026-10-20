@@ -268,6 +268,13 @@ export const messengerApi = {
     });
   },
 
+  async markVoiceListened(conversationId: string, messageId: string): Promise<{ listened: boolean }> {
+    return req(`/conversations/${conversationId}/messages/${messageId}/voice-listened`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
   async getGroupMembers(groupId: string): Promise<GroupMember[]> {
     return req<GroupMember[]>(`/groups/${groupId}/members`);
   },

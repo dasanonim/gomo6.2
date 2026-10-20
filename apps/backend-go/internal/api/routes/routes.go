@@ -776,6 +776,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 				messengerWrite.PUT("/messenger/conversations/:id/messages/:msgId/notes-meta", messengerHandler.UpdateNotesMeta)
 				messengerWrite.DELETE("/messenger/conversations/:id/messages/:msgId", messengerHandler.DeleteMessage)
 				messengerWrite.POST("/messenger/conversations/:id/messages/:msgId/reactions", messengerHandler.ToggleReaction)
+				messengerWrite.POST("/messenger/conversations/:id/messages/:msgId/voice-listened", messengerHandler.MarkVoiceListened)
 				messengerWrite.POST("/messenger/conversations/:id/read", messengerHandler.MarkRead)
 				messengerWrite.POST("/messenger/conversations/:id/delivered", messengerHandler.MarkDelivered)
 				messengerWrite.POST("/messenger/conversations/:id/pin", messengerHandler.TogglePin)

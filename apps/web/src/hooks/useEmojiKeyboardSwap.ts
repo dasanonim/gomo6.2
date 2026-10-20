@@ -13,6 +13,12 @@ const MIN_KB_HEIGHT = 60;
 const PROVISIONAL_RATIO = 0.4;
 const PROVISIONAL_MAX = 420;
 const PROVISIONAL_MIN = 280;
+/**
+ * The panel's exit slide. A tap on the trigger while the panel is still
+ * animating out must not reopen it — the sheet is visibly there for this long,
+ * and reopening made the button read as "does nothing".
+ */
+const CLOSE_ANIMATION_MS = 300;
 
 /**
  * Mobile emoji-panel ↔ soft-keyboard swap ("Telegram-style").
@@ -49,6 +55,8 @@ export function useEmojiKeyboardSwap(
   const [open, setOpen] = useState(false);
   const [height, setHeight] = useState(0);
   const openRef = useRef(open);
+  /** Until this timestamp the panel is still sliding out (and still visible). */
+  const closingUntilRef = useRef(0);
   openRef.current = open;
   // Tracks the Android height re-measure loop so it can be cancelled on
   // unmount / reopen instead of firing setHeight on a dead component.
@@ -113,6 +121,7 @@ export function useEmojiKeyboardSwap(
 
   const closePanel = useCallback(
     (refocus: boolean) => {
+      closingUntilRef.current = performance.now() + CLOSE_ANIMATION_MS;
       setOpen(false);
       if (refocus) {
         // Bring the keyboard back with the caret intact.
@@ -120,6 +129,12 @@ export function useEmojiKeyboardSwap(
       }
     },
     [editorRef]
+  );
+
+  /** True while the panel is open OR still sliding out (still visible). */
+  const isSheetVisible = useCallback(
+    () => openRef.current || performance.now() < closingUntilRef.current,
+    [],
   );
 
   const toggle = useCallback(() => {
@@ -144,5 +159,5 @@ export function useEmojiKeyboardSwap(
   // must not dismiss it — only an outside click / Escape / trigger / tapping
   // the editor does (all handled above and in EmojiPicker).
 
-  return { isTouch, open, height, toggle, closePanel };
+  return { isTouch, open, height, toggle, closePanel, isSheetVisible };
 }

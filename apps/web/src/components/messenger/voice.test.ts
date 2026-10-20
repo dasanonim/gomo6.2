@@ -13,6 +13,7 @@ import {
   extensionForMime,
   formatVoiceTime,
   isVoiceAttachment,
+  isVoiceUnheard,
   normalizeWaveform,
   parseVoiceMeta,
   pickVoiceMimeType,
@@ -127,6 +128,49 @@ describe("rmsFromTimeDomain", () => {
     // samples are centred on 128 and scaled to -1..1
     expect(rmsFromTimeDomain([128, 255, 128, 0])).toBeCloseTo(0.704, 3);
     expect(rmsFromTimeDomain([128, 228, 128, 28])).toBeCloseTo(0.552, 3);
+  });
+});
+
+describe("isVoiceUnheard (the dot)", () => {
+  const voiceAttachment: Attachment = {
+    url: "u1/messenger/voice.webm",
+    type: "audio",
+    name: "voice.webm",
+    size: 100,
+    mime: "audio/webm",
+    meta: JSON.stringify({ voice: true, duration: 3, waveform: [] }),
+  };
+  const message = (overrides: Partial<Parameters<typeof isVoiceUnheard>[0]> = {}) => ({
+    sender_user_id: "u2",
+    attachments: [voiceAttachment],
+    voiceListenedBy: [] as string[],
+    ...overrides,
+  });
+  const chat = { viewerId: "u1", otherUserId: "u2", isGroup: false, isNotes: false };
+
+  it("marks an incoming note unheard until I play it", () => {
+    expect(isVoiceUnheard(message(), chat)).toBe(true);
+    expect(isVoiceUnheard(message({ voiceListenedBy: ["u1"] }), chat)).toBe(false);
+  });
+
+  it("marks my own note unheard until the PEER plays it", () => {
+    const mine = message({ sender_user_id: "u1" });
+    expect(isVoiceUnheard(mine, chat)).toBe(true);
+    expect(isVoiceUnheard(message({ sender_user_id: "u1", voiceListenedBy: ["u1"] }), chat)).toBe(true);
+    expect(isVoiceUnheard(message({ sender_user_id: "u1", voiceListenedBy: ["u2"] }), chat)).toBe(false);
+  });
+
+  it("has no dot for my own note in a group, but keeps it for incoming", () => {
+    const group = { ...chat, isGroup: true };
+    expect(isVoiceUnheard(message({ sender_user_id: "u1", voiceListenedBy: ["u2"] }), group)).toBe(false);
+    expect(isVoiceUnheard(message({ sender_user_id: "u1" }), group)).toBe(false);
+    expect(isVoiceUnheard(message(), group)).toBe(true);
+  });
+
+  it("never shows in the notes self-chat, or on a non-voice message", () => {
+    expect(isVoiceUnheard(message(), { ...chat, isNotes: true })).toBe(false);
+    expect(isVoiceUnheard(message({ attachments: [] }), chat)).toBe(false);
+    expect(isVoiceUnheard(message({ attachments: [{ ...voiceAttachment, meta: null }] }), chat)).toBe(false);
   });
 });
 

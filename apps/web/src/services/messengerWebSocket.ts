@@ -85,6 +85,7 @@ class MessengerWebSocket {
       wsService.on("message_notes_meta", (msg) => this.handleNotesMeta(msg)),
       wsService.on("message_deleted", (msg) => this.handleMessageDeleted(msg)),
       wsService.on("message_reaction", (msg) => this.handleMessageReaction(msg)),
+      wsService.on("message_voice_listened", (msg) => this.handleVoiceListened(msg)),
       wsService.on("read_receipt", (msg) => this.handleReadReceipt(msg)),
       wsService.on("chat_typing", (msg) => this.handleTyping(msg)),
       wsService.on("group_updated", (msg) => this.handleGroupUpdated(msg)),
@@ -199,6 +200,15 @@ class MessengerWebSocket {
       username: (data.username as string) ?? "",
       action,
     });
+  }
+
+  private handleVoiceListened(msg: WebSocketMessage): void {
+    const data = this.getMessageData(msg);
+    if (!data) return;
+    const messageId = data.message_id as string;
+    const userId = data.user_id as string;
+    if (!messageId || !userId) return;
+    useMessengerStore.getState().applyVoiceListenedEvent({ message_id: messageId, user_id: userId });
   }
 
   private handleReadReceipt(msg: WebSocketMessage): void {

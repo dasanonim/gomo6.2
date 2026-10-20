@@ -393,6 +393,10 @@ type MessengerStore = {
   toggleReaction: (messageId: string, emoji: string) => Promise<void>;
   /** Folds a peer's reaction delta from the realtime hub into the open chat. */
   applyReactionEvent: (event: ReactionEvent) => void;
+  /** The reader played an incoming voice note: drops its "unheard" dot. */
+  markVoiceListened: (messageId: string) => Promise<void>;
+  /** A peer played a note (realtime): the sender's dot disappears too. */
+  applyVoiceListenedEvent: (event: { message_id: string; user_id: string }) => void;
   /** Updates a note's encrypted metadata (pin/folder/tags) and syncs it. */
   setNotesMeta: (messageId: string, meta: NotesMeta) => Promise<void>;
   /** Flips the pin flag of a note. */
@@ -941,6 +945,33 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
     get().updateMessage(event.message_id, {
       reactions: applyReaction(message.reactions, event.emoji, user, event.action, viewerId),
     });
+  },
+
+  // ── Voice notes ─────────────────────────────────────────────────────
+  markVoiceListened: async (messageId) => {
+    const { me, selectedConversationId, messages } = get();
+    if (!me || !selectedConversationId) return;
+    const message = messages.find((entry) => entry.id === messageId);
+    if (!message) return;
+    const listeners = message.voiceListenedBy ?? [];
+    if (listeners.includes(me.id)) return;
+
+    // Optimistic: the dot goes away under the finger, then the server confirms
+    // and the peer's device learns about it over the conversation room.
+    get().updateMessage(messageId, { voiceListenedBy: [...listeners, me.id] });
+    try {
+      await messengerApi.markVoiceListened(selectedConversationId, messageId);
+    } catch {
+      get().updateMessage(messageId, { voiceListenedBy: listeners });
+    }
+  },
+
+  applyVoiceListenedEvent: (event) => {
+    const message = get().messages.find((entry) => entry.id === event.message_id);
+    if (!message) return;
+    const listeners = message.voiceListenedBy ?? [];
+    if (listeners.includes(event.user_id)) return;
+    get().updateMessage(event.message_id, { voiceListenedBy: [...listeners, event.user_id] });
   },
 
   // ── Notes metadata (pin/folder/tags, client-side E2E) ────────────────

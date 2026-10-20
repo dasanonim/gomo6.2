@@ -373,6 +373,7 @@ var expectedRoutes = []string{
 	"PUT /api/v1/messenger/conversations/:id/messages/:msgId/notes-meta",
 	"DELETE /api/v1/messenger/conversations/:id/messages/:msgId",
 	"POST /api/v1/messenger/conversations/:id/messages/:msgId/reactions",
+	"POST /api/v1/messenger/conversations/:id/messages/:msgId/voice-listened",
 	"POST /api/v1/messenger/conversations/:id/read",
 	"POST /api/v1/messenger/conversations/:id/delivered",
 	"POST /api/v1/messenger/conversations/:id/pin",

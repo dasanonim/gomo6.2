@@ -24,6 +24,25 @@ describe("useEmojiKeyboardSwap", () => {
 
   const makeEditorRef = () => ({ current: { focus: vi.fn(), insertText: vi.fn(), insertEmoji: vi.fn() } });
 
+  it("reports the panel as visible while it slides out", () => {
+    // Regression: a tap on the trigger during the exit slide used to reopen the
+    // panel, so the button looked broken on a second press.
+    let now = 1000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const ref = makeEditorRef();
+    const { result } = renderHook(() => useEmojiKeyboardSwap(ref as any));
+
+    act(() => result.current.toggle());
+    expect(result.current.isSheetVisible()).toBe(true);
+
+    act(() => result.current.closePanel(false));
+    expect(result.current.open).toBe(false);
+    expect(result.current.isSheetVisible()).toBe(true); // still animating out
+
+    now = 1400;
+    expect(result.current.isSheetVisible()).toBe(false);
+  });
+
   it("opens with the exact keyboard height and blurs the focused editor", () => {
     const ref = makeEditorRef();
     const el = document.createElement("textarea");

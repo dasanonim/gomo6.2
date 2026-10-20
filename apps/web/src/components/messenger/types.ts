@@ -82,6 +82,12 @@ export type MessageView = {
   attachments?: Attachment[];
   /** Reaction chips, ordered by popularity (see `reactions.ts`). */
   reactions?: ReactionSummary[];
+  /**
+   * Who has played this voice note (server-backed, per user). The dot is a fact
+   * about a person: an incoming note is unheard until I play it, my own until
+   * the peer does.
+   */
+  voiceListenedBy?: string[];
   // Notes self-chat: client-side E2E-encrypted metadata (pin/folder/tags).
   // notes_meta is the wire ciphertext; notesPinned/notesFolder/notesTags are
   // the decrypted values the store exposes to the UI.

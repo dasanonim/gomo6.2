@@ -2083,6 +2083,15 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   font-variant-numeric: tabular-nums;
 }
 
+/* Telegram's "media unread" dot on an incoming voice note. */
+.message-unheard-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: oklch(var(--primary));
+  flex: 0 0 auto;
+}
+
 .voice-rate {
   padding: 0 5px;
   border: 0;
@@ -2276,6 +2285,46 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: oklch(var(--foreground));
+}
+
+.voice-record-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+/* Play the unfinished recording while it is paused (Telegram's record bar). */
+.voice-record-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: oklch(var(--primary));
+  color: oklch(var(--primary-foreground));
+  cursor: pointer;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+.voice-record-play:hover {
+  filter: brightness(1.08);
+}
+
+.voice-record-play:active {
+  transform: scale(0.9);
+}
+
+.voice-record-play svg.lucide-play {
+  margin-left: 1px;
+}
+
+.voice-record-preview-audio {
+  display: none;
 }
 
 .voice-record-dot {
@@ -3243,6 +3292,13 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   color: oklch(var(--muted-foreground));
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+/* The emoji panel's trigger is a two-state control: lit while the panel is up,
+   so "press it again to get the keyboard back" is visible, not guessed. */
+.composer-emoji-btn.is-active {
+  color: oklch(var(--primary));
+  background: oklch(var(--primary) / 0.14);
 }
 
 .composer-emoji-btn:hover {

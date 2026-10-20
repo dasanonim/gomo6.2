@@ -120,16 +120,20 @@ interface MessageContentProps {
   hasQuotedMessage?: boolean;
   /** Own messages get the primary-tinted voice player. */
   isMine?: boolean;
+  /** An incoming voice note started playing (drops the unheard dot). */
+  onVoiceListen?: () => void;
 }
 
 function AttachmentView({
   attachment,
   fitToViewport = false,
   isMine = false,
+  onVoiceListen,
 }: {
   attachment: Attachment;
   fitToViewport?: boolean;
   isMine?: boolean;
+  onVoiceListen?: () => void;
 }) {
   const meta = useMemo(() => parseImageMeta(attachment), [attachment.meta]);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -235,7 +239,7 @@ function AttachmentView({
     // needed here.
     return (
       <div className="msg-voice">
-        <VoicePlayer attachment={attachment} isMine={isMine} />
+        <VoicePlayer attachment={attachment} isMine={isMine} onListen={onVoiceListen} />
       </div>
     );
   }
@@ -259,7 +263,9 @@ function AttachmentView({
   );
 }
 
-export const MessageContent = memo(function MessageContent({ content, attachments, hasQuotedMessage = false, isMine = false }: MessageContentProps) {
+export const MessageContent = memo(function MessageContent({
+  content, attachments, hasQuotedMessage = false, isMine = false, onVoiceListen,
+}: MessageContentProps) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const hasAttachments = attachments && attachments.length > 0;
@@ -337,7 +343,7 @@ export const MessageContent = memo(function MessageContent({ content, attachment
       {hasAttachments && (
         <div className="msg-attachments">
           {attachments!.map((att, i) => (
-            <AttachmentView key={att.id || i} attachment={att} isMine={isMine} />
+            <AttachmentView key={att.id || i} attachment={att} isMine={isMine} onVoiceListen={onVoiceListen} />
           ))}
         </div>
       )}
