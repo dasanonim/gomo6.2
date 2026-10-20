@@ -8,6 +8,7 @@ import { AppLayout } from "@/components/AppLayout";
 import { LazyPage } from "@/components/LazyPage";
 import { AuthGuard } from "@/components/AuthGuard";
 import { VideoEditorHost } from "@/components/VideoEditorHost";
+import { StoryComposer } from "@/components/stories/StoryComposer";
 import { ThemeSync } from "@/components/ThemeSync";
 import { applyTheme, getStoredPrefs, syncSharedAppearanceCookies, watchSystemMode } from "@/theme";
 import { applyCustomFont, getStoredCustomFont } from "@/lib/customFont";
@@ -226,6 +227,8 @@ const App = () => {
                   <AppRoutes />
                 </BrowserRouter>
                 <VideoEditorHost />
+                {/* Stories composer: opened from the rail / profile / GomoSub header. */}
+                <StoryComposer />
               </TooltipProvider>
             </EmojiDataProvider>
           </LikesCacheProvider>

@@ -19,6 +19,7 @@ export interface LocaleResources {
   profile: Record<string, string>;
   actieye: Record<string, string>;
   share: Record<string, string>;
+  stories: Record<string, string>;
   // Achievements are a deep tree: group → level → {name, description} plus
   // category/rarity maps. i18next resolves dotted keys through nested objects.
   achievements: Record<string, unknown>;

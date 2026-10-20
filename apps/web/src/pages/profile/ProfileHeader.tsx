@@ -1,6 +1,6 @@
 import { lazy, Suspense, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Camera, Edit2, MessageSquare, Smile, X } from "lucide-react";
+import { Camera, Edit2, MessageSquare, Plus, Smile, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AdminBadge } from "@/components/AdminBadge";
@@ -10,6 +10,7 @@ import { AvatarUploadProgress } from "@/components/AvatarUploadProgress";
 import { NicknameEmoji } from "@/components/NicknameEmoji";
 import { OnlineStatus } from "@/components/OnlineStatus";
 import { UserAvatar } from "@/components/UserAvatar";
+import { StoryRing } from "@/components/stories/StoryRing";
 import { parseCssToStyle, type ProfileCustomization } from "@/utils/profileCustomization";
 import type { AvatarDragHandlers, Profile } from "./types";
 
@@ -47,6 +48,14 @@ export interface ProfileHeaderProps {
   onOpenMessages: () => void;
   /** Forum layout: the avatar and the write/subscribe actions live in the side panel. */
   forumMode?: boolean;
+  /** Live stories of this profile → the avatar gets a segmented ring. */
+  storyCount?: number;
+  storyReadCount?: number;
+  storyCloseFriends?: boolean;
+  /** Opens the story viewer at the first unread slide. */
+  onOpenStories?: () => void;
+  /** Opens the composer (own profile, no live story). */
+  onAddStory?: () => void;
 }
 
 /** Header row (avatar + identity + actions) — rendered inside the active
@@ -75,6 +84,11 @@ export function ProfileHeader({
   onUsernameClick,
   onOpenMessages,
   forumMode = false,
+  storyCount = 0,
+  storyReadCount = 0,
+  storyCloseFriends = false,
+  onOpenStories,
+  onAddStory,
 }: ProfileHeaderProps) {
   const { t } = useTranslation();
   const nicknameEmojiButtonRef = useRef<HTMLDivElement>(null);
@@ -84,31 +98,49 @@ export function ProfileHeader({
       <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
         {/* Avatar */}
         {avatarVisible && !forumMode && (
-          <div className="relative">
-            <div
-              {...(isOwnProfile && isEditing ? avatarDragHandlers : {})}
-              className={`w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-muted flex items-center justify-center overflow-hidden cursor-pointer hover:opacity-80 transition-all duration-150 ${
-                isOwnProfile && isEditing && isAvatarDragging
-                  ? "ring-2 ring-primary ring-offset-2 ring-offset-background scale-105"
-                  : ""
-              }`}
-              onClick={onAvatarClick}
-            >
-              <UserAvatar src={avatarUrl} userId={profile.id} alt="Avatar" className="w-full h-full" />
+          <StoryRing total={storyCount} read={storyReadCount} closeFriends={storyCloseFriends}>
+            <div className="relative">
+              <div
+                {...(isOwnProfile && isEditing ? avatarDragHandlers : {})}
+                className={`w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-muted flex items-center justify-center overflow-hidden cursor-pointer hover:opacity-80 transition-all duration-150 ${
+                  isOwnProfile && isEditing && isAvatarDragging
+                    ? "ring-2 ring-primary ring-offset-2 ring-offset-background scale-105"
+                    : ""
+                }`}
+                onClick={() => {
+                  // Tapping the avatar opens the story when there is one to
+                  // watch — the photo itself stays reachable from the menu.
+                  if (storyCount > 0 && onOpenStories) onOpenStories();
+                  else onAvatarClick();
+                }}
+              >
+                <UserAvatar src={avatarUrl} userId={profile.id} alt="Avatar" className="w-full h-full" />
+              </div>
+              {avatarUploading && <AvatarUploadProgress percent={avatarUploadPercent} />}
+              {isOwnProfile && isEditing && (
+                <label className="absolute -bottom-1 -right-1 w-8 h-8 bg-primary rounded-full flex items-center justify-center cursor-pointer hover:bg-primary/80 transition-colors">
+                  <Camera className="w-4 h-4 text-primary-foreground" />
+                  <input
+                    type="file"
+                    accept="image/*,video/*"
+                    onChange={onAvatarUpload}
+                    className="hidden"
+                  />
+                </label>
+              )}
+              {isOwnProfile && !isEditing && onAddStory && (
+                <button
+                  type="button"
+                  onClick={onAddStory}
+                  aria-label={t("stories.addYourStory")}
+                  title={t("stories.addYourStory")}
+                  className="absolute -bottom-1 -right-1 grid h-7 w-7 place-items-center rounded-full border-2 border-background bg-primary text-primary-foreground transition-transform hover:scale-105"
+                >
+                  <Plus className="h-3.5 w-3.5" strokeWidth={3} />
+                </button>
+              )}
             </div>
-            {avatarUploading && <AvatarUploadProgress percent={avatarUploadPercent} />}
-            {isOwnProfile && isEditing && (
-              <label className="absolute -bottom-1 -right-1 w-8 h-8 bg-primary rounded-full flex items-center justify-center cursor-pointer hover:bg-primary/80 transition-colors">
-                <Camera className="w-4 h-4 text-primary-foreground" />
-                <input
-                  type="file"
-                  accept="image/*,video/*"
-                  onChange={onAvatarUpload}
-                  className="hidden"
-                />
-              </label>
-            )}
-          </div>
+          </StoryRing>
         )}
 
         {/* User Info */}

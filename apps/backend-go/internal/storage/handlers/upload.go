@@ -752,6 +752,17 @@ func (h *StorageHandler) ServeObject(c *gin.Context) {
 		} else {
 			c.Header("Cache-Control", "private, no-store")
 		}
+	} else if bucket == "stories" {
+		// Story bytes are only as private as the story's CURRENT audience, and
+		// the audience can be narrowed (or the story deleted) after the first
+		// fetch. A public/immutable cache would keep serving the old bytes from
+		// the browser cache after that. Previews get the longer window because
+		// they are what the rail paints; the original is revalidated quickly.
+		if isPreviewKey(key) || strings.HasSuffix(strings.ToLower(key), ".poster.jpg") {
+			c.Header("Cache-Control", "private, max-age=3600")
+		} else {
+			c.Header("Cache-Control", "private, max-age=600")
+		}
 	} else if isPreviewKey(key) || isImmutableMediaKey(bucket, key) {
 		// User uploads are content-addressed by a unique key, so they never
 		// change and can be cached forever. Admin-curated buckets are excluded

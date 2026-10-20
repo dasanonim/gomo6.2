@@ -1,0 +1,23 @@
+/* Story ring accents.
+ *
+ * These are the two brand gradients stories use everywhere (the avatar ring,
+ * the progress bar of an unread slide, the composer's "publish" affordance).
+ * They are intentionally NOT theme tokens: like Telegram's blue/green ring they
+ * identify the feature in every theme. Everything else (text, surfaces) still
+ * comes from the theme registry. */
+:root {
+  --story-ring-from: #34c578;
+  --story-ring-to: #3ca3f3;
+  --story-ring-close-from: #c9eb38;
+  --story-ring-close-to: #09c167;
+  --story-text-gradient-1: linear-gradient(135deg, #ff6a88 0%, #ff99ac 100%);
+  --story-text-gradient-2: linear-gradient(135deg, #4776e6 0%, #8e54e9 100%);
+  --story-text-gradient-3: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+  --story-text-gradient-4: linear-gradient(135deg, #f7971e 0%, #ffd200 100%);
+  --story-text-gradient-5: linear-gradient(135deg, #232526 0%, #414345 100%);
+  --story-text-gradient-6: linear-gradient(135deg, #fc466b 0%, #3f5efb 100%);
+}
+
+.story-ring-gap {
+  stroke: oklch(var(--background));
+}

@@ -8,6 +8,7 @@ import { Bookmark, ChevronRight, FileText, Hash, History, Home, Plus, Users, X }
 import { LegalConsentGate } from "@/components/legal/LegalConsentGate";
 import { LEGAL_VERSIONS } from "@/lib/legal/config";
 import { ThreadFeed } from "@/components/ThreadFeed";
+import { StoriesRail } from "@/components/stories/StoriesRail";
 import { useSessionTime } from "@/hooks/useSessionTime";
 import { useThreadSections, type SectionWithSubsections, type ThreadSubsection } from "@/hooks/useThreadSections";
 import { SectionIcon } from "@/components/topic/sectionIcons";
@@ -333,6 +334,8 @@ const Index = () => {
                 remains visible instead of a skeleton. */}
             {view.isRendered("feed") && (
               <div className={pendingViewClass(view.isShown("feed"), transitionStyle)}>
+                {/* Stories rail: only on the feed itself, above the cards. */}
+                {view.isShown("feed") && <StoriesRail />}
                 <ThreadFeed
                   currentUserId={user?.id}
                   currentUsername={currentUserUsername}

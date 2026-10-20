@@ -24,6 +24,9 @@ import { ProfileStats } from "./profile/ProfileStats";
 import { ProfileEditPanel } from "./profile/ProfileEditPanel";
 import { ProfileTabs, type ProfileTab } from "./profile/ProfileTabs";
 import { ProfilePinnedThreads } from "./profile/ProfilePinnedThreads";
+import { useOwnerStories } from "@/components/stories/useOwnerStories";
+import { useStoriesStore } from "@/stores/storiesStore";
+import { hasUnreadCloseFriends } from "@/types/stories";
 import { UsernameDialog, AvatarGalleryDialog } from "./profile/ProfileDialogs";
 import type { Profile, ProfilePrivacyData } from "./profile/types";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -328,6 +331,35 @@ const Profile = () => {
   // section CanViewUser* checks) so the client hides exactly what the backend
   // refuses to serve.
   const isOwnProfile = !!resolvedUserId && currentUser?.id === resolvedUserId;
+  // ── Stories ───────────────────────────────────────────────────────────────
+  // One read per profile visit feeds both the avatar ring and the viewer; the
+  // store keeps the slide list, so marking a slide viewed shrinks the ring
+  // immediately.
+  const { stories: profileStories } = useOwnerStories("user", resolvedUserId || null);
+  const openStoryViewer = useStoriesStore((state) => state.openViewer);
+  const openStoryComposer = useStoriesStore((state) => state.openComposer);
+  const storyCount = profileStories.length;
+  const storyReadCount = profileStories.filter((story) => story.is_viewed).length;
+  const storyCloseFriends = hasUnreadCloseFriends(profileStories);
+  const openProfileStories = () => {
+    const firstUnread = profileStories.find((story) => !story.is_viewed) ?? profileStories[0];
+    if (!firstUnread) return;
+    openStoryViewer({
+      ownerType: "user",
+      ownerId: resolvedUserId,
+      storyId: firstUnread.id,
+      origin: "profile",
+    });
+  };
+  const addProfileStory = () => {
+    if (!currentUser?.id) return;
+    openStoryComposer({
+      ownerType: "user",
+      ownerId: currentUser.id,
+      ownerName: currentUserUsername || "",
+    });
+  };
+
   const isPrivate = privateProfile && privacyChecked;
   const isNonFriendOnPrivate = isPrivate && !isOwnProfile && isMutualFriend === false;
   // A wall is hidden from the viewer when they are neither the owner nor a
@@ -524,6 +556,11 @@ const Profile = () => {
       onUsernameClick={() => editing.setShowUsernameDialog(true)}
       onOpenMessages={() => navigate(`/messages?user=${resolvedUserId}`)}
       forumMode={forumMode}
+      storyCount={storyCount}
+      storyReadCount={storyReadCount}
+      storyCloseFriends={storyCloseFriends}
+      onOpenStories={openProfileStories}
+      onAddStory={addProfileStory}
     />
   ) : null;
 
