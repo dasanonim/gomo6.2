@@ -92,6 +92,93 @@ const emptyCollections = {
   publishing: false,
 };
 
+/** The viewer position after `deletedId` is gone: next slide in the same
+ * group, else the next group's first slide, else the previous group's last. */
+function nextViewerAfterDelete(
+  viewer: StoryViewerState,
+  deletedId: string,
+): { ownerType: StoryOwnerType; ownerId: string; storyId: string } | null {
+  const queue = viewer.queue;
+  if (!queue) return null;
+  const groupIndex = queue.findIndex(
+    (group) => group.ownerType === viewer.ownerType && group.ownerId === viewer.ownerId,
+  );
+  if (groupIndex === -1) return null;
+
+  const ids = queue[groupIndex].storyIds;
+  const index = ids.indexOf(deletedId);
+  for (let i = index + 1; i < ids.length; i += 1) {
+    if (ids[i] !== deletedId) {
+      return { ownerType: viewer.ownerType, ownerId: viewer.ownerId, storyId: ids[i] };
+    }
+  }
+  for (let g = groupIndex + 1; g < queue.length; g += 1) {
+    if (queue[g].storyIds.length) {
+      return {
+        ownerType: queue[g].ownerType,
+        ownerId: queue[g].ownerId,
+        storyId: queue[g].storyIds[0],
+      };
+    }
+  }
+  for (let g = groupIndex - 1; g >= 0; g -= 1) {
+    const previous = queue[g].storyIds;
+    if (previous.length) {
+      return {
+        ownerType: queue[g].ownerType,
+        ownerId: queue[g].ownerId,
+        storyId: previous[previous.length - 1],
+      };
+    }
+  }
+  return null;
+}
+
+/** Remove a story from every collection AND from the viewer queue, moving the
+ * player to the next slide (or closing it) when the open slide is the one that
+ * disappeared. A queued id that no longer resolves used to leave the player on
+ * "story unavailable" after pressing back. */
+function dropStoryState(state: StoriesState, storyId: string): Partial<StoriesState> {
+  const drop = (list: Story[]) => list.filter((story) => story.id !== storyId);
+  const mapLists = (source: Record<string, Story[]>) => {
+    const out: Record<string, Story[]> = {};
+    for (const [key, list] of Object.entries(source)) out[key] = drop(list);
+    return out;
+  };
+
+  const rail = state.rail
+    .map((group) => {
+      const stories = drop(group.stories);
+      return {
+        ...group,
+        stories,
+        has_unread: stories.some((story) => !story.is_viewed && !story.is_own),
+      };
+    })
+    .filter((group) => group.stories.length > 0);
+
+  let viewer = state.viewer;
+  if (viewer?.queue?.length) {
+    const queue = viewer.queue
+      .map((group) => ({ ...group, storyIds: group.storyIds.filter((id) => id !== storyId) }))
+      .filter((group) => group.storyIds.length > 0);
+    if (viewer.storyId === storyId) {
+      const next = nextViewerAfterDelete(viewer, storyId);
+      viewer = next ? { ...viewer, ...next, queue } : null;
+    } else {
+      viewer = { ...viewer, queue };
+    }
+  }
+
+  return {
+    byOwner: mapLists(state.byOwner),
+    highlights: mapLists(state.highlights),
+    archive: mapLists(state.archive),
+    rail,
+    viewer,
+  };
+}
+
 /** Replace a story in every collection it may appear in (a slide can be in the
  * rail and in a per-owner list at once; leaving one copy stale shows a dot that
  * should already be read). */
@@ -255,17 +342,7 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
 
   removeStory: async (story) => {
     await storiesApi.remove(story.id);
-    set((state) => {
-      const drop = (list: Story[]) => list.filter((s) => s.id !== story.id);
-      const byOwner: Record<string, Story[]> = {};
-      for (const [key, list] of Object.entries(state.byOwner)) byOwner[key] = drop(list);
-      const highlights: Record<string, Story[]> = {};
-      for (const [key, list] of Object.entries(state.highlights)) highlights[key] = drop(list);
-      const rail = state.rail
-        .map((group) => ({ ...group, stories: drop(group.stories) }))
-        .filter((group) => group.stories.length > 0);
-      return { byOwner, highlights, rail };
-    });
+    set((state) => dropStoryState(state, story.id));
   },
 
   updateStory: async (story, patch) => {
@@ -390,6 +467,15 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
   closeComposer: () => set({ composer: null }),
 
   applyRealtimeEvent: (type, payload) => {
+    // A deletion is authoritative and needs no refetch: drop the slide locally
+    // (including from the open player) so it disappears the moment the author
+    // deletes it — in this tab and in every viewer's tab.
+    if (type === "story_deleted") {
+      const storyId = payload.story_id as string | undefined;
+      if (storyId) set((state) => dropStoryState(state, storyId));
+      return;
+    }
+
     // Author-only counters (the server publishes them to stories_owner_<id>).
     if (type === "story_viewed") {
       const storyId = payload.story_id as string | undefined;

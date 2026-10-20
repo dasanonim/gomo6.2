@@ -360,3 +360,84 @@ describe("openViewer queue", () => {
     expect(useStoriesStore.getState().viewer?.storyId).toBe("deep");
   });
 });
+
+describe("story deletion", () => {
+  beforeEach(() => {
+    useStoriesStore.getState().reset();
+    vi.clearAllMocks();
+  });
+
+  function seedTwo() {
+    const first = story({ id: "s1" });
+    const second = story({ id: "s2" });
+    useStoriesStore.setState({
+      rail: [
+        {
+          owner: { type: "user", id: "u1", name: "Alice" },
+          stories: [first, second],
+          has_unread: true,
+        },
+      ],
+      byOwner: { "user:u1": [first, second] },
+      viewer: {
+        ownerType: "user",
+        ownerId: "u1",
+        storyId: "s1",
+        queue: [{ ownerType: "user", ownerId: "u1", storyIds: ["s1", "s2"] }],
+      },
+    });
+  }
+
+  it("removes the slide everywhere and advances the open player", async () => {
+    seedTwo();
+    api.remove.mockResolvedValue(undefined);
+
+    await useStoriesStore.getState().removeStory(useStoriesStore.getState().storiesFor("user", "u1")[0]);
+
+    expect(api.remove).toHaveBeenCalledWith("s1");
+    expect(useStoriesStore.getState().storiesFor("user", "u1").map((s) => s.id)).toEqual(["s2"]);
+    expect(useStoriesStore.getState().viewer).toMatchObject({ storyId: "s2" });
+    // The queue no longer contains the deleted slide, so "previous" cannot
+    // reopen it (that was the "story is still there when you go back" bug).
+    expect(useStoriesStore.getState().viewer?.queue?.[0].storyIds).toEqual(["s2"]);
+  });
+
+  it("closes the player when the last slide is deleted", async () => {
+    useStoriesStore.setState({
+      byOwner: { "user:u1": [story({ id: "only" })] },
+      rail: [
+        {
+          owner: { type: "user", id: "u1", name: "Alice" },
+          stories: [story({ id: "only" })],
+          has_unread: true,
+        },
+      ],
+      viewer: {
+        ownerType: "user",
+        ownerId: "u1",
+        storyId: "only",
+        queue: [{ ownerType: "user", ownerId: "u1", storyIds: ["only"] }],
+      },
+    });
+    api.remove.mockResolvedValue(undefined);
+
+    await useStoriesStore.getState().removeStory(useStoriesStore.getState().storiesFor("user", "u1")[0]);
+
+    expect(useStoriesStore.getState().viewer).toBeNull();
+    expect(useStoriesStore.getState().rail).toHaveLength(0);
+  });
+
+  it("drops a slide on the realtime deletion event without refetching", () => {
+    seedTwo();
+
+    useStoriesStore.getState().applyRealtimeEvent("story_deleted", {
+      story_id: "s1",
+      owner_type: "user",
+      owner_id: "u1",
+    });
+
+    expect(useStoriesStore.getState().storiesFor("user", "u1").map((s) => s.id)).toEqual(["s2"]);
+    expect(useStoriesStore.getState().viewer?.storyId).toBe("s2");
+    expect(api.userStories).not.toHaveBeenCalled();
+  });
+});

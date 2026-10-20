@@ -18,7 +18,10 @@ import type {
  * not generic table rows.
  */
 async function get<T>(path: string): Promise<T> {
-  const res = await apiClient.request<T>(path);
+  // Story lists are per-viewer and change on publish/delete/view. The browser
+  // must never answer from its HTTP cache (that resurrected a deleted slide
+  // until a reload); the backend additionally bypasses its Redis data cache.
+  const res = await apiClient.request<T>(path, { cache: "no-store" });
   // The envelope types `data` as `T | T[]` (it also serves table queries).
   // Every stories endpoint returns exactly one shape, so this is a narrow cast,
   // not a guess.

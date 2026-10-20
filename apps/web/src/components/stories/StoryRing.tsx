@@ -38,8 +38,6 @@ export function StoryRing({ total, read = 0, closeFriends = false, children, cla
   // More slides than arcs: keep the read/unread proportion readable.
   const readSegments =
     total === 0 ? 0 : Math.round(Math.min(Math.max(read, 0), total) * (segments / total));
-  const gap = segments > 1 ? 0.02 : 0;
-  const dash = segments > 0 ? 1 / segments - gap : 0;
 
   return (
     <span className={cn("story-ring relative inline-flex shrink-0 items-center justify-center rounded-full", className)}>
@@ -62,29 +60,47 @@ export function StoryRing({ total, read = 0, closeFriends = false, children, cla
               />
             </linearGradient>
           </defs>
-          {Array.from({ length: segments }, (_, i) => {
-            const isRead = i < readSegments;
+          {Array.from({ length: segments }, (_, index) => {
+            const isRead = index < readSegments;
+            const stroke = isRead
+              ? "oklch(var(--muted-foreground) / 0.55)"
+              : `url(#${gradientId})`;
+            const shared = {
+              "data-segment": index,
+              "data-read": isRead ? "true" : "false",
+              fill: "none",
+              stroke,
+              strokeWidth: 2.5,
+              strokeLinecap: "round" as const,
+              vectorEffect: "non-scaling-stroke" as const,
+            };
+
+            // One slide is a full circle: an arc path of exactly 360° would
+            // render nothing, and a dashed circle would leave a fake gap.
+            if (segments === 1) {
+              return <circle key={index} {...shared} cx="50" cy="50" r={RING_RADIUS} />;
+            }
+
+            // Explicit arcs (not dash patterns): every segment has the same
+            // angular length and the same gap, so the divisions stay even at
+            // any size — dash offsets + round caps used to merge some gaps and
+            // stretch others, which read as a crooked ring.
+            const gap = segments <= 3 ? 14 : segments <= 6 ? 10 : segments <= 10 ? 8 : 6;
+            const step = 360 / segments;
+            const from = -90 + index * step + gap / 2;
+            const to = -90 + (index + 1) * step - gap / 2;
+            const point = (deg: number) => {
+              const rad = (deg * Math.PI) / 180;
+              return [50 + RING_RADIUS * Math.cos(rad), 50 + RING_RADIUS * Math.sin(rad)];
+            };
+            const [x1, y1] = point(from);
+            const [x2, y2] = point(to);
+            const largeArc = to - from > 180 ? 1 : 0;
             return (
-              <circle
-                key={i}
-                data-segment={i}
-                data-read={isRead ? "true" : "false"}
-                cx="50"
-                cy="50"
-                r={RING_RADIUS}
-                fill="none"
-                pathLength={1}
-                stroke={isRead ? "oklch(var(--muted-foreground) / 0.55)" : `url(#${gradientId})`}
-                // Same width for read and unread segments: a thinner read arc
-                // sits at a different radius and its butt ends read as a
-                // chopped, crooked ring. Round caps keep every arc smooth.
-                strokeLinecap="round"
-                // Non-scaling: a 2.5px ring at every avatar size.
-                vectorEffect="non-scaling-stroke"
-                strokeWidth={2.5}
-                strokeDasharray={`${dash} 1`}
-                strokeDashoffset={-i / segments}
-                transform="rotate(-90 50 50)"
+              <path
+                key={index}
+                {...shared}
+                d={`M ${x1} ${y1} A ${RING_RADIUS} ${RING_RADIUS} 0 ${largeArc} 1 ${x2} ${y2}`}
               />
             );
           })}

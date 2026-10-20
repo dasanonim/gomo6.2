@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  Globe2,
   Loader2,
   MoreVertical,
   Pause,
@@ -30,11 +31,10 @@ import {
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
-  AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -393,8 +393,9 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
 
   const onDelete = async () => {
     setDeleteOpen(false);
+    // The store removes the slide, advances to the next one (or closes when it
+    // was the last) and prunes the queue in one update.
     await removeStory(story).catch(() => undefined);
-    viewerNext();
   };
 
   const onSavePrivacy = async (privacy: StoryPrivacy) => {
@@ -681,14 +682,28 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
       </div>
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent className="z-[260]" overlayClassName="z-[250]">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("stories.deleteTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>{t("stories.deleteHint")}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void onDelete()} className="bg-destructive text-destructive-foreground">
+        <AlertDialogContent className="z-[260] gap-5 overflow-hidden p-0 sm:max-w-sm" overlayClassName="z-[250]">
+          <div className="flex items-start gap-3.5 px-5 pt-5">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-destructive/10 text-destructive">
+              <Trash2 className="h-5 w-5" />
+            </span>
+            <div className="min-w-0 flex-1 pt-0.5">
+              <AlertDialogTitle className="text-base font-semibold">
+                {t("stories.deleteTitle")}
+              </AlertDialogTitle>
+              <AlertDialogDescription className="mt-1 text-[13px] leading-5">
+                {t("stories.deleteHint")}
+              </AlertDialogDescription>
+            </div>
+          </div>
+          <AlertDialogFooter className="flex-row justify-end gap-2 px-5 pb-5">
+            <AlertDialogCancel className="mt-0 rounded-full">
+              {t("common.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void onDelete()}
+              className="rounded-full bg-destructive px-4 text-destructive-foreground hover:bg-destructive/90"
+            >
               {t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -696,10 +711,20 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
       </AlertDialog>
 
       <Dialog open={privacyOpen} onOpenChange={setPrivacyOpen}>
-        <DialogContent className="z-[260] sm:max-w-sm" overlayClassName="z-[250]">
-          <DialogHeader>
-            <DialogTitle>{t("stories.menuPrivacy")}</DialogTitle>
-          </DialogHeader>
+        <DialogContent className="z-[260] gap-4 p-5 sm:max-w-sm" overlayClassName="z-[250]">
+          <div className="flex items-start gap-3 pr-8">
+            <span className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+              <Globe2 className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <DialogTitle className="text-base font-semibold">
+                {t("stories.menuPrivacy")}
+              </DialogTitle>
+              <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
+                {t("stories.privacyHint")}
+              </p>
+            </div>
+          </div>
           <StoryPrivacyPicker value={story.privacy} onChange={(value) => void onSavePrivacy(value)} />
         </DialogContent>
       </Dialog>
