@@ -297,9 +297,11 @@ export const MessageComposer = memo(function MessageComposer({
   const [voiceRowLocked, setVoiceRowLocked] = useState(false);
   const remaining = MAX_LENGTH - plainDraft.length;
 
+  // A message already on its way never blocks the next one (Telegram's clock
+  // exists precisely so the reader can keep writing).
   const canSend = isEditing
     ? hasContent
-    : !isSending && uploadingFiles.length === 0 && (hasContent || pendingAttachments.length > 0);
+    : uploadingFiles.length === 0 && (hasContent || pendingAttachments.length > 0);
 
   const editorJson = useMemo(
     () => (draft.trim() ? messengerTextToProsemirror(draft) : EMPTY_EDITOR_STATE),
@@ -386,7 +388,7 @@ export const MessageComposer = memo(function MessageComposer({
       }
       return;
     }
-    if (!isSending && uploadingFiles.length === 0 && (hasContent || pendingAttachments.length > 0)) {
+    if (uploadingFiles.length === 0 && (hasContent || pendingAttachments.length > 0)) {
       stopTyping();
       // Wipe the editor in the SAME tick as the send: the optimistic store call
       // resolves only after a network round-trip, and waiting for it left the
@@ -399,7 +401,7 @@ export const MessageComposer = memo(function MessageComposer({
       hapticSuccess();
       onSend();
     }
-  }, [isEditing, draft, editingContent, editingMessageId, onSaveEdit, onCancelEdit, isSending, uploadingFiles, hasContent, pendingAttachments, stopTyping, onSend]);
+  }, [isEditing, draft, editingContent, editingMessageId, onSaveEdit, onCancelEdit, uploadingFiles, hasContent, pendingAttachments, stopTyping, onSend]);
 
   // ── Touch attach sheet (paperclip) ────────────────────────────────────────
   // On touch the paperclip does NOT open the native picker directly — iOS
@@ -1652,7 +1654,6 @@ useEffect(() => {
         {showVoiceRecorder && onSendVoice ? (
           <VoiceRecorder
             onSend={onSendVoice}
-            disabled={isSending}
             onRowLockChange={setVoiceRowLocked}
           />
         ) : (

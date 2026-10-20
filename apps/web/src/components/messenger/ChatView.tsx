@@ -23,7 +23,7 @@ import { NotesSettingsDialog } from "./NotesSettingsDialog";
 import { NotesOrganizeDialog } from "./NotesOrganizeDialog";
 import { hasNotesKey } from "@/utils/notesCrypto";
 import { isConsecutive } from "./messageListUtils";
-import { chunkAttachments, MAX_ALBUM_ATTACHMENTS } from "./attachmentAlbum";
+import { chunkAttachments } from "./attachmentAlbum";
 import { uploadFilesAsAttachments } from "./attachmentUpload";
 import { useFileDrop } from "@/hooks/useFileDrop";
 import type { GomoRichEditorHandle } from "@/components/GomoRichEditor";
@@ -110,8 +110,12 @@ export const ChatView = memo(function ChatView({
   const [replyToMessage, setReplyToMessage] = useState<MessageView | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
-  const [isBatchSending, setIsBatchSending] = useState(false);
-  const batchSendingRef = useRef(false);
+  // Released on the next render: a same-tick double click must not send the
+  // same draft twice, but a NEW message never waits for the previous one.
+  const sendLockRef = useRef(false);
+  useEffect(() => {
+    sendLockRef.current = false;
+  }, [draft, pendingAttachments]);
   // Message-list handle: send-time follow and the pinned-message jump.
   const messageListRef = useRef<MessageListHandle>(null);
   // Notes self-chat organization
@@ -318,10 +322,11 @@ export const ChatView = memo(function ChatView({
     if (sentId) setReplyToMessage(null);
   }, [sendMessage, replyToMessage]);
 
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(() => {
     // Files still uploading must block send — otherwise Enter would send the
     // message without them and leave the finished attachments as orphans.
-    if ((isMessengerTextEmpty(draft) && pendingAttachments.length === 0) || isSending || batchSendingRef.current || uploadingFiles.length > 0) return;
+    if ((isMessengerTextEmpty(draft) && pendingAttachments.length === 0) || uploadingFiles.length > 0) return;
+    if (sendLockRef.current) return;
     // The wire format (BBCode tags, [e:…] tokens) inflates the payload — the
     // server enforces 4000 runes, so a fully-formatted near-limit message
     // could be rejected. Block it with a clear error instead of a silent drop.
@@ -329,63 +334,44 @@ export const ChatView = memo(function ChatView({
       toast.error("Сообщение слишком длинное — уберите часть форматирования");
       return;
     }
+    sendLockRef.current = true;
 
     const attachmentsToSend = [...pendingAttachments];
     const batches = attachmentsToSend.length > 0
       ? chunkAttachments(attachmentsToSend)
       : [[] as Attachment[]];
     const caption = draft.trim() || " ";
-    let firstSent = true;
+    const replyTo = replyToMessage?.id ?? undefined;
 
-    // Keep the composer locked across every message in a 6 + 1 + ... send.
-    // The store's isSending flag belongs to one request and can become false
-    // between batches, so it is not sufficient as the batch-level mutex.
-    batchSendingRef.current = true;
-    setIsBatchSending(true);
+    // Telegram's model: the composer empties at once and the message lives in
+    // the chat with a clock while the outbox delivers it. Waiting for the
+    // server here is exactly what used to block the next message.
+    setDraft("");
+    setReplyToMessage(null);
+    setPendingAttachments([]);
+    // Sending is an explicit "I am here" gesture: follow the message we just
+    // wrote, even if the user had scrolled up to read history.
+    requestAnimationFrame(() => messageListRef.current?.scrollToBottom());
 
-    try {
-      // One selected batch becomes one message. A batch is capped at six so the
-      // renderer can always present it as a complete mosaic. Keep the caption
-      // only on the final batch; otherwise a 7+ photo send duplicates the text.
-      for (let index = 0; index < batches.length; index += 1) {
-        const clientId = `c${Date.now().toString(36)}_${index}_${Math.random().toString(36).slice(2, 8)}`;
-        let sentId = "";
-        try {
-          sentId = await sendMessage(
-            index === batches.length - 1 ? caption : " ",
-            clientId,
-            firstSent ? replyToMessage?.id ?? undefined : undefined,
-            batches[index].length > 0 ? batches[index] : undefined,
-          );
-        } catch {
-          // sendMessage normally converts request failures into an empty id,
-          // but keep the same retry-safe remainder if a lower layer throws.
-        }
-        if (!sentId) {
-          // Keep only the failed batch and everything after it. Retrying now
-          // cannot duplicate the batches that were already accepted.
-          setPendingAttachments(attachmentsToSend.slice(index * MAX_ALBUM_ATTACHMENTS));
-          // The reply target was consumed by the first successful batch. If
-          // this is a retry of a later batch, do not attach it to the same
-          // quoted message a second time.
-          if (!firstSent) setReplyToMessage(null);
-          return;
-        }
-        firstSent = false;
-        setPendingAttachments(attachmentsToSend.slice((index + 1) * MAX_ALBUM_ATTACHMENTS));
-      }
-
-      setDraft("");
-      setReplyToMessage(null);
-      setPendingAttachments([]);
-      // Sending is an explicit "I am here" gesture: follow the message we just
-      // wrote, even if the user had scrolled up to read history.
-      requestAnimationFrame(() => messageListRef.current?.scrollToBottom());
-    } finally {
-      batchSendingRef.current = false;
-      setIsBatchSending(false);
-    }
-  }, [draft, isSending, sendMessage, replyToMessage, pendingAttachments, uploadingFiles, setDraft]);
+    // One selected batch becomes one message. A batch is capped at six so the
+    // renderer can always present it as a complete mosaic. Keep the caption
+    // only on the final batch; otherwise a 7+ photo send duplicates the text.
+    // The store serializes deliveries per chat, so batches cannot overtake
+    // each other even though they are fired without awaiting.
+    batches.forEach((batch, index) => {
+      const clientId = `c${Date.now().toString(36)}_${index}_${Math.random().toString(36).slice(2, 8)}`;
+      // `Promise.resolve` keeps this safe for a stubbed store in tests, and a
+      // rejection must never escape as an unhandled one.
+      void Promise.resolve(
+        sendMessage(
+          index === batches.length - 1 ? caption : " ",
+          clientId,
+          index === 0 ? replyTo : undefined,
+          batch.length > 0 ? batch : undefined,
+        ),
+      ).catch(() => "");
+    });
+  }, [draft, sendMessage, replyToMessage, pendingAttachments, uploadingFiles, setDraft]);
 
   const handleStartEdit = useCallback((msgId: string, content: string) => {
     setEditingMessageId(msgId);
@@ -493,7 +479,7 @@ export const ChatView = memo(function ChatView({
               isNotes: conversation.is_notes,
             })}
             viewerId={me.id}
-            onRetry={(m) => sendMessage(m.content, m.client_id)}
+            onRetry={(m) => sendMessage(m.content, m.client_id, m.parent_message_id ?? undefined, m.attachments)}
             onReply={handleReply}
             onCopy={handleCopy}
             onJumpToMessage={handleJumpToMessage}
@@ -733,7 +719,7 @@ export const ChatView = memo(function ChatView({
         key={conversation.id}
         draft={draft}
         setDraft={setDraft}
-        isSending={isSending || isBatchSending}
+        isSending={isSending}
         onSend={handleSend}
         onSendVoice={handleSendVoice}
         composerRef={composerRef}

@@ -219,7 +219,11 @@ export const ShareSheet = ({ open, onOpenChange, target, url, title }: ShareShee
 
       const text = message.trim();
       if (text) {
-        await store.sendMessage(text, clientId(), shareMessageId, undefined, convId);
+        // A queued share card has no server id yet (`temp_<client>`), and the
+        // server addresses quoted parents by UUID — leave the comment unquoted
+        // rather than send an id it cannot resolve.
+        const parentId = shareMessageId.startsWith("temp_") ? undefined : shareMessageId;
+        await store.sendMessage(text, clientId(), parentId, undefined, convId);
       }
 
       setSending(false);

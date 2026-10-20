@@ -24,6 +24,7 @@ import {
   outboxRetryDelay,
   putOutbox,
   clearOutbox,
+  OUTBOX_LEASE_MS,
   OUTBOX_MAX_ATTEMPTS,
   type OutboxEntry,
 } from "@/components/messenger/core/outbox";
@@ -46,6 +47,25 @@ let initInFlight: Promise<void> | null = null;
 let outboxTimer: ReturnType<typeof setTimeout> | null = null;
 let outboxFlushing = false;
 let outboxListenersAttached = false;
+/**
+ * One delivery at a time per chat. The composer no longer waits for a message
+ * to be acknowledged (Telegram does not either), so a burst of sends would
+ * otherwise reach the server out of order and land shuffled.
+ */
+const sendChains = new Map<string, Promise<unknown>>();
+
+function serializeSend<T>(conversationId: string, task: () => Promise<T>): Promise<T> {
+  const previous = sendChains.get(conversationId) ?? Promise.resolve();
+  const next = previous.then(task, task);
+  sendChains.set(
+    conversationId,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return next;
+}
 const latestEventIds = new Map<string, string>();
 
 // ── Buffered older pages ─────────────────────────────────────────────────────
@@ -894,92 +914,99 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
       attachments: attachments ?? [],
       createdAt: Date.now(),
       attempts: 0,
-      nextAttemptAt: Date.now(),
+      // Lease: the inline attempt below owns this entry, so a concurrent flush
+      // must not send it too. If the tab dies mid-request the lease expires and
+      // the queue takes over.
+      nextAttemptAt: Date.now() + OUTBOX_LEASE_MS,
     };
     await putOutbox(outboxEntry);
 
-    try {
-      const msg: MessageView = await messengerApi.sendMessage(
-        convId,
-        wireContent,
-        clientId,
-        parentMessageId,
-        attachments,
-      );
-      const sentAt = msg.sent_at;
-      // For notes the server echoes the client ciphertext; decrypt it back to
-      // plaintext so the store only ever holds readable notes.
-      let displayContent = msg.content;
-      if (isNotes) {
-        const decrypted = await decryptNote(msg.content, convId);
-        displayContent = decrypted ?? content;
-      }
-      set((s) => {
-        // Update message from optimistic to real — preserve attachments from optimistic if server doesn't return them
-        const messages = s.messages.map((m) => {
-          if (m.client_id !== clientId) return m;
-          const serverAttachments = msg.attachments && msg.attachments.length > 0 ? msg.attachments : m.attachments;
-          return { ...msg, content: displayContent, attachments: serverAttachments, localStatus: "sent" as const };
+    return serializeSend(convId, async () => {
+      try {
+        const msg: MessageView = await messengerApi.sendMessage(
+          convId,
+          wireContent,
+          clientId,
+          parentMessageId,
+          attachments,
+        );
+        const sentAt = msg.sent_at;
+        // For notes the server echoes the client ciphertext; decrypt it back to
+        // plaintext so the store only ever holds readable notes.
+        let displayContent = msg.content;
+        if (isNotes) {
+          const decrypted = await decryptNote(msg.content, convId);
+          displayContent = decrypted ?? content;
+        }
+        set((s) => {
+          // Update message from optimistic to real — preserve attachments from optimistic if server doesn't return them
+          const messages = s.messages.map((m) => {
+            if (m.client_id !== clientId) return m;
+            const serverAttachments = msg.attachments && msg.attachments.length > 0 ? msg.attachments : m.attachments;
+            return { ...msg, content: displayContent, attachments: serverAttachments, localStatus: "sent" as const };
+          });
+          // Optimistically update conversation: move to top with new preview
+          const target = s.conversations.find((c) => c.id === convId);
+          let conversations = s.conversations;
+          if (target) {
+            const previewText = content.trim()
+              ? messengerPlainPreview(content, 80)
+              : attachments && attachments.length > 0
+                ? `📎 ${attachments.length > 1 ? `${attachments.length} файлов` : attachments[0].name}`
+                : "";
+            const updated = {
+              ...target,
+              last_message_at: sentAt,
+              last_message_preview: previewText,
+              last_message_sender_id: s.me!.id,
+              unread_count: 0,
+            };
+            conversations = [updated, ...s.conversations.filter((c) => c.id !== convId)];
+          }
+          if (s.selectedConversationId === convId) {
+            rememberLatestEventId(convId, messages);
+            cacheCurrentMessages(s.me?.id ?? null, convId, messages);
+          }
+          return { messages, conversations, isSending: false };
         });
-        // Optimistically update conversation: move to top with new preview
-        const target = s.conversations.find((c) => c.id === convId);
-        let conversations = s.conversations;
-        if (target) {
-          const previewText = content.trim()
-            ? messengerPlainPreview(content, 80)
-            : attachments && attachments.length > 0
-              ? `📎 ${attachments.length > 1 ? `${attachments.length} файлов` : attachments[0].name}`
-              : "";
-          const updated = {
-            ...target,
-            last_message_at: sentAt,
-            last_message_preview: previewText,
-            last_message_sender_id: s.me!.id,
-            unread_count: 0,
-          };
-          conversations = [updated, ...s.conversations.filter((c) => c.id !== convId)];
-        }
-        if (s.selectedConversationId === convId) {
-          rememberLatestEventId(convId, messages);
-          cacheCurrentMessages(s.me?.id ?? null, convId, messages);
-        }
-        return { messages, conversations, isSending: false };
-      });
-      void deleteOutbox(outboxEntry.key);
-      return msg.id;
-    } catch (e) {
-      const status = (e as { status?: number }).status;
-      if (isPermanentSendError(status) || OUTBOX_MAX_ATTEMPTS <= 0) {
-        // A 400/403/404 will never succeed: the bubble becomes "failed" with a
-        // retry button, and the queue forgets it.
         void deleteOutbox(outboxEntry.key);
+        return msg.id;
+      } catch (e) {
+        const status = (e as { status?: number }).status;
+        if (isPermanentSendError(status) || OUTBOX_MAX_ATTEMPTS <= 0) {
+          // A 400/403/404 will never succeed: the bubble becomes "failed" with a
+          // retry button, and the queue forgets it.
+          void deleteOutbox(outboxEntry.key);
+          set((s) => ({
+            messages: s.messages.map((m) =>
+              m.client_id === clientId ? { ...m, localStatus: "failed" as const } : m,
+            ),
+            isSending: false,
+            error: "Не удалось отправить сообщение",
+          }));
+          return "";
+        }
+
+        // Network / 5xx / rate limit: stay "sending" (the clock), retry by itself.
+        const attempts = outboxEntry.attempts + 1;
         set((s) => ({
           messages: s.messages.map((m) =>
-            m.client_id === clientId ? { ...m, localStatus: "failed" as const } : m,
+            m.client_id === clientId ? { ...m, localStatus: "sending" as const } : m,
           ),
           isSending: false,
-          error: "Не удалось отправить сообщение",
         }));
-        return "";
+        await putOutbox({
+          ...outboxEntry,
+          attempts,
+          nextAttemptAt: Date.now() + outboxRetryDelay(attempts),
+          lastError: e instanceof Error ? e.message : "network",
+        });
+        scheduleOutboxFlush(outboxRetryDelay(attempts));
+        // The clock is a delivery promise, not a failure: callers treat a queued
+        // message as sent (the composer clears, the album moves on).
+        return optimistic.id;
       }
-
-      // Network / 5xx / rate limit: stay "sending" (the clock), retry by itself.
-      const attempts = outboxEntry.attempts + 1;
-      set((s) => ({
-        messages: s.messages.map((m) =>
-          m.client_id === clientId ? { ...m, localStatus: "sending" as const } : m,
-        ),
-        isSending: false,
-      }));
-      await putOutbox({
-        ...outboxEntry,
-        attempts,
-        nextAttemptAt: Date.now() + outboxRetryDelay(attempts),
-        lastError: e instanceof Error ? e.message : "network",
-      });
-      scheduleOutboxFlush(outboxRetryDelay(attempts));
-      return "";
-    }
+    });
   },
 
   flushOutbox: async () => {

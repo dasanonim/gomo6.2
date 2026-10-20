@@ -367,7 +367,9 @@ describe("messengerStore", () => {
 
       const msgId = await useMessengerStore.getState().sendMessage("Hello!", "client-net");
 
-      expect(msgId).toBe("");
+      // A queued message counts as sent for the caller (the composer clears,
+      // the album moves on); only a refusal keeps the draft.
+      expect(msgId).toBe("temp_client-net");
       const state = useMessengerStore.getState();
       // Still the reader's message, still on its way: the outbox retries it.
       expect(state.messages[0].localStatus).toBe("sending");
@@ -387,6 +389,64 @@ describe("messengerStore", () => {
       const state = useMessengerStore.getState();
       expect(state.messages[0].localStatus).toBe("failed");
       expect(state.error).toBe("Не удалось отправить сообщение");
+      expect(await listOutbox("u1")).toHaveLength(0);
+    });
+
+    it("delivers a burst one at a time, in the order it was written", async () => {
+      useMessengerStore.setState({ me: { id: "u1", username: "test" }, selectedConversationId: "conv-1" });
+      const wire: string[] = [];
+      let releaseFirst: () => void = () => {};
+      const firstInFlight = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      vi.mocked(messengerApi.sendMessage).mockImplementation(async (_conv, content, clientId) => {
+        wire.push(clientId);
+        if (clientId === "client-a") await firstInFlight;
+        return mockMsg({ id: `msg-${clientId}`, client_id: clientId, content });
+      });
+
+      // Telegram's model: the composer never waits, so both go out at once…
+      const first = useMessengerStore.getState().sendMessage("первое", "client-a");
+      const second = useMessengerStore.getState().sendMessage("второе", "client-b");
+
+      await vi.waitFor(() => expect(wire).toEqual(["client-a"]));
+      // …both bubbles are already in the chat with a clock…
+      expect(
+        useMessengerStore.getState().messages.filter((m) => m.localStatus === "sending"),
+      ).toHaveLength(2);
+      // …and the second request waits for the first: order beats parallelism.
+      expect(wire).toEqual(["client-a"]);
+
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(wire).toEqual(["client-a", "client-b"]);
+      const sent = useMessengerStore.getState().messages.filter((m) => m.localStatus === "sent");
+      expect(sent.map((m) => m.content)).toEqual(["первое", "второе"]);
+    });
+
+    it("leases an in-flight message so a concurrent flush cannot send it twice", async () => {
+      useMessengerStore.setState({ me: { id: "u1", username: "test" }, selectedConversationId: "conv-1" });
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.mocked(messengerApi.sendMessage).mockImplementation(async (_conv, _content, clientId) => {
+        await gate;
+        return mockMsg({ id: `msg-${clientId}`, client_id: clientId });
+      });
+
+      const pending = useMessengerStore.getState().sendMessage("не дублируй", "client-lease");
+      await vi.waitFor(async () => expect(await listOutbox("u1")).toHaveLength(1));
+
+      const [entry] = await listOutbox("u1");
+      expect(entry.nextAttemptAt).toBeGreaterThan(Date.now());
+
+      // The periodic flush sees the entry but leaves it to its owner.
+      await useMessengerStore.getState().flushOutbox();
+      expect(messengerApi.sendMessage).toHaveBeenCalledTimes(1);
+
+      release();
+      await pending;
       expect(await listOutbox("u1")).toHaveLength(0);
     });
 

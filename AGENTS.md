@@ -380,7 +380,10 @@ npx tsc --noEmit -p apps/docs/tsconfig.json
   is the OPEN chat only — never `cacheCurrentMessages`/`rememberLatestEventId` for a
   different `conversationId` (it overwrites that chat's cache). Retry goes through
   `sendMessage(content, client_id)` so the bubble is replaced, not duplicated; deleting
-  a queued message must drop its outbox entry.
+  a queued message must drop its outbox entry. The composer never waits for delivery:
+  `sendMessage` returns the server id / `temp_<clientId>` (queued) / `""` (refused), and
+  deliveries run through `serializeSend` (one at a time **per chat** — otherwise a burst
+  lands shuffled) with a 30s lease on the entry so a concurrent flush cannot double-send.
   See [docs/wiki/MESSENGER_OUTBOX.md](docs/wiki/MESSENGER_OUTBOX.md).
 - **Channel switching**: `channelSlug` must be in the `loadBoard` effect deps in
   `apps/web/src/pages/Board.tsx`. Missing it = stale threads on channel nav.

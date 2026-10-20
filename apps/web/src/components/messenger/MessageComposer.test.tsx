@@ -515,9 +515,13 @@ describe("MessageComposer", () => {
     expect(sendButton).not.toBeDisabled();
   });
 
-  it("send button is disabled when isSending is true", () => {
-    const { sendButton } = setup({ draft: "Hello", isSending: true });
-    expect(sendButton).toBeDisabled();
+  it("keeps the send button live while an earlier message is still sending", () => {
+    // Telegram's clock is not a lock: a burst of messages is normal, and the
+    // outbox delivers them in order.
+    const { sendButton, onSend } = setup({ draft: "Second message", isSending: true });
+    expect(sendButton).not.toBeDisabled();
+    void userEvent.click(sendButton);
+    return waitFor(() => expect(onSend).toHaveBeenCalled());
   });
 
   it("sends via the send button", async () => {

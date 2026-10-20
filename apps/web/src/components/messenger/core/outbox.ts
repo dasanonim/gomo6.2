@@ -15,6 +15,8 @@ const DB_VERSION = 1;
 const STORE = "entries";
 /** Give up after this many attempts; the bubble turns into the failed state. */
 export const OUTBOX_MAX_ATTEMPTS = 6;
+/** How long one in-flight send owns its entry before the queue may retry it. */
+export const OUTBOX_LEASE_MS = 30000;
 /** Backoff between attempts: 2s, 4s, 8s, 16s, 30s, 30s. */
 export const OUTBOX_BACKOFF_MS = [2000, 4000, 8000, 16000, 30000, 30000];
 
