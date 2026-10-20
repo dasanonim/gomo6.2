@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  ChevronDown,
+  ChevronLeft,
   Globe2,
   ImagePlus,
   Loader2,
@@ -26,16 +26,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/useAuth";
-import { storageUrl, uploadFile } from "@/utils/storage";
+import { uploadFile } from "@/utils/storage";
 import { useStoriesStore } from "@/stores/storiesStore";
-import {
-  ownerKey,
-  type CreateStoryInput,
-  type Story,
-  type StoryPrivacy,
-  type StoryTextStyle,
-} from "@/types/stories";
+import type { CreateStoryInput, StoryPrivacy, StoryTextStyle } from "@/types/stories";
 import { CloseFriendsDialog } from "./CloseFriendsDialog";
+import { VideoTimeline } from "./VideoTimeline";
+import { useVideoFrames } from "./useVideoFrames";
 import {
   STORY_TEXT_PRESETS,
   storyPresetBackground,
@@ -46,7 +42,6 @@ import "./stories.css";
 const MAX_VIDEO_SECONDS = 60;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
-const EMPTY: Story[] = [];
 
 type Mode = "media" | "text";
 
@@ -74,15 +69,13 @@ export function StoryComposer() {
   const publish = useStoriesStore((state) => state.publish);
   const openViewer = useStoriesStore((state) => state.openViewer);
   const publishing = useStoriesStore((state) => state.publishing);
-  const ownerStories = useStoriesStore((state) =>
-    target ? (state.byOwner[ownerKey(target.ownerType, target.ownerId)] ?? EMPTY) : EMPTY,
-  );
 
   const [mode, setMode] = useState<Mode>("media");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isVideo, setIsVideo] = useState(false);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [videoTime, setVideoTime] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [muted, setMuted] = useState(true);
   const [text, setText] = useState("");
@@ -101,6 +94,7 @@ export function StoryComposer() {
     setPreviewUrl(null);
     setIsVideo(false);
     setVideoDuration(null);
+    setVideoTime(0);
     setPlaying(true);
     setMuted(true);
     setText("");
@@ -154,10 +148,8 @@ export function StoryComposer() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [target, closeComposer]);
 
-  const strip = useMemo(
-    () => ownerStories.filter((story) => story.id).slice(-6),
-    [ownerStories],
-  );
+  const frames = useVideoFrames(isVideo && previewUrl ? previewUrl : null);
+  const timelineDuration = videoDuration ?? 0;
 
   if (!target) return null;
 
@@ -289,7 +281,7 @@ export function StoryComposer() {
           aria-label={t("common.close")}
           className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
         >
-          <ChevronDown className="h-5 w-5" />
+          <ChevronLeft className="h-5 w-5" />
         </button>
         <UserAvatar
           src={target.ownerType === "user" && user?.id === target.ownerId ? user.avatar_url : null}
@@ -393,6 +385,7 @@ export function StoryComposer() {
                   loop
                   muted={muted}
                   onClick={() => setPlaying((value) => !value)}
+                  onTimeUpdate={(event) => setVideoTime(event.currentTarget.currentTime)}
                 />
                 <div className="absolute right-2 top-2 flex gap-1.5">
                   <RoundButton
@@ -425,15 +418,13 @@ export function StoryComposer() {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="mx-auto flex h-full w-full max-w-[560px] flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-white/20 bg-white/[0.03] px-6 text-center transition-colors hover:border-white/35 hover:bg-white/[0.06]"
+            className="mx-auto flex h-full w-full max-w-[560px] flex-col items-center justify-center gap-4 px-6 text-center outline-none"
           >
-            <span className="grid h-16 w-16 place-items-center rounded-full bg-white/10">
-              <ImagePlus className="h-8 w-8 text-white/80" />
+            <span className="grid h-20 w-20 place-items-center rounded-full bg-white/[0.07] text-white/75 transition-colors hover:bg-white/[0.12]">
+              <ImagePlus className="h-9 w-9" />
             </span>
-            <span className="text-sm font-medium">{t("stories.composerPickMedia")}</span>
-            <span className="max-w-[18rem] text-xs leading-5 text-white/50">
-              {t("stories.composerPickMediaHint")}
-            </span>
+            <span className="text-base font-medium">{t("stories.composerPickMedia")}</span>
+            <span className="text-xs text-white/45">{t("stories.composerPickMediaHint")}</span>
           </button>
         )}
       </div>
@@ -458,49 +449,19 @@ export function StoryComposer() {
           </div>
         )}
 
-        {strip.length > 0 && mode === "media" && (
-          <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <button
-              type="button"
-              onClick={() => {
-                if (!previewUrl) fileInputRef.current?.click();
-              }}
-              aria-label={previewUrl ? t("stories.composerNew") : t("stories.composerPickMedia")}
-              className="relative h-14 w-10 shrink-0 overflow-hidden rounded-lg ring-2 ring-white/80"
-            >
-              {previewUrl ? (
-                isVideo ? (
-                  <video src={previewUrl} muted className="h-full w-full object-cover" />
-                ) : (
-                  <img src={previewUrl} alt="" className="h-full w-full object-cover" />
-                )
-              ) : (
-                <span className="grid h-full w-full place-items-center bg-white/10">
-                  <ImagePlus className="h-4 w-4 text-white/70" />
-                </span>
-              )}
-            </button>
-            {strip.map((story) => (
-              <button
-                key={story.id}
-                type="button"
-                onClick={() => {
-                  closeComposer();
-                  openViewer({
-                    ownerType: story.owner_type,
-                    ownerId: story.owner_id,
-                    ownerName: target.ownerName,
-                    storyId: story.id,
-                    origin: "composer",
-                  });
-                }}
-                className="h-14 w-10 shrink-0 overflow-hidden rounded-lg opacity-70 transition-opacity hover:opacity-100"
-                title={t("stories.openOwner", { name: target.ownerName })}
-              >
-                <StoryThumb story={story} />
-              </button>
-            ))}
-          </div>
+        {isVideo && mode === "media" && (
+          <VideoTimeline
+            frames={frames}
+            progress={timelineDuration > 0 ? videoTime / timelineDuration : 0}
+            currentTime={videoTime}
+            duration={timelineDuration}
+            onSeek={(ratio) => {
+              const video = videoRef.current;
+              if (!video || !video.duration) return;
+              video.currentTime = ratio * video.duration;
+              setVideoTime(video.currentTime);
+            }}
+          />
         )}
 
         {mode === "media" ? (
@@ -535,15 +496,6 @@ export function StoryComposer() {
         )}
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={closeComposer}
-            aria-label={t("common.cancel")}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
-          >
-            <ChevronDown className="h-5 w-5" />
-          </button>
-
           <div className="flex flex-1 items-center justify-center gap-1 rounded-full bg-white/10 p-1">
             <ToolButton
               active={mode === "media"}
@@ -648,27 +600,5 @@ function ToolButton({
     >
       {icon}
     </button>
-  );
-}
-
-/** Thumbnail of an existing slide (media preview, or its text gradient). */
-function StoryThumb({ story }: { story: Story }) {
-  if (story.kind === "text") {
-    return (
-      <span
-        className="grid h-full w-full place-items-center px-1 text-center text-[7px] font-semibold leading-tight text-white"
-        style={{ background: storyPresetBackground(story.text_style?.preset) }}
-      >
-        {story.text.slice(0, 24)}
-      </span>
-    );
-  }
-  return (
-    <img
-      src={storageUrl("stories", story.preview_key ?? story.media_key) ?? undefined}
-      alt=""
-      className="h-full w-full object-cover"
-      loading="lazy"
-    />
   );
 }

@@ -824,6 +824,8 @@ const en: LocaleResources = {
     closeFriendsHint: "These people see stories shared with “Close friends”. Only mutual friends can be added.",
     closeFriendsEmpty: "You have no friends to add yet.",
     closeFriendsConfigure: "Edit",
+    closeFriendsSearch: "Search friends",
+    closeFriendsNotFound: "Nobody found",
     closeFriendsSelected_one: "Selected: {{count}}",
     closeFriendsSelected_other: "Selected: {{count}}",
     viewerTitle: "Stories",

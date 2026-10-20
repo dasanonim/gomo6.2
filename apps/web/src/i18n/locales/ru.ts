@@ -852,6 +852,8 @@ const ru: LocaleResources = {
     closeFriendsHint: "Эти люди видят истории с аудиторией «Избранные». В список попадают только взаимные друзья.",
     closeFriendsEmpty: "У вас пока нет друзей, которых можно добавить.",
     closeFriendsConfigure: "Настроить",
+    closeFriendsSearch: "Поиск по друзьям",
+    closeFriendsNotFound: "Никого не найдено",
     closeFriendsSelected_one: "Выбрано: {{count}}",
     closeFriendsSelected_few: "Выбрано: {{count}}",
     closeFriendsSelected_many: "Выбрано: {{count}}",
