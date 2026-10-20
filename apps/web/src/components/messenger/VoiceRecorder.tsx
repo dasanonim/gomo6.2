@@ -7,6 +7,8 @@ import type { Attachment } from "./types";
 import { VoicePlayer } from "./VoicePlayer";
 import { WaveformRenderer } from "./core/waveformRenderer";
 import {
+  agcPeak,
+  createAgc,
   livePeak,
   rmsFromTimeDomain,
   storedPeak,
@@ -188,6 +190,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
   const liveBarsRef = useRef<number[]>([]);
   const lastBarAtRef = useRef(0);
   const warmupUntilRef = useRef(0);
+  const agcRef = useRef(createAgc());
   const phaseRef = useRef<Phase>("idle");
   const lockedRef = useRef(false);
   const cancelRef = useRef(false);
@@ -440,13 +443,14 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
         // silent bar still reads in the message bubble, but the live renderer
         // must get the RAW level — its running maximum starts at 0.05, and a
         // floored 0.06 would normalise to full height before the first sound.
-        // Two consumers, two scales. The stored bars keep a 6% floor (silence
-        // stays visible in the bubble); the live canvas gets the ABSOLUTE level
-        // — no normalisation here and none in the renderer, so silence is 0 and
-        // a steady room tone can never be inflated into a wall.
-        const peak = livePeak(rms);
-        liveBarsRef.current.push(storedPeak(peak));
-        waveRendererRef.current?.pushPeak(peak);
+        // Two consumers, two scales: the stored bars keep a 6% floor (silence
+        // stays visible in the bubble); the live canvas gets the level through
+        // the AGC — gated at zero, attack-limited, slowly decaying — so a quiet
+        // voice still fills the pill and no single frame can lock the scale.
+        const level = livePeak(rms);
+        const shown = agcPeak(level, agcRef.current);
+        liveBarsRef.current.push(storedPeak(shown));
+        waveRendererRef.current?.pushPeak(shown);
       }
       rafRef.current = requestAnimationFrame(frame);
     };
@@ -454,6 +458,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
 
     startedAtRef.current = performance.now();
     warmupUntilRef.current = startedAtRef.current + WAVE_WARMUP_MS;
+    agcRef.current = createAgc();
     tickRef.current = setInterval(() => {
       if ((phaseRef.current as Phase) !== "recording") return;
       const seconds = (performance.now() - startedAtRef.current) / 1000;

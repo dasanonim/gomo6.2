@@ -3,7 +3,9 @@ import {
   VOICE_BARS,
   MIN_PEAK_SCALE,
   PEAK_SCALE_MULTIPLIER,
+  agcPeak,
   barCountForWidth,
+  createAgc,
   livePeak,
   peakScale,
   rmsFromTimeDomain,
@@ -42,6 +44,44 @@ describe("formatVoiceTime", () => {
   it("survives garbage", () => {
     expect(formatVoiceTime(Number.NaN)).toBe("0:00");
     expect(formatVoiceTime(-4)).toBe("0:00");
+  });
+});
+
+describe("live AGC", () => {
+  const run = (levels: number[], state = createAgc()) => levels.map((level) => agcPeak(level, state));
+
+  it("keeps silence at zero and never lets it grow", () => {
+    const state = createAgc();
+    // Even after a loud passage, silence is exactly 0 — no drift upward.
+    run([0.4, 0.4, 0.4, 0.4, 0.4], state);
+    expect(run([0, 0, 0], state)).toEqual([0, 0, 0]);
+  });
+
+  it("lifts a quiet voice into view instead of drawing dots", () => {
+    const [first] = run([0.05]);
+    expect(first).toBeGreaterThan(0.1);
+    // …and a whisper is still visibly lower than normal speech.
+    const quiet = run([0.05, 0.05, 0.05]);
+    const normal = run([0.15, 0.15, 0.15]);
+    expect(Math.min(...quiet)).toBeLessThan(Math.max(...normal));
+  });
+
+  it("does not let one spike own the scale", () => {
+    const state = createAgc();
+    const spike = run([0.95], state)[0];
+    expect(spike).toBe(1);
+    // Speech right after the spike must still read as speech, not vanish.
+    const after = run([0.12, 0.12, 0.12, 0.12], state);
+    expect(Math.max(...after)).toBeGreaterThan(0.4);
+  });
+
+  it("lifts a whisper back into view after a shout", () => {
+    const state = createAgc();
+    run(new Array(10).fill(0.5), state); // a loud passage sets a high reference
+    const whisper = run(new Array(20).fill(0.06), state);
+    // It starts quiet and recovers within about a second of frames.
+    expect(whisper[0]).toBeLessThan(0.2);
+    expect(whisper[whisper.length - 1]).toBeGreaterThan(0.4);
   });
 });
 

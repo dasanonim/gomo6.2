@@ -113,6 +113,49 @@ export function peakScale(peaks: ArrayLike<number>): number {
 }
 
 /**
+ * Automatic gain for the live waveform, done the safe way.
+ *
+ * Public absolute levels are honest but ugly: a quiet voice renders as a row of
+ * dots, and Telegram's look needs the wave to fill the pill. Normalising by a
+ * running maximum (what the renderer used to do) or by a rolling mean (what this
+ * recorder used to do) both couples the drawing to the *last* loud frame — the
+ * first thump owns the scale, or steady noise inflates to full height.
+ *
+ * This is an AGC with three guards:
+ *  • an absolute noise gate, so silence is exactly 0 and never "grows";
+ *  • an attack-limited reference — one frame can raise the scale by at most 40%,
+ *    so a single spike cannot own it, while sustained speech converges in ~5
+ *    frames (300ms) and the wave grows smoothly;
+ *  • a slow decay, so a quieter passage is lifted back into view instead of
+ *    staying flat.
+ */
+export type AgcState = { ref: number };
+
+const AGC_GATE = 0.02;
+const AGC_MIN_REF = 0.08;
+const AGC_ATTACK_LIMIT = 1.4;
+const AGC_ATTACK_STEP = 0.02;
+/** Slow release while the level stays near the reference… */
+const AGC_DECAY = 0.995;
+/** …and a fast one when it drops far below it (a shout followed by a whisper). */
+const AGC_DROP_DECAY = 0.9;
+const AGC_DROP_RATIO = 0.6;
+const AGC_HEADROOM = 1.2;
+
+export function createAgc(): AgcState {
+  return { ref: AGC_MIN_REF };
+}
+
+/** One sampled level (0..1, absolute) → its bar height (0..1, relative). */
+export function agcPeak(level: number, state: AgcState): number {
+  const signal = Math.max(0, Math.min(1, level) - AGC_GATE);
+  const attacked = Math.min(signal, state.ref * AGC_ATTACK_LIMIT + AGC_ATTACK_STEP);
+  const decay = signal < state.ref * AGC_DROP_RATIO ? AGC_DROP_DECAY : AGC_DECAY;
+  state.ref = Math.max(AGC_MIN_REF, attacked, state.ref * decay);
+  return Math.min(1, signal / (state.ref * AGC_HEADROOM));
+}
+
+/**
  * A live analyser's RMS → 0..1 peak, with the same curve the file-based
  * waveform uses. No floor: the renderer normalises against a running maximum
  * that starts at 0.05, so a floored silence would read as full height.
