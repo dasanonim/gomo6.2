@@ -141,7 +141,7 @@ services:
         # Buckets: создаём если нет, всегда grant owner.
         # ВАЖНО: bucket allow запускается при каждом старте, чтобы новые бакеты
         # добавленные в список ниже получали права без down -v.
-        for bucket in content post-images avatars uploads emojis gift-layers gamification wall awards; do
+        for bucket in content post-images avatars uploads emojis gift-layers gamification wall awards stories; do
           if $$G bucket info "$$bucket" >/dev/null 2>&1; then
             echo "Bucket $$bucket already exists."
           else
@@ -156,10 +156,11 @@ services:
           else
             echo "ERROR: bucket allow failed for $$bucket"
           fi
-          # The uploads and wall buckets are private. They are served only
-          # through the authenticated Go proxy, never through Garage's
-          # website endpoint.
-          if [ "$$bucket" = "uploads" ] || [ "$$bucket" = "wall" ]; then
+          # The uploads, wall and stories buckets are private. They are served
+          # only through the authenticated Go proxy, never through Garage's
+          # website endpoint: a story's audience is narrower than "anyone with
+          # a link", so a public object URL would bypass its audience rule.
+          if [ "$$bucket" = "uploads" ] || [ "$$bucket" = "wall" ] || [ "$$bucket" = "stories" ]; then
             if $$G bucket website --deny "$$bucket" 2>&1; then
               echo "  => website access disabled for $$bucket"
             else

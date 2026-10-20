@@ -19,6 +19,7 @@ import (
 	"github.com/gomo6/backend/internal/logsafe"
 	"github.com/gomo6/backend/internal/metrics"
 	"github.com/gomo6/backend/internal/privacy"
+	"github.com/gomo6/backend/internal/storyaccess"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -62,6 +63,17 @@ const (
 	MessageTypeNewChannelMessage     = "new_channel_message"
 	MessageTypeChannelMessageEdited  = "channel_message_edited"
 	MessageTypeChannelMessageDeleted = "channel_message_deleted"
+
+	// Stories. Lifecycle events go to the owner's room (a user's peers or a
+	// GomoSub's viewers); counters go only to the author's private room so a
+	// stranger who can open a public profile never learns who viewed what.
+	RedisChannelStories = "realtime:stories"
+
+	MessageTypeNewStory      = "new_story"
+	MessageTypeStoryUpdated  = "story_updated"
+	MessageTypeStoryDeleted  = "story_deleted"
+	MessageTypeStoryViewed   = "story_viewed"
+	MessageTypeStoryReaction = "story_reaction"
 
 	// Content-moderation events: a fresh report fans out to the "moderation"
 	// room so open moderation screens show it immediately.
@@ -353,7 +365,7 @@ func (h *Hub) subscribeToRedis() {
 		return
 	}
 
-	pubsub := h.redis.Subscribe(h.ctx, RedisChannelPosts, RedisChannelThreads, RedisChannelLikes, RedisChannelWall, RedisChannelChat, RedisChannelChannelChat, RedisChannelStatus, RedisChannelNotifications, RedisChannelSpotify, RedisChannelUserRevoke, RedisChannelModeration, RedisChannelProfiles)
+	pubsub := h.redis.Subscribe(h.ctx, RedisChannelPosts, RedisChannelThreads, RedisChannelLikes, RedisChannelWall, RedisChannelChat, RedisChannelChannelChat, RedisChannelStatus, RedisChannelNotifications, RedisChannelSpotify, RedisChannelUserRevoke, RedisChannelModeration, RedisChannelProfiles, RedisChannelStories)
 	defer pubsub.Close()
 
 	log.Println("[WebSocket] Subscribed to Redis channels:", RedisChannelPosts, RedisChannelThreads, RedisChannelLikes, RedisChannelWall, RedisChannelChat, RedisChannelStatus, RedisChannelNotifications)
@@ -519,6 +531,23 @@ func (h *Hub) dispatchRealtimeBroadcast(eventType string, payload interface{}, m
 	case MessageTypeNewChannelMessage, MessageTypeChannelMessageEdited, MessageTypeChannelMessageDeleted:
 		if channelID := extractRoomID(payload, "channel_id"); channelID != "" {
 			h.BroadcastToRoom(fmt.Sprintf("channel_%s", channelID), messageBytes)
+		}
+
+	case MessageTypeNewStory, MessageTypeStoryUpdated, MessageTypeStoryDeleted:
+		// Lifecycle events go to the owner's room (a user's peers, or a
+		// GomoSub's viewers). The payload carries no content: clients refetch
+		// through the audited REST read, so a story that was made private
+		// between the publish and the fetch is still enforced.
+		if ownerID := extractRoomID(payload, "owner_id"); ownerID != "" {
+			h.BroadcastToRoom(StoriesRoom(extractRoomID(payload, "owner_type"), ownerID), messageBytes)
+		}
+
+	case MessageTypeStoryViewed, MessageTypeStoryReaction:
+		// Author-only counters. They must never reach the owner's public room:
+		// on a public profile a stranger may subscribe to stories_user_<id>,
+		// but who viewed a story is between the author and the viewer.
+		if authorID := extractRoomID(payload, "author_id"); authorID != "" {
+			h.BroadcastToRoom(StoriesOwnerRoom(authorID), messageBytes)
 		}
 
 	case MessageTypeNewChatMessage:
@@ -782,6 +811,15 @@ func (h *Hub) canAccessRoom(userID, room string) bool {
 	case strings.HasPrefix(room, "presence_"):
 		targetID := strings.TrimPrefix(room, "presence_")
 		return targetID != "" && h.canViewPresenceRoom(userID, targetID)
+	case strings.HasPrefix(room, "stories_owner_"):
+		// Private counters room: only the author's own clients.
+		return strings.TrimPrefix(room, "stories_owner_") == userID
+	case strings.HasPrefix(room, "stories_user_"):
+		targetID := strings.TrimPrefix(room, "stories_user_")
+		return targetID != "" && h.canViewUserStories(userID, targetID)
+	case strings.HasPrefix(room, "stories_board_"):
+		boardID := strings.TrimPrefix(room, "stories_board_")
+		return boardID != "" && h.canViewBoardStories(userID, boardID)
 	default:
 		// Thread/board rooms are public realtime content, but arbitrary room
 		// names must not become an implicit broadcast subscription primitive.
@@ -799,6 +837,36 @@ func (h *Hub) canAccessChannelRoom(userID, channelID string) bool {
 	ok, err := channelaccess.CanReadChannel(h.db, userID, channelID)
 	if err != nil {
 		log.Printf("[WebSocket] channel room access check error: %v", err)
+		return false
+	}
+	return ok
+}
+
+// canViewUserStories is the room gate for stories_user_<id>: the same profile
+// visibility rule the REST read applies, so a stranger can never subscribe to a
+// private profile's story stream. Per-story audiences (friends / close_friends /
+// only_me) still filter every payload at read time.
+func (h *Hub) canViewUserStories(userID, targetID string) bool {
+	if h.db == nil {
+		return false
+	}
+	ok, err := storyaccess.CanViewUserStories(h.db, userID, targetID)
+	if err != nil {
+		log.Printf("[WebSocket] stories user room access check error: %v", err)
+		return false
+	}
+	return ok
+}
+
+// canViewBoardStories is the room gate for stories_board_<id>: public board ⇒
+// any authenticated user, private board ⇒ owner or member.
+func (h *Hub) canViewBoardStories(userID, boardID string) bool {
+	if h.db == nil {
+		return false
+	}
+	ok, err := storyaccess.CanViewBoardStories(h.db, userID, boardID)
+	if err != nil {
+		log.Printf("[WebSocket] stories board room access check error: %v", err)
 		return false
 	}
 	return ok
@@ -895,6 +963,21 @@ func (h *Hub) isModerator(userID string) bool {
 		return false
 	}
 	return ok
+}
+
+// StoriesRoom is the public lifecycle room of a story owner: the personal room
+// of a user (gated by profile visibility) or the room of a GomoSub board.
+func StoriesRoom(ownerType, ownerID string) string {
+	if ownerType == "gosub" {
+		return "stories_board_" + ownerID
+	}
+	return "stories_user_" + ownerID
+}
+
+// StoriesOwnerRoom is the author-only counters room (views, reactions). It is
+// subscribed only by the author's own clients; see canAccessRoom.
+func StoriesOwnerRoom(userID string) string {
+	return "stories_owner_" + userID
 }
 
 func isPublicRoom(room string) bool {

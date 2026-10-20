@@ -782,6 +782,9 @@ func (h *RPCHandler) GetBoardUserPermissions(c *gin.Context) {
 				"can_manage_members":  true,
 				"can_delete_threads":  true,
 				"can_pin_threads":     true,
+				// Stories: the owner may always publish community stories and
+				// the settings UI shows the switch as granted.
+				"can_post_stories": true,
 			},
 		}))
 		return

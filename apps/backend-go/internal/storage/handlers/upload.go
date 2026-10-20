@@ -438,7 +438,7 @@ func validateEmojiUpload(data []byte) error {
 
 func isImageBucket(bucket string) bool {
 	switch bucket {
-	case "uploads", "content", "post-images", "avatars", "wall":
+	case "uploads", "content", "post-images", "avatars", "wall", "stories":
 		return true
 	default:
 		return false
