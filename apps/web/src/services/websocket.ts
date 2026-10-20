@@ -48,6 +48,7 @@ export type WebSocketMessageType =
   | 'message_notes_meta'
   | 'message_deleted'
   | 'message_reaction'
+  | 'message_voice_listened'
   | 'read_receipt'
   | 'chat_typing'
   | 'group_updated'

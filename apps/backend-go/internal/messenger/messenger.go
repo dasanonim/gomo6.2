@@ -111,6 +111,10 @@ type MessageResponse struct {
 	// Reactions are the message's chips, aggregated per emoji and ordered by
 	// popularity. `mine` is resolved for the viewer; realtime carries deltas.
 	Reactions []ReactionSummary `json:"reactions,omitempty"`
+	// VoiceListenedBy is who has played a voice note (the "unheard" dot is a
+	// fact about a person: an incoming note until I play it, my own until the
+	// peer does).
+	VoiceListenedBy []string `json:"voice_listened_by,omitempty"`
 }
 
 // Attachment represents a file attached to a message

@@ -25,6 +25,7 @@ vi.mock("@/services/messengerApi", () => ({
     getOrCreateNotes: vi.fn(),
     togglePin: vi.fn(),
     toggleReaction: vi.fn(),
+    markVoiceListened: vi.fn(),
     updateNotesMeta: vi.fn(),
     getReceipts: vi.fn(),
     getUnreadCount: vi.fn(),
@@ -434,29 +435,44 @@ describe("messengerStore", () => {
     });
   });
 
-  describe("markVoiceListened", () => {
-    it("drops the unheard dot of an incoming voice note", () => {
+  describe("voice listened state", () => {
+    it("adds me to the listeners optimistically and calls the server", async () => {
       useMessengerStore.setState({
+        me: { id: "u1", username: "testuser" },
         selectedConversationId: "conv-1",
-        messages: [mockMsg({ id: "msg-1", voiceListened: false })],
+        messages: [mockMsg({ id: "msg-1", voiceListenedBy: [] })],
       });
+      vi.mocked(messengerApi.markVoiceListened).mockResolvedValue({ listened: true });
 
-      useMessengerStore.getState().markVoiceListened("msg-1");
+      await useMessengerStore.getState().markVoiceListened("msg-1");
 
-      expect(useMessengerStore.getState().messages[0].voiceListened).toBe(true);
+      expect(useMessengerStore.getState().messages[0].voiceListenedBy).toEqual(["u1"]);
+      expect(messengerApi.markVoiceListened).toHaveBeenCalledWith("conv-1", "msg-1");
     });
 
-    it("is idempotent and ignores unknown messages", () => {
+    it("rolls the optimistic listener back when the server refuses", async () => {
       useMessengerStore.setState({
+        me: { id: "u1", username: "testuser" },
         selectedConversationId: "conv-1",
-        messages: [mockMsg({ id: "msg-1", voiceListened: true })],
+        messages: [mockMsg({ id: "msg-1", voiceListenedBy: [] })],
       });
+      vi.mocked(messengerApi.markVoiceListened).mockRejectedValue(new Error("offline"));
 
-      useMessengerStore.getState().markVoiceListened("msg-1");
-      useMessengerStore.getState().markVoiceListened("msg-404");
+      await useMessengerStore.getState().markVoiceListened("msg-1");
 
-      expect(useMessengerStore.getState().messages).toHaveLength(1);
-      expect(useMessengerStore.getState().messages[0].voiceListened).toBe(true);
+      expect(useMessengerStore.getState().messages[0].voiceListenedBy).toEqual([]);
+    });
+
+    it("is idempotent for me and folds a peer's realtime delta", () => {
+      useMessengerStore.setState({
+        me: { id: "u1", username: "testuser" },
+        messages: [mockMsg({ id: "msg-1", voiceListenedBy: ["u1"] })],
+      });
+      useMessengerStore.getState().applyVoiceListenedEvent({ message_id: "msg-1", user_id: "u1" });
+      expect(useMessengerStore.getState().messages[0].voiceListenedBy).toEqual(["u1"]);
+
+      useMessengerStore.getState().applyVoiceListenedEvent({ message_id: "msg-1", user_id: "u2" });
+      expect(useMessengerStore.getState().messages[0].voiceListenedBy).toEqual(["u1", "u2"]);
     });
   });
 

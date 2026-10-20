@@ -72,6 +72,8 @@ interface Props {
   viewerId?: string;
   /** An incoming voice note started playing (drops its unheard dot). */
   onVoiceListen?: () => void;
+  /** Shows the "unheard" dot on a voice note (computed by the chat view). */
+  voiceUnheard?: boolean;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -96,6 +98,7 @@ export const MessageBubble = memo(function MessageBubble({
   peerDeliveredAt,
   viewerId = "",
   onVoiceListen,
+  voiceUnheard = false,
 }: Props) {
   // Message bubbles are memoized; subscribe explicitly so their timestamps
   // refresh when the language changes even if message props stay identical.
@@ -650,8 +653,12 @@ export const MessageBubble = memo(function MessageBubble({
           <div className="message-meta">
             {/* Telegram's media-unread dot: an incoming voice note nobody has
                 listened to yet. It disappears on the first playback. */}
-            {isVoiceBubble && !isMine && !message.voiceListened && (
-              <span className="message-unheard-dot" aria-label="Не прослушано" role="img" />
+            {voiceUnheard && (
+              <span
+                className="message-unheard-dot"
+                role="img"
+                aria-label={isMine ? "Собеседник ещё не прослушал" : "Не прослушано"}
+              />
             )}
             <span className="message-time">{formatTime(message.sent_at)}</span>
             {message.is_edited && <span className="edited-label">изм.</span>}

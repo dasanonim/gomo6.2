@@ -52,6 +52,10 @@ func TestGetMessages_Success(t *testing.T) {
 	mock.ExpectQuery(`SELECT r.message_id, r.emoji, r.user_id, COALESCE\(u.username, ''\), r.created_at.*FROM message_reactions r`).
 		WithArgs(testMsg2, testMsg1).
 		WillReturnRows(sqlmock.NewRows([]string{"message_id", "emoji", "user_id", "username", "created_at"}))
+		// Voice listens query (empty result)
+	mock.ExpectQuery(`SELECT message_id, user_id FROM message_voice_listens WHERE message_id IN`).
+		WithArgs(testMsg2, testMsg1).
+		WillReturnRows(sqlmock.NewRows([]string{"message_id", "user_id"}))
 
 	handler.GetMessages(c)
 
@@ -146,6 +150,10 @@ func TestGetMessages_WithBefore(t *testing.T) {
 	mock.ExpectQuery(`SELECT r.message_id, r.emoji, r.user_id, COALESCE\(u.username, ''\), r.created_at.*FROM message_reactions r`).
 		WithArgs(testMsg3).
 		WillReturnRows(sqlmock.NewRows([]string{"message_id", "emoji", "user_id", "username", "created_at"}))
+		// Voice listens query (empty result)
+	mock.ExpectQuery(`SELECT message_id, user_id FROM message_voice_listens WHERE message_id IN`).
+		WithArgs(testMsg3).
+		WillReturnRows(sqlmock.NewRows([]string{"message_id", "user_id"}))
 
 	handler.GetMessages(c)
 
@@ -238,6 +246,10 @@ func TestGetMessages_DecryptionFailureNoCiphertextLeak(t *testing.T) {
 	mock.ExpectQuery(`SELECT r.message_id, r.emoji, r.user_id, COALESCE\(u.username, ''\), r.created_at.*FROM message_reactions r`).
 		WithArgs(testMsg1).
 		WillReturnRows(sqlmock.NewRows([]string{"message_id", "emoji", "user_id", "username", "created_at"}))
+		// Voice listens query (empty result)
+	mock.ExpectQuery(`SELECT message_id, user_id FROM message_voice_listens WHERE message_id IN`).
+		WithArgs(testMsg1).
+		WillReturnRows(sqlmock.NewRows([]string{"message_id", "user_id"}))
 
 	handler.GetMessages(c)
 
@@ -709,6 +721,10 @@ func TestGetMessages_NotesCiphertextPassthrough(t *testing.T) {
 	mock.ExpectQuery(`SELECT r.message_id, r.emoji, r.user_id, COALESCE\(u.username, ''\), r.created_at.*FROM message_reactions r`).
 		WithArgs(testMsg1).
 		WillReturnRows(sqlmock.NewRows([]string{"message_id", "emoji", "user_id", "username", "created_at"}))
+		// Voice listens query (empty result)
+	mock.ExpectQuery(`SELECT message_id, user_id FROM message_voice_listens WHERE message_id IN`).
+		WithArgs(testMsg1).
+		WillReturnRows(sqlmock.NewRows([]string{"message_id", "user_id"}))
 
 	handler.GetMessages(c)
 

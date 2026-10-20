@@ -178,17 +178,13 @@ describe("MessageBubble — voice messages", () => {
     expect(container.querySelector(".message-bubble")?.className).toContain("is-voice-bubble");
   });
 
-  it("shows the unheard dot on an incoming voice note until it is played", () => {
+  it("renders the unheard dot when the chat view says the note is unheard", () => {
     const { container, rerender } = render(
-      <MessageBubble message={createMessage({ attachments: voice })} {...defaultProps} isMine={false} />,
+      <MessageBubble message={createMessage({ attachments: voice })} {...defaultProps} isMine={false} voiceUnheard />,
     );
     expect(container.querySelector(".message-unheard-dot")).not.toBeNull();
 
-    rerender(<MessageBubble message={createMessage({ attachments: voice, voiceListened: true })} {...defaultProps} isMine={false} />);
-    expect(container.querySelector(".message-unheard-dot")).toBeNull();
-
-    // Never on my own note.
-    rerender(<MessageBubble message={createMessage({ attachments: voice })} {...defaultProps} isMine />);
+    rerender(<MessageBubble message={createMessage({ attachments: voice })} {...defaultProps} isMine={false} voiceUnheard={false} />);
     expect(container.querySelector(".message-unheard-dot")).toBeNull();
   });
 

@@ -193,6 +193,32 @@ export function parseVoiceMeta(attachment: Attachment | undefined | null): Voice
   }
 }
 
+/**
+ * Whether a voice note is still unheard for the viewer, i.e. whether its dot
+ * shows. Telegram's rule, per person:
+ *  • an incoming note — until I play it;
+ *  • my own note in a 1:1 chat — until the peer plays it (the sender sees it go
+ *    away when the peer listens, on any of their devices);
+ *  • my own note in a group — no dot: "listened" is per member, and a single dot
+ *    cannot honestly summarise a group;
+ *  • the notes self-chat — never (nobody else is there).
+ */
+export function isVoiceUnheard(
+  message: { sender_user_id: string; attachments?: Attachment[] | null; voiceListenedBy?: string[] },
+  context: { viewerId: string; otherUserId?: string | null; isGroup?: boolean; isNotes?: boolean },
+): boolean {
+  if (!message.attachments?.some((attachment) => isVoiceAttachment(attachment))) return false;
+  if (context.isNotes) return false;
+
+  const listeners = message.voiceListenedBy ?? [];
+  const isMine = message.sender_user_id === context.viewerId;
+
+  if (!isMine) return !listeners.includes(context.viewerId);
+  if (context.isGroup) return false;
+  if (!context.otherUserId) return false;
+  return !listeners.includes(context.otherUserId);
+}
+
 /** The chat-list preview for a message that is only an attachment. */
 export function attachmentPreviewLabel(attachments: Attachment[] | undefined | null): string | null {
   if (attachments?.some((attachment) => isVoiceAttachment(attachment))) return "Голосовое сообщение";

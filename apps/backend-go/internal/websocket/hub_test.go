@@ -491,6 +491,36 @@ func TestHub_DispatchRealtimeBroadcast_RoutesReactionToConversationRoom(t *testi
 	}
 }
 
+func TestHub_DispatchRealtimeBroadcast_RoutesVoiceListenedToConversationRoom(t *testing.T) {
+	hub := NewHub(nil, nil)
+	member := newTestClient(hub, "user-1", "Alice")
+	outsider := newTestClient(hub, "user-2", "Bob")
+	hub.SubscribeToRoom(member, "chat_conv-1")
+	hub.SubscribeToRoom(outsider, "chat_conv-2")
+
+	payload := map[string]interface{}{
+		"message_id":      "msg-1",
+		"conversation_id": "conv-1",
+		"user_id":         "user-2",
+	}
+	message := Message{Type: MessageTypeVoiceListened}
+	messageBytes := []byte(`{"type":"message_voice_listened"}`)
+
+	hub.dispatchRealtimeBroadcast(MessageTypeVoiceListened, payload, message, messageBytes)
+	waitForBuffer()
+
+	select {
+	case <-member.Send:
+	default:
+		t.Fatal("the listened delta must reach the conversation room")
+	}
+	select {
+	case <-outsider.Send:
+		t.Fatal("a listened delta must not reach another conversation's room")
+	default:
+	}
+}
+
 func TestHub_BroadcastToRoom(t *testing.T) {
 	hub := NewHub(nil, nil)
 	client1 := newTestClient(hub, "user-1", "Alice")
