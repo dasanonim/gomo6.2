@@ -160,8 +160,10 @@ const { mockEmojiSwap } = vi.hoisted(() => ({
     // handoff see the closed swap on the very next render, like on device).
     closePanel: vi.fn((refocus: boolean) => {
       mockEmojiSwap.open = false;
+      mockEmojiSwap.isSheetVisible = () => true;
       void refocus;
     }),
+    isSheetVisible: vi.fn(() => false),
   } as any,
 }));
 
@@ -235,6 +237,12 @@ describe("MessageComposer", () => {
     editorSpies.events.length = 0;
     mockEmojiSwap.open = false;
     mockEmojiSwap.isTouch = false;
+    mockEmojiSwap.isSheetVisible = () => false;
+    mockEmojiSwap.toggle = vi.fn();
+    mockEmojiSwap.closePanel = vi.fn((refocus: boolean) => {
+      mockEmojiSwap.open = false;
+      void refocus;
+    });
     mockMobileKeyboard.keyboardInset = 0;
     mockMobileKeyboard.viewportHeight = 0;
     mockMobileKeyboard.isTouch = false;
@@ -1458,6 +1466,22 @@ describe("MessageComposer", () => {
       setup();
       await userEvent.click(screen.getByTestId("swap-toggle"));
       expect(mockEmojiSwap.toggle).toHaveBeenCalled();
+    });
+
+    it("closes a re-tap while the sheet is still sliding out instead of reopening", () => {
+      // The panel stays visible through its ~300ms exit slide while `open` is
+      // already false; deciding on `open` alone reopened it, so the trigger read
+      // as "does nothing" on a second press.
+      mockEmojiSwap.open = false;
+      mockEmojiSwap.isSheetVisible = () => true;
+      mockEmojiSwap.toggle = vi.fn();
+      mockEmojiSwap.closePanel = vi.fn();
+      setup();
+
+      fireEvent.click(screen.getByTestId("swap-toggle"));
+
+      expect(mockEmojiSwap.closePanel).toHaveBeenCalled();
+      expect(mockEmojiSwap.toggle).not.toHaveBeenCalled();
     });
   });
 

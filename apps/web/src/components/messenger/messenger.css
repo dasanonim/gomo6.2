@@ -3294,6 +3294,13 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
+/* The emoji panel's trigger is a two-state control: lit while the panel is up,
+   so "press it again to get the keyboard back" is visible, not guessed. */
+.composer-emoji-btn.is-active {
+  color: oklch(var(--primary));
+  background: oklch(var(--primary) / 0.14);
+}
+
 .composer-emoji-btn:hover {
   background: oklch(var(--thread-hover));
   color: oklch(var(--foreground));
