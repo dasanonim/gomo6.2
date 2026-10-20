@@ -12,12 +12,22 @@ import {
   type UpdateStoryInput,
 } from "@/types/stories";
 
+/** One owner's slice of the viewer queue (a snapshot taken on open, so a
+ * realtime refresh cannot reorder the slides under the viewer's finger). */
+export type StoryViewerGroup = {
+  ownerType: StoryOwnerType;
+  ownerId: string;
+  storyIds: string[];
+};
+
 export type StoryViewerState = {
   ownerType: StoryOwnerType;
   ownerId: string;
   storyId: string;
   /** Origin for the open animation and analytics: rail / profile / board / deep-link. */
   origin?: string;
+  /** Groups to walk after this one; absent means "this owner only". */
+  queue?: StoryViewerGroup[];
 };
 
 export type StoryComposerState = {
@@ -55,6 +65,8 @@ type StoriesState = {
 
   openViewer: (state: StoryViewerState) => void;
   closeViewer: () => void;
+  viewerNext: () => void;
+  viewerPrev: () => void;
   openComposer: (target: StoryComposerState) => void;
   closeComposer: () => void;
 
@@ -128,6 +140,41 @@ function upsertRailGroup(
     );
   }
   return [{ owner, stories: [story], has_unread: false }, ...rail];
+}
+
+/** Walk the viewer queue by one slide. Returns the new position, or null when
+ * the queue is exhausted (the caller closes the viewer). */
+export function walkViewer(
+  viewer: StoryViewerState,
+  direction: 1 | -1,
+): { ownerType: StoryOwnerType; ownerId: string; storyId: string } | null {
+  const queue = viewer.queue ?? [];
+  const groupIndex = queue.findIndex(
+    (group) => group.ownerType === viewer.ownerType && group.ownerId === viewer.ownerId,
+  );
+  if (groupIndex === -1) {
+    // No snapshot (opened before the list was stored): stay on the owner.
+    return null;
+  }
+  let storyIndex = queue[groupIndex].storyIds.indexOf(viewer.storyId);
+  if (storyIndex === -1) storyIndex = 0;
+
+  const nextSlide = storyIndex + direction;
+  if (nextSlide >= 0 && nextSlide < queue[groupIndex].storyIds.length) {
+    return {
+      ownerType: viewer.ownerType,
+      ownerId: viewer.ownerId,
+      storyId: queue[groupIndex].storyIds[nextSlide],
+    };
+  }
+
+  for (let i = groupIndex + direction; i >= 0 && i < queue.length; i += direction) {
+    const group = queue[i];
+    if (group.storyIds.length === 0) continue;
+    const storyId = direction === 1 ? group.storyIds[0] : group.storyIds[group.storyIds.length - 1];
+    return { ownerType: group.ownerType, ownerId: group.ownerId, storyId };
+  }
+  return null;
 }
 
 export const useStoriesStore = create<StoriesState>((set, get) => ({
@@ -275,8 +322,55 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
     set({ closeFriends: friends });
   },
 
-  openViewer: (state) => set({ viewer: state }),
+  openViewer: (state) => {
+    // Build the walk order from the rail (the watch list) when the owner is in
+    // it, otherwise keep the viewer scoped to that owner (profile / board /
+    // deep link). IDs are snapshotted; content still comes from the store, so a
+    // slide deleted mid-session simply disappears from the resolved list.
+    const rail = get().rail;
+    const inRail = rail.some(
+      (group) => group.owner.type === state.ownerType && group.owner.id === state.ownerId,
+    );
+    let queue: StoryViewerGroup[] | undefined;
+    if (inRail) {
+      queue = rail
+        .filter((group) => group.stories.length > 0)
+        .map((group) => ({
+          ownerType: group.owner.type,
+          ownerId: group.owner.id,
+          storyIds: group.stories.map((story) => story.id),
+        }));
+    } else {
+      const stories = get().byOwner[ownerKey(state.ownerType, state.ownerId)] ?? [];
+      if (stories.length > 0) {
+        queue = [
+          {
+            ownerType: state.ownerType,
+            ownerId: state.ownerId,
+            storyIds: stories.map((story) => story.id),
+          },
+        ];
+      }
+    }
+    set({ viewer: { ...state, queue } });
+  },
   closeViewer: () => set({ viewer: null }),
+
+  viewerNext: () => {
+    const viewer = get().viewer;
+    if (!viewer) return;
+    const step = walkViewer(viewer, 1);
+    if (step) set({ viewer: { ...viewer, ...step } });
+    else set({ viewer: null });
+  },
+
+  viewerPrev: () => {
+    const viewer = get().viewer;
+    if (!viewer) return;
+    const step = walkViewer(viewer, -1);
+    if (step) set({ viewer: { ...viewer, ...step } });
+    else set({ viewer: null });
+  },
   openComposer: (target) => set({ composer: target }),
   closeComposer: () => set({ composer: null }),
 

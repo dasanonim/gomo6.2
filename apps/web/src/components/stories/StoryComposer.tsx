@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Globe2, ImagePlus, Loader2, Lock, Star, Type, Users, Video } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ImagePlus, Loader2, Type, Users, Video } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { uploadFile } from "@/utils/storage";
 import { useStoriesStore } from "@/stores/storiesStore";
 import type { CreateStoryInput, StoryPrivacy, StoryTextStyle } from "@/types/stories";
 import { CloseFriendsDialog } from "./CloseFriendsDialog";
+import { StoryPrivacyPicker } from "./StoryPrivacyPicker";
 import { STORY_TEXT_PRESETS, storyPresetBackground, type StoryTextPreset } from "./storyPresets";
 import "./stories.css";
 
@@ -290,32 +291,7 @@ export function StoryComposer() {
                 {t("stories.composerBoardAudience")}
               </span>
             ) : (
-              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={t("stories.composerAudience")}>
-                <PrivacyButton
-                  active={privacy === "everyone"}
-                  icon={<Globe2 className="h-3.5 w-3.5" />}
-                  label={t("stories.privacyEveryone")}
-                  onClick={() => setPrivacy("everyone")}
-                />
-                <PrivacyButton
-                  active={privacy === "friends"}
-                  icon={<Users className="h-3.5 w-3.5" />}
-                  label={t("stories.privacyFriends")}
-                  onClick={() => setPrivacy("friends")}
-                />
-                <PrivacyButton
-                  active={privacy === "close_friends"}
-                  icon={<Star className="h-3.5 w-3.5" />}
-                  label={t("stories.privacyCloseFriends")}
-                  onClick={() => setPrivacy("close_friends")}
-                />
-                <PrivacyButton
-                  active={privacy === "only_me"}
-                  icon={<Lock className="h-3.5 w-3.5" />}
-                  label={t("stories.privacyOnlyMe")}
-                  onClick={() => setPrivacy("only_me")}
-                />
-              </div>
+              <StoryPrivacyPicker value={privacy} onChange={setPrivacy} />
             )}
             {!isGosub && privacy === "close_friends" && (
               <button
@@ -351,34 +327,5 @@ export function StoryComposer() {
 
       <CloseFriendsDialog open={closeFriendsOpen} onOpenChange={setCloseFriendsOpen} />
     </>
-  );
-}
-
-function PrivacyButton({
-  active,
-  icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={active}
-      onClick={onClick}
-      className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors ${
-        active
-          ? "border-primary bg-primary/10 font-medium text-primary"
-          : "border-border/70 text-muted-foreground hover:text-foreground"
-      }`}
-    >
-      {icon}
-      {label}
-    </button>
   );
 }

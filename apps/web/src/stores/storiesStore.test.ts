@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useStoriesStore } from "./storiesStore";
+import { useStoriesStore, walkViewer } from "./storiesStore";
 import type { Story, StoryGroup } from "@/types/stories";
 
 // vi.mock is hoisted, so the mock object must be created inside the factory.
@@ -198,5 +198,44 @@ describe("storiesStore", () => {
       ]),
     );
     expect(api.userStories).toHaveBeenCalledWith("u2", "live");
+  });
+});
+
+describe("walkViewer", () => {
+  const base = {
+    ownerType: "user" as const,
+    ownerId: "u1",
+    storyId: "b",
+    queue: [
+      { ownerType: "user" as const, ownerId: "u1", storyIds: ["a", "b"] },
+      { ownerType: "gosub" as const, ownerId: "g1", storyIds: ["c"] },
+    ],
+  };
+
+  it("moves inside one owner first", () => {
+    expect(walkViewer({ ...base, storyId: "a" }, 1)).toMatchObject({
+      ownerId: "u1",
+      storyId: "b",
+    });
+  });
+
+  it("crosses to the next owner's first slide", () => {
+    expect(walkViewer({ ...base, storyId: "b" }, 1)).toMatchObject({
+      ownerType: "gosub",
+      ownerId: "g1",
+      storyId: "c",
+    });
+  });
+
+  it("crosses back to the previous owner's last slide", () => {
+    const fromBoard = { ...base, ownerType: "gosub" as const, ownerId: "g1", storyId: "c" };
+    expect(walkViewer(fromBoard, -1)).toMatchObject({ ownerId: "u1", storyId: "b" });
+  });
+
+  it("returns null at both ends so the caller closes the viewer", () => {
+    expect(walkViewer({ ...base, storyId: "b" }, 1)?.ownerId).toBe("g1");
+    const atEnd = { ...base, ownerType: "gosub" as const, ownerId: "g1", storyId: "c" };
+    expect(walkViewer(atEnd, 1)).toBeNull();
+    expect(walkViewer({ ...base, storyId: "a" }, -1)).toBeNull();
   });
 });
