@@ -7,6 +7,8 @@ import type { Attachment } from "./types";
 import { VoicePlayer } from "./VoicePlayer";
 import { WaveformRenderer } from "./core/waveformRenderer";
 import {
+  MIN_PEAK_SCALE,
+  PEAK_SCALE_MULTIPLIER,
   livePeak,
   rmsFromTimeDomain,
   storedPeak,
@@ -53,6 +55,12 @@ const CHUNK_HARD_MS = 600;
  * lost. Every 250ms means losing at most the last quarter second instead.
  */
 const RECORD_TIMESLICE_MS = 250;
+/**
+ * The first moments of a recording are not the voice: opening the microphone
+ * (and auto-gain settling) produces a click/thump that is genuinely loud.
+ * Nothing is drawn for this long — the audio itself still records it.
+ */
+const WAVE_WARMUP_MS = 350;
 
 /**
  * Resolve when the recorder's chunks have stopped arriving.
@@ -181,6 +189,9 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
   const waveRendererRef = useRef<WaveformRenderer | null>(null);
   const liveBarsRef = useRef<number[]>([]);
   const lastBarAtRef = useRef(0);
+  const warmupUntilRef = useRef(0);
+  /** Rolling mean of the raw level — the scale the bars are drawn against. */
+  const meanPeakRef = useRef(0);
   const phaseRef = useRef<Phase>("idle");
   const lockedRef = useRef(false);
   const cancelRef = useRef(false);
@@ -423,7 +434,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
 
     const frame = () => {
       const now = performance.now();
-      if (analyser && buffer && now - lastBarAtRef.current >= BAR_INTERVAL_MS) {
+      if (analyser && buffer && now - lastBarAtRef.current >= BAR_INTERVAL_MS && now >= warmupUntilRef.current) {
         lastBarAtRef.current = now;
         analyser.getByteTimeDomainData(buffer);
         const rms = rmsFromTimeDomain(buffer);
@@ -433,15 +444,24 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
         // silent bar still reads in the message bubble, but the live renderer
         // must get the RAW level — its running maximum starts at 0.05, and a
         // floored 0.06 would normalise to full height before the first sound.
+        // Two consumers, two scales. The stored bars keep a 6% floor (silence
+        // stays visible in the bubble); the live canvas gets the level relative
+        // to the rolling average — Telegram's 1.8× average scale — so a loud
+        // transient cannot paint the whole preview at full height.
         const peak = livePeak(rms);
-        liveBarsRef.current.push(storedPeak(peak));
-        waveRendererRef.current?.pushPeak(peak);
+        meanPeakRef.current = meanPeakRef.current === 0 ? peak : meanPeakRef.current * 0.9 + peak * 0.1;
+        const scale = Math.max(meanPeakRef.current * PEAK_SCALE_MULTIPLIER, MIN_PEAK_SCALE);
+        const shown = Math.min(1, peak / scale);
+        liveBarsRef.current.push(storedPeak(shown));
+        waveRendererRef.current?.pushPeak(shown);
       }
       rafRef.current = requestAnimationFrame(frame);
     };
     rafRef.current = requestAnimationFrame(frame);
 
     startedAtRef.current = performance.now();
+    warmupUntilRef.current = startedAtRef.current + WAVE_WARMUP_MS;
+    meanPeakRef.current = 0;
     tickRef.current = setInterval(() => {
       if ((phaseRef.current as Phase) !== "recording") return;
       const seconds = (performance.now() - startedAtRef.current) / 1000;

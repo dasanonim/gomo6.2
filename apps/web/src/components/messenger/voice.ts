@@ -91,6 +91,28 @@ export function rmsFromTimeDomain(buffer: ArrayLike<number>): number {
 }
 
 /**
+ * Peak normalisation, Telegram's model.
+ *
+ * Their stored waveform is scaled by the **average** peak times 1.8 (floored at
+ * MIN_NORM_PEAK), not by the loudest sample. That is what makes a note read the
+ * same everywhere: the average bar sits at ~55% of the height, loud syllables
+ * clip at the top, quiet ones stay low — and a single startup thump (or a door
+ * slam) cannot flatten the rest of the recording into dots, nor paint the whole
+ * preview at full height.
+ */
+export const PEAK_SCALE_MULTIPLIER = 1.8;
+/** Below this a "scale" is just noise; keeps silence at zero instead of 100%. */
+export const MIN_PEAK_SCALE = 0.02;
+
+export function peakScale(peaks: ArrayLike<number>): number {
+  const length = peaks.length;
+  if (!length) return MIN_PEAK_SCALE;
+  let sum = 0;
+  for (let i = 0; i < length; i += 1) sum += peaks[i];
+  return Math.max((sum / length) * PEAK_SCALE_MULTIPLIER, MIN_PEAK_SCALE);
+}
+
+/**
  * A live analyser's RMS → 0..1 peak, with the same curve the file-based
  * waveform uses. No floor: the renderer normalises against a running maximum
  * that starts at 0.05, so a floored silence would read as full height.
@@ -205,13 +227,10 @@ export async function extractWaveform(blob: Blob, bars = VOICE_BARS): Promise<nu
       }
       peaks.push(peak);
     }
-    // Soft normalization: quiet recordings still read as a waveform instead of
-    // a flat line, loud ones do not clip into a wall.
-    const max = Math.max(0.0001, ...peaks);
-    return peaks.map((peak) => {
-      const scaled = Math.pow(peak / max, 0.75) * 100;
-      return Math.round(Math.min(100, Math.max(6, scaled)));
-    });
+    // Telegram's scale: relative to the average, so the average bar sits at
+    // ~55% and one loud transient cannot compress the rest into dots.
+    const scale = peakScale(peaks);
+    return peaks.map((peak) => Math.round(Math.min(100, Math.max(6, (peak / scale) * 100))));
   } catch {
     return null;
   } finally {

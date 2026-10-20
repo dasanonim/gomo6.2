@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   VOICE_BARS,
+  MIN_PEAK_SCALE,
+  PEAK_SCALE_MULTIPLIER,
   barCountForWidth,
   livePeak,
+  peakScale,
   rmsFromTimeDomain,
   storedPeak,
   extensionForMime,
@@ -39,6 +42,28 @@ describe("formatVoiceTime", () => {
   it("survives garbage", () => {
     expect(formatVoiceTime(Number.NaN)).toBe("0:00");
     expect(formatVoiceTime(-4)).toBe("0:00");
+  });
+});
+
+describe("peakScale (Telegram's 1.8x average)", () => {
+  it("scales by the average, not by the loudest sample", () => {
+    // A flat room tone sits well below the ceiling instead of filling it.
+    expect(peakScale(new Array(40).fill(0.2))).toBeCloseTo(0.36, 3);
+    // One loud spike barely moves the scale: the rest of the note survives.
+    const spiky = [1, ...new Array(39).fill(0.1)];
+    expect(peakScale(spiky)).toBeCloseTo(((1 + 39 * 0.1) / 40) * 1.8, 3);
+  });
+
+  it("keeps a floor so silence stays silent", () => {
+    expect(peakScale([])).toBe(MIN_PEAK_SCALE);
+    expect(peakScale(new Array(40).fill(0))).toBe(MIN_PEAK_SCALE);
+  });
+
+  it("puts the average bar at ~55% of the height", () => {
+    const mean = 0.3;
+    const values = new Array(40).fill(mean);
+    const scale = peakScale(values);
+    expect((mean / scale) * 100).toBeCloseTo(100 / PEAK_SCALE_MULTIPLIER, 0);
   });
 });
 
