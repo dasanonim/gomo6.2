@@ -74,13 +74,14 @@ export function StoryRing({ total, read = 0, closeFriends = false, children, cla
                 r={RING_RADIUS}
                 fill="none"
                 pathLength={1}
-                stroke={isRead ? "oklch(var(--muted-foreground) / 0.6)" : `url(#${gradientId})`}
-                // Non-scaling: a 2.5px ring at every avatar size. Scaling the
-                // stroke with the box made the 80px profile ring 4.5px thick —
-                // heavy and unlike Telegram — while the 48px rail ring looked
-                // right. Absolute pixels keep both consistent.
+                stroke={isRead ? "oklch(var(--muted-foreground) / 0.55)" : `url(#${gradientId})`}
+                // Same width for read and unread segments: a thinner read arc
+                // sits at a different radius and its butt ends read as a
+                // chopped, crooked ring. Round caps keep every arc smooth.
+                strokeLinecap="round"
+                // Non-scaling: a 2.5px ring at every avatar size.
                 vectorEffect="non-scaling-stroke"
-                strokeWidth={isRead ? 1.5 : 2.5}
+                strokeWidth={2.5}
                 strokeDasharray={`${dash} 1`}
                 strokeDashoffset={-i / segments}
                 transform="rotate(-90 50 50)"

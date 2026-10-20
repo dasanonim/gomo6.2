@@ -356,7 +356,7 @@ const Profile = () => {
     openStoryComposer({
       ownerType: "user",
       ownerId: currentUser.id,
-      ownerName: currentUserUsername || "",
+      ownerName: profile?.display_name || currentUserUsername || "",
     });
   };
 

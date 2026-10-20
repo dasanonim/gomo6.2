@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { StoryViewer } from "./StoryViewer";
 import { useStoriesStore } from "@/stores/storiesStore";
@@ -75,10 +75,16 @@ function seed(stories: Story[], currentId = stories[0].id) {
   });
 }
 
+function LocationDisplay() {
+  const location = useLocation();
+  return <div data-testid="location">{location.pathname}</div>;
+}
+
 function renderViewer() {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={["/feed"]}>
       <StoryViewer />
+      <LocationDisplay />
     </MemoryRouter>,
   );
 }
@@ -135,6 +141,16 @@ describe("StoryViewer", () => {
 
     // One intent, one slide — a second event must not skip (or close) ahead.
     expect(useStoriesStore.getState().viewer?.storyId).toBe("s2");
+  });
+
+  it("opens the owner's profile from the header and closes the player", () => {
+    seed([story()]);
+    renderViewer();
+
+    fireEvent.click(screen.getByRole("button", { name: /Открыть историю: / }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/profile/peer");
+    expect(useStoriesStore.getState().viewer).toBeNull();
   });
 
   it("does not flash the pause badge on a quick tap", () => {

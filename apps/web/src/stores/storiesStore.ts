@@ -235,10 +235,13 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
       };
       set((state) => {
         const key = ownerKey(target.ownerType, target.ownerId);
-        const byOwner = { ...state.byOwner };
-        if (story.privacy !== "only_me") {
-          byOwner[key] = mergeStories(byOwner[key] ?? [], [story]);
-        }
+        // The author's own list always gets the slide (their profile ring and
+        // the viewer read it), but an "only me" slide must not enter the public
+        // rail.
+        const byOwner = {
+          ...state.byOwner,
+          [key]: mergeStories(state.byOwner[key] ?? [], [story]),
+        };
         return {
           byOwner,
           rail: story.privacy === "only_me" ? state.rail : upsertRailGroup(state.rail, owner, story),

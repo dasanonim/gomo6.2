@@ -1,28 +1,70 @@
-import { useEffect, useRef, useState } from "react";
-import { ImagePlus, Loader2, Type, Users, Video } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import {
+  ChevronDown,
+  Globe2,
+  ImagePlus,
+  Loader2,
+  Lock,
+  Palette,
+  Pause,
+  Play,
+  Send,
+  Star,
+  Type,
+  Users,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { UserAvatar } from "@/components/UserAvatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/useAuth";
-import { uploadFile } from "@/utils/storage";
+import { storageUrl, uploadFile } from "@/utils/storage";
 import { useStoriesStore } from "@/stores/storiesStore";
-import type { CreateStoryInput, StoryPrivacy, StoryTextStyle } from "@/types/stories";
+import {
+  ownerKey,
+  type CreateStoryInput,
+  type Story,
+  type StoryPrivacy,
+  type StoryTextStyle,
+} from "@/types/stories";
 import { CloseFriendsDialog } from "./CloseFriendsDialog";
-import { StoryPrivacyPicker } from "./StoryPrivacyPicker";
-import { STORY_TEXT_PRESETS, storyPresetBackground, type StoryTextPreset } from "./storyPresets";
+import {
+  STORY_TEXT_PRESETS,
+  storyPresetBackground,
+  type StoryTextPreset,
+} from "./storyPresets";
 import "./stories.css";
 
 const MAX_VIDEO_SECONDS = 60;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
+const EMPTY: Story[] = [];
+
 type Mode = "media" | "text";
 
+const AUDIENCES: Array<{ value: StoryPrivacy; icon: typeof Globe2; key: string }> = [
+  { value: "everyone", icon: Globe2, key: "stories.privacyEveryone" },
+  { value: "friends", icon: Users, key: "stories.privacyFriends" },
+  { value: "close_friends", icon: Star, key: "stories.privacyCloseFriends" },
+  { value: "only_me", icon: Lock, key: "stories.privacyOnlyMe" },
+];
+
 /**
- * Story composer: pick a photo/video (or write a text slide), add a caption and
- * an audience, publish. The audience picker is hidden for a GomoSub — the board
- * is the audience there, and the server enforces it regardless of what the
- * client sends.
+ * Full-screen story composer, in the spirit of Telegram's: the slide is the
+ * screen, the controls float over it, and everything else stays out of the way.
+ *
+ * Two slide kinds share one canvas — media (photo/video with a caption pill) and
+ * text (typed straight onto the gradient) — and the audience lives in a compact
+ * dropdown instead of a row of four buttons. A GomoSub story has no audience
+ * picker: the board is the audience and the server enforces it.
  */
 export function StoryComposer() {
   const { t } = useTranslation();
@@ -32,20 +74,26 @@ export function StoryComposer() {
   const publish = useStoriesStore((state) => state.publish);
   const openViewer = useStoriesStore((state) => state.openViewer);
   const publishing = useStoriesStore((state) => state.publishing);
+  const ownerStories = useStoriesStore((state) =>
+    target ? (state.byOwner[ownerKey(target.ownerType, target.ownerId)] ?? EMPTY) : EMPTY,
+  );
 
   const [mode, setMode] = useState<Mode>("media");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isVideo, setIsVideo] = useState(false);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(true);
+  const [muted, setMuted] = useState(true);
   const [text, setText] = useState("");
   const [preset, setPreset] = useState<StoryTextPreset>("sunset");
   const [privacy, setPrivacy] = useState<StoryPrivacy>("everyone");
   const [progress, setProgress] = useState<number | null>(null);
   const [closeFriendsOpen, setCloseFriendsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const textRef = useRef<HTMLDivElement | null>(null);
 
-  // Reset whenever a new composer target opens.
   useEffect(() => {
     if (!target) return;
     setMode("media");
@@ -53,6 +101,8 @@ export function StoryComposer() {
     setPreviewUrl(null);
     setIsVideo(false);
     setVideoDuration(null);
+    setPlaying(true);
+    setMuted(true);
     setText("");
     setPreset("sunset");
     setPrivacy("everyone");
@@ -61,17 +111,60 @@ export function StoryComposer() {
 
   // Object URLs must be revoked or a long session leaks every picked file.
   useEffect(() => {
-    if (!file) return;
+    if (!file) {
+      setPreviewUrl(null);
+      return;
+    }
     const url = URL.createObjectURL(file);
     setPreviewUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [file]);
+
+  // Keep the contentEditable in sync when the composer reopens or the user
+  // switches modes (typing itself is never written back into the node).
+  useEffect(() => {
+    const node = textRef.current;
+    if (node && readEditable(node) !== text) node.innerText = text;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mode/target changes
+  }, [mode, target]);
+
+  useEffect(() => {
+    if (!isVideo || !previewUrl) return;
+    const video = videoRef.current;
+    if (!video) return;
+    if (playing) void video.play().catch(() => undefined);
+    else video.pause();
+  }, [playing, isVideo, previewUrl]);
+
+  useEffect(() => {
+    if (!target) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [target]);
+
+  useEffect(() => {
+    if (!target) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeComposer();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [target, closeComposer]);
+
+  const strip = useMemo(
+    () => ownerStories.filter((story) => story.id).slice(-6),
+    [ownerStories],
+  );
 
   if (!target) return null;
 
   const isGosub = target.ownerType === "gosub";
   const canPublish =
     !publishing &&
+    progress === null &&
     (mode === "text" ? text.trim().length > 0 : Boolean(file)) &&
     (mode === "text" || videoDuration === null || videoDuration <= MAX_VIDEO_SECONDS);
 
@@ -103,6 +196,7 @@ export function StoryComposer() {
       setVideoDuration(null);
     }
     setIsVideo(video);
+    setPlaying(true);
     setFile(picked);
   };
 
@@ -124,13 +218,9 @@ export function StoryComposer() {
         if (!user?.id) throw new Error("not authenticated");
         setProgress(0);
         const ext = (file.name.split(".").pop() || (isVideo ? "mp4" : "jpg")).toLowerCase();
-        // The key must start with the *author's* id — that prefix is the
-        // ownership proof the upload endpoint checks (a GomoSub story is still
-        // uploaded by a person, not by the board).
+        // The key prefix is the author's id — the upload endpoint's ownership
+        // proof (a GomoSub story is still uploaded by a person).
         const key = `${user.id}/story_${Date.now()}.${ext}`;
-        // Upload into the private stories bucket under the *author's* namespace:
-        // the backend rejects a key owned by someone else, so this prefix is
-        // also the ownership proof.
         const uploaded = await uploadFile(
           "stories",
           key,
@@ -156,14 +246,13 @@ export function StoryComposer() {
         };
       }
 
-      // The media key belongs to the *author*, not to the board: for a GomoSub
-      // story the server checks the key prefix against the authenticated user.
       const story = await publish(input, target);
       setProgress(null);
       closeComposer();
       openViewer({
         ownerType: story.owner_type,
         ownerId: story.owner_id,
+        ownerName: target.ownerName,
         storyId: story.id,
         origin: "composer",
       });
@@ -173,159 +262,413 @@ export function StoryComposer() {
     }
   };
 
-  return (
-    <>
-      <Dialog open onOpenChange={(open) => (!open ? closeComposer() : undefined)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="truncate">{t("stories.composerTitle", { name: target.ownerName })}</DialogTitle>
-          </DialogHeader>
+  const audience = AUDIENCES.find((option) => option.value === privacy) ?? AUDIENCES[0];
+  const AudienceIcon = audience.icon;
 
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "media" ? "default" : "outline"}
-              onClick={() => setMode("media")}
-            >
-              <Video className="mr-1.5 h-4 w-4" />
-              {t("stories.composerMedia")}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "text" ? "default" : "outline"}
-              onClick={() => setMode("text")}
-            >
-              <Type className="mr-1.5 h-4 w-4" />
-              {t("stories.composerText")}
-            </Button>
-          </div>
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[200] flex flex-col bg-black text-white"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t("stories.composerTitle", { name: target.ownerName })}
+      data-testid="story-composer"
+    >
+      {/* The picked media tints the whole screen, so the canvas never looks flat. */}
+      {previewUrl && mode === "media" && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 scale-110 bg-cover bg-center opacity-30 blur-3xl"
+          style={{ backgroundImage: `url("${previewUrl}")` }}
+        />
+      )}
 
-          {mode === "media" ? (
-            <div className="relative overflow-hidden rounded-xl border border-border/70 bg-muted/30">
-              <div className="relative flex min-h-[240px] items-center justify-center">
-                {previewUrl ? (
-                  isVideo ? (
-                    <video
-                      src={previewUrl}
-                      className="max-h-[45vh] w-full object-contain"
-                      controls
-                      playsInline
-                      muted
-                    />
-                  ) : (
-                    <img src={previewUrl} alt="" className="max-h-[45vh] w-full object-contain" />
-                  )
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex flex-col items-center gap-2 px-6 py-10 text-sm text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <ImagePlus className="h-8 w-8" />
-                    {t("stories.composerPickMedia")}
-                    <span className="text-xs">{t("stories.composerPickMediaHint")}</span>
-                  </button>
-                )}
-                {previewUrl && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    className="absolute right-2 top-2"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    {t("stories.composerReplace")}
-                  </Button>
-                )}
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*,video/*"
-                className="hidden"
-                onChange={(event) => pickFile(event.target.files?.[0] ?? null)}
-              />
-            </div>
-          ) : (
-            <div
-              className="grid min-h-[220px] place-items-center rounded-xl p-4 text-center text-xl font-semibold text-white"
-              style={{ background: storyPresetBackground(preset) }}
-            >
-              <span className="break-words whitespace-pre-wrap">{text || t("stories.composerTextPlaceholder")}</span>
-            </div>
-          )}
-
-          {mode === "text" && (
-            <div className="flex flex-wrap gap-2" role="group" aria-label={t("stories.composerBackground")}>
-              {STORY_TEXT_PRESETS.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  aria-label={t(`stories.preset${option.charAt(0).toUpperCase()}${option.slice(1)}`)}
-                  aria-pressed={preset === option}
-                  onClick={() => setPreset(option)}
-                  className={`h-7 w-7 rounded-full ring-2 transition-transform ${
-                    preset === option ? "scale-110 ring-primary" : "ring-transparent"
-                  }`}
-                  style={{ background: storyPresetBackground(option) }}
-                />
-              ))}
-            </div>
-          )}
-
-          <textarea
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            maxLength={1024}
-            rows={3}
-            placeholder={mode === "text" ? t("stories.composerTextPlaceholder") : t("stories.composerCaptionPlaceholder")}
-            className="w-full resize-none rounded-lg border border-border/70 bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          />
-
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            {isGosub ? (
-              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Users className="h-3.5 w-3.5" />
-                {t("stories.composerBoardAudience")}
-              </span>
-            ) : (
-              <StoryPrivacyPicker value={privacy} onChange={setPrivacy} />
-            )}
-            {!isGosub && privacy === "close_friends" && (
+      <header className="relative z-10 flex items-center gap-3 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2">
+        <button
+          type="button"
+          onClick={closeComposer}
+          aria-label={t("common.close")}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
+        >
+          <ChevronDown className="h-5 w-5" />
+        </button>
+        <UserAvatar
+          src={target.ownerType === "user" && user?.id === target.ownerId ? user.avatar_url : null}
+          userId={target.ownerType === "user" ? target.ownerId : null}
+          alt={target.ownerName}
+          className="h-9 w-9 border border-white/15"
+        />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold leading-tight">{target.ownerName}</p>
+          <p className="truncate text-[11px] text-white/55">{t("stories.composerNew")}</p>
+        </div>
+        {isGosub ? (
+          <span className="hidden items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs text-white/80 sm:flex">
+            <Users className="h-3.5 w-3.5" />
+            {t("stories.composerBoardAudience")}
+          </span>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                onClick={() => setCloseFriendsOpen(true)}
-                className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+                className="flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20"
               >
-                {t("stories.closeFriendsConfigure")}
+                <AudienceIcon className="h-3.5 w-3.5" />
+                {t(audience.key)}
               </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="z-[260]">
+              {AUDIENCES.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <DropdownMenuItem key={option.value} onSelect={() => setPrivacy(option.value)}>
+                    <Icon className="mr-2 h-4 w-4" />
+                    {t(option.key)}
+                  </DropdownMenuItem>
+                );
+              })}
+              {privacy === "close_friends" && (
+                <DropdownMenuItem onSelect={() => setCloseFriendsOpen(true)}>
+                  <Star className="mr-2 h-4 w-4" />
+                  {t("stories.closeFriendsConfigure")}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </header>
+
+      {/* Canvas */}
+      <div
+        className="relative z-10 flex min-h-0 flex-1 items-center justify-center px-3"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          event.preventDefault();
+          pickFile(event.dataTransfer.files?.[0] ?? null);
+        }}
+      >
+        {mode === "text" ? (
+          <div
+            className="mx-auto flex h-full w-full max-w-[560px] items-center justify-center overflow-hidden rounded-3xl px-6 py-8"
+            style={{ background: storyPresetBackground(preset) }}
+          >
+            {/* A contentEditable block (not a textarea) so the text sits in the
+                middle of the card like a real slide; a textarea is always
+                top-aligned and made short stories look broken. */}
+            <div
+              ref={textRef}
+              contentEditable
+              role="textbox"
+              aria-multiline="true"
+              aria-label={t("stories.composerTextPlaceholder")}
+              data-placeholder={t("stories.composerTextPlaceholder")}
+              suppressContentEditableWarning
+              onInput={(event) => {
+                const node = event.currentTarget;
+                const raw = readEditable(node);
+                const value = raw.slice(0, 1024);
+                if (raw.length > 1024) node.innerText = value;
+                setText(value);
+              }}
+              onPaste={(event) => {
+                event.preventDefault();
+                const pasted = event.clipboardData.getData("text").slice(0, 1024);
+                document.execCommand("insertText", false, pasted);
+              }}
+              className="max-h-full w-full overflow-y-auto whitespace-pre-wrap break-words text-center text-2xl font-semibold leading-snug text-white outline-none empty:before:pointer-events-none empty:before:text-white/60 empty:before:content-[attr(data-placeholder)] sm:text-3xl"
+              style={{ textShadow: "0 1px 10px rgba(0,0,0,0.25)", minHeight: "1.5em" }}
+            />
+          </div>
+        ) : previewUrl ? (
+          <div className="relative flex max-h-full max-w-full items-center justify-center">
+            {isVideo ? (
+              <>
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption -- user media has no caption track */}
+                <video
+                  ref={videoRef}
+                  src={previewUrl}
+                  className="max-h-[62vh] max-w-full rounded-3xl object-contain"
+                  playsInline
+                  autoPlay
+                  loop
+                  muted={muted}
+                  onClick={() => setPlaying((value) => !value)}
+                />
+                <div className="absolute right-2 top-2 flex gap-1.5">
+                  <RoundButton
+                    label={playing ? t("stories.pause") : t("stories.play")}
+                    onClick={() => setPlaying((value) => !value)}
+                  >
+                    {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                  </RoundButton>
+                  <RoundButton label={muted ? t("stories.unmute") : t("stories.mute")} onClick={() => setMuted((v) => !v)}>
+                    {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                  </RoundButton>
+                </div>
+              </>
+            ) : (
+              <img
+                src={previewUrl}
+                alt=""
+                className="max-h-[62vh] max-w-full rounded-3xl object-contain"
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="absolute bottom-2 left-2 rounded-full bg-black/45 px-3 py-1.5 text-xs font-medium text-white backdrop-blur transition-colors hover:bg-black/65"
+            >
+              {t("stories.composerReplace")}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="mx-auto flex h-full w-full max-w-[560px] flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-white/20 bg-white/[0.03] px-6 text-center transition-colors hover:border-white/35 hover:bg-white/[0.06]"
+          >
+            <span className="grid h-16 w-16 place-items-center rounded-full bg-white/10">
+              <ImagePlus className="h-8 w-8 text-white/80" />
+            </span>
+            <span className="text-sm font-medium">{t("stories.composerPickMedia")}</span>
+            <span className="max-w-[18rem] text-xs leading-5 text-white/50">
+              {t("stories.composerPickMediaHint")}
+            </span>
+          </button>
+        )}
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,video/*"
+        className="hidden"
+        onChange={(event) => pickFile(event.target.files?.[0] ?? null)}
+      />
+
+      {/* Controls */}
+      <footer className="relative z-10 mt-3 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="mx-auto w-full max-w-[640px] space-y-2.5">
+        {progress !== null && (
+          <div className="h-1 overflow-hidden rounded-full bg-white/15">
+            <div
+              className="h-full rounded-full bg-white transition-[width] duration-200"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        )}
+
+        {strip.length > 0 && mode === "media" && (
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <button
+              type="button"
+              onClick={() => {
+                if (!previewUrl) fileInputRef.current?.click();
+              }}
+              aria-label={previewUrl ? t("stories.composerNew") : t("stories.composerPickMedia")}
+              className="relative h-14 w-10 shrink-0 overflow-hidden rounded-lg ring-2 ring-white/80"
+            >
+              {previewUrl ? (
+                isVideo ? (
+                  <video src={previewUrl} muted className="h-full w-full object-cover" />
+                ) : (
+                  <img src={previewUrl} alt="" className="h-full w-full object-cover" />
+                )
+              ) : (
+                <span className="grid h-full w-full place-items-center bg-white/10">
+                  <ImagePlus className="h-4 w-4 text-white/70" />
+                </span>
+              )}
+            </button>
+            {strip.map((story) => (
+              <button
+                key={story.id}
+                type="button"
+                onClick={() => {
+                  closeComposer();
+                  openViewer({
+                    ownerType: story.owner_type,
+                    ownerId: story.owner_id,
+                    ownerName: target.ownerName,
+                    storyId: story.id,
+                    origin: "composer",
+                  });
+                }}
+                className="h-14 w-10 shrink-0 overflow-hidden rounded-lg opacity-70 transition-opacity hover:opacity-100"
+                title={t("stories.openOwner", { name: target.ownerName })}
+              >
+                <StoryThumb story={story} />
+              </button>
+            ))}
+          </div>
+        )}
+
+        {mode === "media" ? (
+          <div className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2.5 backdrop-blur">
+            <input
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              maxLength={1024}
+              placeholder={t("stories.composerCaptionPlaceholder")}
+              className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/45"
+            />
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/10 text-[10px] font-semibold text-white/80">
+              24h
+            </span>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-center gap-2" role="group" aria-label={t("stories.composerBackground")}>
+            {STORY_TEXT_PRESETS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-label={t(`stories.preset${option.charAt(0).toUpperCase()}${option.slice(1)}`)}
+                aria-pressed={preset === option}
+                onClick={() => setPreset(option)}
+                className={`h-7 w-7 rounded-full ring-2 transition-transform ${
+                  preset === option ? "scale-110 ring-white" : "ring-transparent"
+                }`}
+                style={{ background: storyPresetBackground(option) }}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={closeComposer}
+            aria-label={t("common.cancel")}
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
+          >
+            <ChevronDown className="h-5 w-5" />
+          </button>
+
+          <div className="flex flex-1 items-center justify-center gap-1 rounded-full bg-white/10 p-1">
+            <ToolButton
+              active={mode === "media"}
+              icon={<ImagePlus className="h-5 w-5" />}
+              label={t("stories.composerMedia")}
+              onClick={() => setMode("media")}
+            />
+            <ToolButton
+              active={mode === "text"}
+              icon={<Type className="h-5 w-5" />}
+              label={t("stories.composerText")}
+              onClick={() => {
+                setMode("text");
+                // A text slide has no caption: keep whatever was typed as the
+                // slide body so switching modes never loses the words.
+              }}
+            />
+            {mode === "text" && (
+              <ToolButton
+                icon={<Palette className="h-5 w-5" />}
+                label={t("stories.composerBackground")}
+                onClick={() => {
+                  const index = STORY_TEXT_PRESETS.indexOf(preset);
+                  setPreset(STORY_TEXT_PRESETS[(index + 1) % STORY_TEXT_PRESETS.length]);
+                }}
+              />
             )}
           </div>
 
-          {progress !== null && (
-            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-primary transition-[width] duration-200"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-          )}
-
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={closeComposer} disabled={publishing}>
-              {t("common.cancel")}
-            </Button>
-            <Button onClick={handlePublish} disabled={!canPublish}>
-              {publishing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t("stories.composerPublish")}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+          <button
+            type="button"
+            onClick={() => void handlePublish()}
+            disabled={!canPublish}
+            aria-label={t("stories.composerPublish")}
+            className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-primary px-4 font-semibold text-primary-foreground transition-transform hover:scale-[1.02] disabled:opacity-40 disabled:hover:scale-100 sm:px-5"
+          >
+            {publishing ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+            <span className="hidden sm:inline">{t("stories.composerPublish")}</span>
+          </button>
+        </div>
+        </div>
+      </footer>
 
       <CloseFriendsDialog open={closeFriendsOpen} onOpenChange={setCloseFriendsOpen} />
-    </>
+    </div>,
+    document.body,
+  );
+}
+
+/** `innerText` keeps line breaks in a contentEditable; jsdom does not implement
+ * it, so tests (and any non-layout DOM) fall back to `textContent`. */
+function readEditable(node: HTMLElement): string {
+  return (node.innerText ?? node.textContent ?? "").trim();
+}
+
+function RoundButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className="grid h-9 w-9 place-items-center rounded-full bg-black/45 text-white backdrop-blur transition-colors hover:bg-black/65"
+    >
+      {children}
+    </button>
+  );
+}
+
+function ToolButton({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      aria-pressed={active}
+      className={`grid h-9 w-9 place-items-center rounded-full transition-colors ${
+        active ? "bg-white text-black" : "text-white/80 hover:bg-white/10 hover:text-white"
+      }`}
+    >
+      {icon}
+    </button>
+  );
+}
+
+/** Thumbnail of an existing slide (media preview, or its text gradient). */
+function StoryThumb({ story }: { story: Story }) {
+  if (story.kind === "text") {
+    return (
+      <span
+        className="grid h-full w-full place-items-center px-1 text-center text-[7px] font-semibold leading-tight text-white"
+        style={{ background: storyPresetBackground(story.text_style?.preset) }}
+      >
+        {story.text.slice(0, 24)}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={storageUrl("stories", story.preview_key ?? story.media_key) ?? undefined}
+      alt=""
+      className="h-full w-full object-cover"
+      loading="lazy"
+    />
   );
 }

@@ -132,7 +132,8 @@ describe("storiesStore", () => {
     );
 
     expect(useStoriesStore.getState().rail).toHaveLength(0);
-    expect(useStoriesStore.getState().storiesFor("user", "u1")).toHaveLength(0);
+    // The author still sees it on their profile (their own list is private).
+    expect(useStoriesStore.getState().storiesFor("user", "u1")).toHaveLength(1);
   });
 
   it("drops a deleted story from every list and empties the group", async () => {

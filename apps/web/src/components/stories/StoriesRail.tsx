@@ -48,7 +48,7 @@ export function StoriesRail() {
     );
   }
 
-  const ownName = user.username || t("stories.you");
+  const ownName = ownGroup?.owner.name || user.username || t("stories.you");
 
   return (
     <nav aria-label={t("stories.railTitle")} className="mb-4">

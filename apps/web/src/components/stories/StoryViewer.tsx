@@ -315,6 +315,20 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
     story.author?.display_name ??
     story.author?.username ??
     "";
+  // The owner is the way out of the player: a board page for a GomoSub story,
+  // the profile for a personal one. Null (e.g. a board opened from a deep link
+  // without its slug) keeps the header non-interactive instead of guessing.
+  const ownerLink =
+    story.owner_type === "gosub"
+      ? group?.owner.slug
+        ? `/g/${group.owner.slug}`
+        : null
+      : `/profile/${story.owner_id}`;
+  const openOwner = () => {
+    if (!ownerLink) return;
+    closeViewer();
+    navigate(ownerLink);
+  };
   const isGosub = story.owner_type === "gosub";
   const canEdit = story.is_own;
 
@@ -400,25 +414,45 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
       {/* Header */}
       <div className="relative z-20 flex items-start gap-3 px-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-5">
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
-          <UserAvatar
-            src={group?.owner.avatar_url ?? story.author?.avatar_url}
-            userId={isGosub ? null : story.author_id}
-            alt={ownerName}
-            className="h-9 w-9 border border-white/20"
-          />
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">{ownerName}</p>
-            <p className="flex items-center gap-1.5 truncate text-[11px] text-white/70">
-              {isGosub && story.author && <span>@{story.author.username}</span>}
-              <span>
-                {formatDistanceToNow(safeDate(story.created_at), {
-                  addSuffix: true,
-                  locale,
-                })}
-              </span>
-              {story.is_own && <StoryPrivacyBadge privacy={story.privacy} />}
-            </p>
-          </div>
+          {(() => {
+            const content = (
+              <>
+                <UserAvatar
+                  src={group?.owner.avatar_url ?? story.author?.avatar_url}
+                  userId={isGosub ? null : story.author_id}
+                  alt={ownerName}
+                  className="h-9 w-9 border border-white/20"
+                />
+                <div className="min-w-0 text-left">
+                  <p className="truncate text-sm font-semibold group-hover/owner:underline">
+                    {ownerName}
+                  </p>
+                  <p className="flex items-center gap-1.5 truncate text-[11px] text-white/70">
+                    {isGosub && story.author && <span>@{story.author.username}</span>}
+                    <span>
+                      {formatDistanceToNow(safeDate(story.created_at), {
+                        addSuffix: true,
+                        locale,
+                      })}
+                    </span>
+                    {story.is_own && <StoryPrivacyBadge privacy={story.privacy} />}
+                  </p>
+                </div>
+              </>
+            );
+            return ownerLink ? (
+              <button
+                type="button"
+                onClick={openOwner}
+                aria-label={t("stories.openOwner", { name: ownerName })}
+                className="group/owner flex min-w-0 items-center gap-2.5 rounded-full text-white transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
+              >
+                {content}
+              </button>
+            ) : (
+              <div className="flex min-w-0 items-center gap-2.5">{content}</div>
+            );
+          })()}
         </div>
 
         {isVideo && (
