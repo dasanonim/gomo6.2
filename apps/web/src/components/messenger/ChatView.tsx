@@ -360,11 +360,15 @@ export const ChatView = memo(function ChatView({
     // each other even though they are fired without awaiting.
     batches.forEach((batch, index) => {
       const clientId = `c${Date.now().toString(36)}_${index}_${Math.random().toString(36).slice(2, 8)}`;
-      void sendMessage(
-        index === batches.length - 1 ? caption : " ",
-        clientId,
-        index === 0 ? replyTo : undefined,
-        batch.length > 0 ? batch : undefined,
+      // `Promise.resolve` keeps this safe for a stubbed store in tests, and a
+      // rejection must never escape as an unhandled one.
+      void Promise.resolve(
+        sendMessage(
+          index === batches.length - 1 ? caption : " ",
+          clientId,
+          index === 0 ? replyTo : undefined,
+          batch.length > 0 ? batch : undefined,
+        ),
       ).catch(() => "");
     });
   }, [draft, sendMessage, replyToMessage, pendingAttachments, uploadingFiles, setDraft]);
