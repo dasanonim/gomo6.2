@@ -7,8 +7,6 @@ import type { Attachment } from "./types";
 import { VoicePlayer } from "./VoicePlayer";
 import { WaveformRenderer } from "./core/waveformRenderer";
 import {
-  MIN_PEAK_SCALE,
-  PEAK_SCALE_MULTIPLIER,
   livePeak,
   rmsFromTimeDomain,
   storedPeak,
@@ -190,8 +188,6 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
   const liveBarsRef = useRef<number[]>([]);
   const lastBarAtRef = useRef(0);
   const warmupUntilRef = useRef(0);
-  /** Rolling mean of the raw level — the scale the bars are drawn against. */
-  const meanPeakRef = useRef(0);
   const phaseRef = useRef<Phase>("idle");
   const lockedRef = useRef(false);
   const cancelRef = useRef(false);
@@ -445,15 +441,12 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
         // must get the RAW level — its running maximum starts at 0.05, and a
         // floored 0.06 would normalise to full height before the first sound.
         // Two consumers, two scales. The stored bars keep a 6% floor (silence
-        // stays visible in the bubble); the live canvas gets the level relative
-        // to the rolling average — Telegram's 1.8× average scale — so a loud
-        // transient cannot paint the whole preview at full height.
+        // stays visible in the bubble); the live canvas gets the ABSOLUTE level
+        // — no normalisation here and none in the renderer, so silence is 0 and
+        // a steady room tone can never be inflated into a wall.
         const peak = livePeak(rms);
-        meanPeakRef.current = meanPeakRef.current === 0 ? peak : meanPeakRef.current * 0.9 + peak * 0.1;
-        const scale = Math.max(meanPeakRef.current * PEAK_SCALE_MULTIPLIER, MIN_PEAK_SCALE);
-        const shown = Math.min(1, peak / scale);
-        liveBarsRef.current.push(storedPeak(shown));
-        waveRendererRef.current?.pushPeak(shown);
+        liveBarsRef.current.push(storedPeak(peak));
+        waveRendererRef.current?.pushPeak(peak);
       }
       rafRef.current = requestAnimationFrame(frame);
     };
@@ -461,7 +454,6 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
 
     startedAtRef.current = performance.now();
     warmupUntilRef.current = startedAtRef.current + WAVE_WARMUP_MS;
-    meanPeakRef.current = 0;
     tickRef.current = setInterval(() => {
       if ((phaseRef.current as Phase) !== "recording") return;
       const seconds = (performance.now() - startedAtRef.current) / 1000;

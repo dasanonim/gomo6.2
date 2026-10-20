@@ -101,10 +101,10 @@ describe("WaveformRenderer", () => {
     renderer.destroy();
   });
 
-  it("draws silence as dots — it never normalises the floor to full height", async () => {
-    // Regression: the recorder used to feed a 6% floor into the renderer, which
-    // is above its initial maximum (0.05) — every silent bar rendered at 100%
-    // until the first real sound. Silence must stay a dot.
+  it("draws silence as dots and never grows on its own", async () => {
+    // Regression: the renderer used to divide every peak by a running maximum.
+    // Steady room noise set that maximum once and every following silent bar was
+    // drawn at 100% of it — the wave "grew" in silence and stuck at the top.
     const { ctx, calls } = fakeContext();
     const canvas = fakeCanvas(ctx, 200, 26);
     const renderer = new WaveformRenderer(canvas);
@@ -114,15 +114,31 @@ describe("WaveformRenderer", () => {
     renderer.pushPeak(0);
     renderer.pushPeak(0);
     await flush();
-
     expect(calls.map((call) => call.h)).toEqual([3, 3]);
 
-    // A quiet first sound is relative to the initial max, not full height.
-    renderer.pushPeak(0.02);
+    // A steady quiet level stays small and equal — it is not promoted to 100%.
+    renderer.pushPeak(0.2);
+    renderer.pushPeak(0.2);
     await flush();
-    const quiet = calls[calls.length - 1];
-    expect(quiet.h).toBeGreaterThan(3);
-    expect(quiet.h).toBeLessThan(26 * 0.8);
+    const quiet = calls.slice(-2).map((call) => call.h);
+    expect(quiet[0]).toBe(quiet[1]);
+    expect(quiet[0]).toBeLessThan(26 * 0.4);
+    renderer.destroy();
+  });
+
+  it("draws absolute levels: a loud bar does not rescale the quiet ones", async () => {
+    const { ctx, calls } = fakeContext();
+    const canvas = fakeCanvas(ctx, 200, 26);
+    const renderer = new WaveformRenderer(canvas);
+    renderer.handleResize(200, 26);
+    await flush();
+
+    renderer.pushPeak(1);
+    renderer.pushPeak(0.1);
+    await flush();
+
+    const [loud, quiet] = calls.map((call) => call.h);
+    expect(loud).toBeGreaterThan(quiet * 2);
     renderer.destroy();
   });
 

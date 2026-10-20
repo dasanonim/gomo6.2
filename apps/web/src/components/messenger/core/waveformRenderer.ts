@@ -20,13 +20,11 @@ const MIN_BAR_HEIGHT = BAR_WIDTH;
 /** The loudest bars must not touch the canvas edges. */
 const MAX_BAR_HEIGHT_RATIO = 0.8;
 const UNPLAYED_ALPHA = 0.3;
-const INITIAL_MAX_PEAK = 0.05;
 
 export class WaveformRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private peaks: number[] = [];
-  private maxPeak = INITIAL_MAX_PEAK;
   private capacity = 0;
   private cssWidth = 0;
   private cssHeight = 0;
@@ -69,9 +67,18 @@ export class WaveformRenderer {
     });
   }
 
+  /**
+   * A bar height, 0..1 — an ABSOLUTE level, not a value to re-normalise.
+   *
+   * Telegram's renderer divides every peak by a running maximum; that couples
+   * the drawing to the loudest frame so far and is exactly how a waveform ends
+   * up pinned to the ceiling: steady room noise sets the maximum once and every
+   * following silent bar is drawn at 100% of it. The caller owns the scale (a
+   * fixed level curve here, the average-based scale for a finished recording),
+   * so silence is 0 and the bars never "grow" on their own.
+   */
   pushPeak(value: number) {
-    if (value > this.maxPeak) this.maxPeak = value;
-    this.peaks.push(Math.min(1, value / this.maxPeak));
+    this.peaks.push(Math.min(1, Math.max(0, value)));
     if (this.capacity && this.peaks.length > this.capacity) {
       this.peaks.splice(0, this.peaks.length - this.capacity);
     }
@@ -98,11 +105,7 @@ export class WaveformRenderer {
       }
     }
 
-    let max = 0.001;
-    for (let i = 0; i < fitted.length; i += 1) if (fitted[i] > max) max = fitted[i];
-    for (let i = 0; i < fitted.length; i += 1) fitted[i] = Math.min(1, fitted[i] / max);
-
-    this.peaks = fitted;
+    this.peaks = fitted.map((value) => Math.min(1, Math.max(0, value)));
     this.scheduleDraw();
   }
 
