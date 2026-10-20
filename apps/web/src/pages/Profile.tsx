@@ -805,7 +805,7 @@ const Profile = () => {
                   </div>
                 )}
               </div>
-              <div className="relative -mt-8 sm:-mt-10 px-4">
+              <div className="relative -mt-8 sm:-mt-10 px-4 pb-1.5">
                 {headerElement}
               </div>
             </div>

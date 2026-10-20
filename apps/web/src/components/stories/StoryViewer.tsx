@@ -117,7 +117,13 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
   const removeStory = useStoriesStore((state) => state.removeStory);
   const updateStory = useStoriesStore((state) => state.updateStory);
 
-  const [paused, setPaused] = useState(false);
+  // A quick tap (prev/next) and a long press (pause) start with the same
+  // pointerdown. Pausing immediately made the pause badge flash on every tap,
+  // so the hold only engages after HOLD_MS — the same threshold that decides
+  // "tap = navigate, hold = pause".
+  const [holding, setHolding] = useState(false);
+  const [pausedBySpace, setPausedBySpace] = useState(false);
+  const [hidden, setHidden] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -126,6 +132,7 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
   const [loadFailed, setLoadFailed] = useState(false);
 
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const holdTimerRef = useRef<number | null>(null);
   const dragRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const activeBarRef = useRef<HTMLSpanElement | null>(null);
@@ -174,12 +181,18 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
   }, [story?.id, story, markViewed]);
 
   useEffect(() => {
-    const onHidden = () => setPaused(document.visibilityState === "hidden");
+    const onHidden = () => setHidden(document.visibilityState === "hidden");
+    onHidden();
     document.addEventListener("visibilitychange", onHidden);
-    return () => document.removeEventListener("visibilitychange", onHidden);
+    return () => {
+      document.removeEventListener("visibilitychange", onHidden);
+      if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current);
+    };
   }, []);
 
-  const isPaused = paused || menuOpen || privacyOpen || deleteOpen || viewersOpen;
+  const overlayOpen = menuOpen || privacyOpen || deleteOpen || viewersOpen;
+  const isPaused = holding || pausedBySpace || hidden || overlayOpen;
+  const showPauseBadge = holding || pausedBySpace || overlayOpen;
 
   const navigateOnce = useCallback((move: () => void) => {
     const now = Date.now();
@@ -237,7 +250,7 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
       else if (event.key === "ArrowLeft") goPrev();
       else if (event.key === " ") {
         event.preventDefault();
-        setPaused((value) => !value);
+        setPausedBySpace((value) => !value);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -314,7 +327,8 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
       moved: false,
       onButton: Boolean(target?.closest("button")),
     };
-    setPaused(true);
+    if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current);
+    holdTimerRef.current = window.setTimeout(() => setHolding(true), HOLD_MS);
   };
   const onPointerMove = (event: ReactPointerEvent) => {
     const start = pointerStart.current;
@@ -334,7 +348,11 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
   const onPointerUp = (event: ReactPointerEvent) => {
     const start = pointerStart.current;
     pointerStart.current = null;
-    setPaused(false);
+    if (holdTimerRef.current !== null) {
+      window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    setHolding(false);
     if (!start) return;
     const dragged = dragRef.current;
     dragRef.current = 0;
@@ -490,6 +508,7 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
 
       {/* Media */}
       <div
+        data-testid="story-media"
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -554,8 +573,11 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
           <ChevronRight className="h-6 w-6" />
         </button>
 
-        {paused && (
-          <span className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/40 p-4">
+        {showPauseBadge && (
+          <span
+            data-testid="story-paused"
+            className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/40 p-4"
+          >
             <Pause className="h-7 w-7" />
           </span>
         )}

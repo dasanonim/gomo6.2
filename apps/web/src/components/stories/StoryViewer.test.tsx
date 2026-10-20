@@ -137,6 +137,34 @@ describe("StoryViewer", () => {
     expect(useStoriesStore.getState().viewer?.storyId).toBe("s2");
   });
 
+  it("does not flash the pause badge on a quick tap", () => {
+    seed([story({ id: "s1" }), story({ id: "s2" })]);
+    renderViewer();
+    const media = screen.getByTestId("story-media");
+
+    fireEvent.pointerDown(media, { clientX: 300, clientY: 300, pointerId: 1 });
+    expect(screen.queryByTestId("story-paused")).toBeNull();
+    fireEvent.pointerUp(media, { clientX: 300, clientY: 300, pointerId: 1 });
+    expect(screen.queryByTestId("story-paused")).toBeNull();
+  });
+
+  it("shows the pause badge only after holding", async () => {
+    seed([story({ id: "s1" }), story({ id: "s2" })]);
+    renderViewer();
+    const media = screen.getByTestId("story-media");
+
+    fireEvent.pointerDown(media, { clientX: 300, clientY: 300, pointerId: 1 });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 260));
+    });
+    expect(screen.getByTestId("story-paused")).toBeInTheDocument();
+
+    fireEvent.pointerUp(media, { clientX: 300, clientY: 300, pointerId: 1 });
+    expect(screen.queryByTestId("story-paused")).toBeNull();
+    // A hold is not a tap: it must not navigate.
+    expect(useStoriesStore.getState().viewer?.storyId).toBe("s1");
+  });
+
   it("goes back to the previous slide", () => {
     seed([story({ id: "s1" }), story({ id: "s2" })], "s2");
     renderViewer();

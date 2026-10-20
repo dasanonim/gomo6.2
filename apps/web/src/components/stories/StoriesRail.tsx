@@ -50,7 +50,7 @@ export function StoriesRail() {
 
   return (
     <nav aria-label={t("stories.railTitle")} className="mb-4">
-      <div className="flex gap-4 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex gap-4 overflow-x-auto px-1.5 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex w-[76px] shrink-0 flex-col items-center gap-1.5">
           <div className="relative">
             <StoryAvatar
