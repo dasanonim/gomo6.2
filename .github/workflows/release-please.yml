@@ -1,0 +1,65 @@
+# =============================================================================
+# release-please.yml — версия, CHANGELOG, тег и GitHub Release без рук.
+# =============================================================================
+# Поток:
+#   1. PR мержится в main через SQUASH → в истории main один коммит на PR,
+#      его тема = заголовок PR (`feat(scope): ...`), который проверяет ci.yml.
+#   2. Этот workflow читает коммиты с последнего тега и решает, какая версия
+#      следующая: feat → minor, fix/perf → patch, `!`/BREAKING CHANGE → major.
+#   3. Он открывает (или обновляет уже открытый) PR `chore: release vX.Y.Z`,
+#      где сам правит VERSION, .release-please-manifest.json и дописывает
+#      CHANGELOG.md.
+#   4. Когда этот PR мержат, release-please вешает аннотированный тег vX.Y.Z и
+#      создаёт GitHub Release с текстом из CHANGELOG.
+#   5. Мерж в main запускает deploy.yml: VERSION изменился → пересобираются все
+#      сервисы и получают теги `:vX.Y.Z`, `:latest`, `:sha-<commit>`.
+#
+# Почему `version-file: VERSION` (см. release-please-config.json): стратегия
+# `simple` по умолчанию ищет `version.txt`, а у нас файл называется `VERSION`
+# (его читают Dockerfile'ы и deploy.yml). Опция `version-file` поддерживается
+# именно этой стратегией, поэтому переименовывать ничего не нужно.
+#
+# ── Про секрет RELEASE_PLEASE_TOKEN ─────────────────────────────────────────
+# PR, созданный через GITHUB_TOKEN, НЕ запускает воркфлоу. Значит Release PR
+# остался бы без обязательного чека `CI · все проверки` и его нельзя было бы
+# смержить. Поэтому нужен токен от пользователя (fine-grained PAT:
+# Contents = read/write, Pull requests = read/write, только этот репозиторий,
+# положить в Settings → Secrets → Actions как RELEASE_PLEASE_TOKEN).
+#
+# Пока секрета нет — fallback на GITHUB_TOKEN: PR появится, но чеков у него не
+# будет. Лечится так: после добавления секрета закрыть и снова открыть Release
+# PR (событие `reopened` запускает CI) либо дождаться следующего обновления PR
+# (release-please пересоздаёт его уже от PAT).
+#
+# ── Почему здесь ничего не собирается ───────────────────────────────────────
+# Образы собирает deploy.yml по факту мержа в main. Тег нужен только как
+# человекочитаемая метка релиза: версия в образах берётся из файла VERSION.
+# =============================================================================
+
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Не отменяем: прерванный прогон оставил бы PR/тег в половинчатом состоянии.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Release PR
+    if: vars.PRIMARY_FORGE == 'github'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

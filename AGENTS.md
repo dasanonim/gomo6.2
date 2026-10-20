@@ -150,7 +150,7 @@ the backend + Docker infra can stay up across restarts.
 | `tests-full.yml` | daily 06:00 UTC, dispatch | `backend-race` (real Postgres/Redis), `smoke` (register → upload → board → thread → post → like), `privacy`. |
 | `security.yml` | Mon 03:00 UTC, dispatch | CodeQL (`go` + `javascript-typescript`, suite `security-and-quality`) and Trivy fs scan → Security / code-scanning (SARIF). No auto-issues. |
 | `mirror.yml` | push (any branch/tag) | Force-mirror GitHub → Codeberg + GitLab. |
-| `release.yml` | tag `vX.Y.Z` | GitHub Release, body extracted from `CHANGELOG.md`. |
+| `release-please.yml` | push to `main`, dispatch | Version + `CHANGELOG.md` + tag + GitHub Release, no manual ritual. After a squash-merge it opens a `chore: release vX.Y.Z` PR (computed from conventional commits), and on that PR's merge it tags `vX.Y.Z` and creates the Release. Config: `release-please-config.json` (`version-file: VERSION`), baseline: `.release-please-manifest.json`. Needs the `RELEASE_PLEASE_TOKEN` secret — a `GITHUB_TOKEN`-created PR does not trigger CI, so its required check would never appear. |
 
 Deploy pipeline details, secrets/variables, rollback and VPS setup live in
 [docs/wiki/DEPLOYMENT.md](docs/wiki/DEPLOYMENT.md). Required deploy secrets:
@@ -375,9 +375,12 @@ npx tsc --noEmit -p apps/docs/tsconfig.json
   See [docs/wiki/MESSENGER_CHAT_SCROLL.md](docs/wiki/MESSENGER_CHAT_SCROLL.md).
 - **Channel switching**: `channelSlug` must be in the `loadBoard` effect deps in
   `apps/web/src/pages/Board.tsx`. Missing it = stale threads on channel nav.
-- **Releases**: bump `VERSION` and add a `## [X.Y.Z]` section to `CHANGELOG.md`, then
-  tag `vX.Y.Z` (release.yml extracts that section). Deploy reads the version from
-  `VERSION`, not from the tag.
+- **Releases**: do NOT bump `VERSION`, edit `CHANGELOG.md` or tag by hand — release-please
+  does all of it (`release-please.yml`). Merges are **squash-only** (repo setting + ruleset),
+  so one PR = one conventional commit on `main`; that commit subject decides the next version
+  (`feat` → minor, `fix`/`perf` → patch, `!` → major; `ci`/`docs`/`chore`/`test`/`style` → no
+  bump). The bot opens `chore: release vX.Y.Z`; rewrite its CHANGELOG section in Russian before
+  merging. Deploy reads the version from `VERSION`, not from the tag.
 
 ## Docs map
 
