@@ -201,11 +201,15 @@ func CanViewStory(db *sql.DB, viewerID, storyID string) (bool, error) {
 	return ok, err
 }
 
+// mediaStoryQuery must reference $1 and only $1: an unused $1 leaves the
+// parameter type undetermined under the extended protocol (lib/pq), so the
+// lookup errored and every non-author fell into the uploader-prefix gate —
+// i.e. the media of a public story 403'd for everyone else.
 const mediaStoryQuery = `
 SELECT s.id::text
 FROM stories s
 WHERE s.deleted_at IS NULL
-  AND (s.media_key = $2::text OR s.preview_key = $2::text)
+  AND (s.media_key = $1::text OR s.preview_key = $1::text)
 LIMIT 1`
 
 // StoryMediaAccess authorizes a raw media key of the private `stories` bucket.
@@ -220,7 +224,7 @@ func StoryMediaAccess(db *sql.DB, viewerID, key string) (found, allowed bool) {
 		return false, false
 	}
 	var storyID string
-	err := db.QueryRow(mediaStoryQuery, key, key).Scan(&storyID)
+	err := db.QueryRow(mediaStoryQuery, key).Scan(&storyID)
 	if err == sql.ErrNoRows {
 		return false, false
 	}

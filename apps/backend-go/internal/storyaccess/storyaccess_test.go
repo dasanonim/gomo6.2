@@ -253,7 +253,7 @@ func TestStoryMediaAccess(t *testing.T) {
 		defer db.Close()
 
 		mock.ExpectQuery(mediaPattern.String()).
-			WithArgs(key, key).
+			WithArgs(key).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(story))
 		mock.ExpectQuery(storyPattern.String()).
 			WithArgs(viewer, story).
@@ -273,7 +273,7 @@ func TestStoryMediaAccess(t *testing.T) {
 		defer db.Close()
 
 		mock.ExpectQuery(mediaPattern.String()).
-			WithArgs(key, key).
+			WithArgs(key).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(story))
 		mock.ExpectQuery(storyPattern.String()).
 			WithArgs(viewer, story).

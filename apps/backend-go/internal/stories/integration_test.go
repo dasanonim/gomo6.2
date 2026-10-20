@@ -25,6 +25,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gomo6/backend/internal/auth"
+	"github.com/gomo6/backend/internal/storyaccess"
 	"github.com/gomo6/backend/internal/testutil"
 	_ "github.com/lib/pq"
 )
@@ -187,6 +188,62 @@ func randomHex() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// mediaStory inserts a photo story with the media keys the upload endpoint
+// would return (<author>/story.webp + .preview.jpg).
+func (e *itEnv) mediaStory(ownerID, authorID, privacy string) (id, mediaKey, previewKey string) {
+	e.t.Helper()
+	mediaKey = authorID + "/story_it.webp"
+	previewKey = mediaKey + ".preview.jpg"
+	err := e.db.QueryRow(`
+		INSERT INTO stories (owner_type, user_id, author_id, kind, media_key, preview_key, privacy, expires_at)
+		VALUES ('user', $1::uuid, $2::uuid, 'photo', $3, $4, $5, NOW() + interval '2 hours')
+		RETURNING id::text`,
+		ownerID, authorID, mediaKey, previewKey, privacy).Scan(&id)
+	if err != nil {
+		e.t.Fatalf("create media story: %v", err)
+	}
+	return id, mediaKey, previewKey
+}
+
+func TestIntegration_StoryMediaAccess(t *testing.T) {
+	e := newIT(t)
+	author := e.user("media-author")
+	friend := e.user("media-friend")
+	stranger := e.user("media-stranger")
+	e.friend(author, friend)
+
+	_, publicKey, publicPreview := e.mediaStory(author, author, PrivacyEveryone)
+
+	// A public slide's bytes are readable by its author, a friend and a stranger
+	// — for the original and for the preview. This is the regression the
+	// `$2`-without-`$1` lookup caused: only the uploader could load anything.
+	for _, viewer := range []string{author, friend, stranger} {
+		if found, allowed := storyaccess.StoryMediaAccess(e.db, viewer, publicKey); !found || !allowed {
+			t.Fatalf("viewer %s: public original found=%v allowed=%v", viewer[:8], found, allowed)
+		}
+		if found, allowed := storyaccess.StoryMediaAccess(e.db, viewer, publicPreview); !found || !allowed {
+			t.Fatalf("viewer %s: public preview found=%v allowed=%v", viewer[:8], found, allowed)
+		}
+	}
+
+	// A friends-only slide: the friend sees the bytes, the stranger does not —
+	// and the lookup still reports found=true so the denial is the audience,
+	// not a broken key lookup.
+	_, friendsKey, _ := e.mediaStory(author, author, PrivacyFriends)
+	if found, allowed := storyaccess.StoryMediaAccess(e.db, friend, friendsKey); !found || !allowed {
+		t.Fatalf("friend: friends-only found=%v allowed=%v", found, allowed)
+	}
+	if found, allowed := storyaccess.StoryMediaAccess(e.db, stranger, friendsKey); !found || allowed {
+		t.Fatalf("stranger: friends-only found=%v allowed=%v (want found+denied)", found, allowed)
+	}
+
+	// Unattached/guessed keys report found=false, so the caller falls back to
+	// the uploader-prefix gate instead of leaking them.
+	if found, _ := storyaccess.StoryMediaAccess(e.db, author, author+"/orphan.webp"); found {
+		t.Fatal("an orphan key must not resolve to a story")
+	}
 }
 
 func claimsFor(userID string) *auth.Claims {

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { useStoriesStore } from "@/stores/storiesStore";
 import { StoryAvatar } from "./StoryAvatar";
+import { useStoriesRealtime } from "./useStoriesRealtime";
 
 /**
  * The stories rail above the feed — the same shape as Telegram's: your own
@@ -18,6 +19,7 @@ export function StoriesRail() {
   const { user } = useAuth();
   const rail = useStoriesStore((state) => state.rail);
   const openComposer = useStoriesStore((state) => state.openComposer);
+  useStoriesRealtime(user?.id);
   const railLoaded = useStoriesStore((state) => state.railLoaded);
   const loadRail = useStoriesStore((state) => state.loadRail);
 

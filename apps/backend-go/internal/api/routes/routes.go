@@ -992,11 +992,14 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 						found, allowed := storyaccess.StoryMediaAccess(db, viewerID, key)
 						if found {
 							if !allowed {
-								c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+								// Abort, not just return: the next handler in the
+								// chain would otherwise still stream the object
+								// after the 403.
+								c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 								return
 							}
 						} else if uploaderID != viewerID {
-							c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+							c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 							return
 						}
 					}
@@ -1022,7 +1025,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 							}
 						}
 						if ownerID == "" || viewerID == "" {
-							c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+							c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 							return
 						}
 						// found is load-bearing: once an uploader-authored post references
@@ -1037,7 +1040,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 							// would be a second, redundant query on every authorized
 							// wall image. Deny only when the referencing wall is hidden.
 							if !allowed {
-								c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+								c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 								return
 							}
 						} else {
@@ -1050,7 +1053,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 								logsafe.Printf("[storage] wall visibility check failed for viewer=%s owner=%s: %v", viewerID, ownerID, err)
 							}
 							if !canViewWall {
-								c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+								c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 								return
 							}
 						}

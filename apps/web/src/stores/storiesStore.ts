@@ -387,6 +387,24 @@ export const useStoriesStore = create<StoriesState>((set, get) => ({
   closeComposer: () => set({ composer: null }),
 
   applyRealtimeEvent: (type, payload) => {
+    // Author-only counters (the server publishes them to stories_owner_<id>).
+    if (type === "story_viewed") {
+      const storyId = payload.story_id as string | undefined;
+      const views = Number(payload.views_count);
+      if (storyId && Number.isFinite(views)) {
+        set((state) => patchStory(state, storyId, { views_count: views }));
+      }
+      return;
+    }
+    if (type === "story_reaction") {
+      const storyId = payload.story_id as string | undefined;
+      const count = Number(payload.reactions_count);
+      if (storyId && Number.isFinite(count)) {
+        set((state) => patchStory(state, storyId, { reactions_count: count }));
+      }
+      return;
+    }
+
     const ownerType = payload.owner_type as StoryOwnerType | undefined;
     const ownerId = payload.owner_id as string | undefined;
     if (!ownerType || !ownerId) return;

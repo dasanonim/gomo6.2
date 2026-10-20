@@ -18,10 +18,8 @@ export type StoryRingProps = {
  * than a pixel on a 40px avatar and the count stops being readable. */
 export const MAX_RING_SEGMENTS = 20;
 
-/** Radial perimeter of the ring, in the 100×100 viewBox. With the SVG box
- * 5px larger than the avatar, r=47 keeps the stroke (44.5..49.5) entirely
- * outside the avatar — the previous r=46 / 3px inset drew half the ring under
- * the avatar, which read as a thin, clipped, washed-out edge. */
+/** Radial perimeter of the ring, in the 100×100 viewBox. With the SVG box 4px
+ * larger than the avatar, r=47 sits just outside the avatar at every size. */
 const RING_RADIUS = 47;
 
 /**
@@ -50,7 +48,7 @@ export function StoryRing({ total, read = 0, closeFriends = false, children, cla
           aria-hidden="true"
           data-testid="story-ring-svg"
           viewBox="0 0 100 100"
-          className="pointer-events-none absolute -inset-[5px] h-[calc(100%+10px)] w-[calc(100%+10px)]"
+          className="pointer-events-none absolute -inset-[4px] h-[calc(100%+8px)] w-[calc(100%+8px)]"
         >
           <defs>
             <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
@@ -77,7 +75,12 @@ export function StoryRing({ total, read = 0, closeFriends = false, children, cla
                 fill="none"
                 pathLength={1}
                 stroke={isRead ? "oklch(var(--muted-foreground) / 0.6)" : `url(#${gradientId})`}
-                strokeWidth={isRead ? 2.5 : 5}
+                // Non-scaling: a 2.5px ring at every avatar size. Scaling the
+                // stroke with the box made the 80px profile ring 4.5px thick —
+                // heavy and unlike Telegram — while the 48px rail ring looked
+                // right. Absolute pixels keep both consistent.
+                vectorEffect="non-scaling-stroke"
+                strokeWidth={isRead ? 1.5 : 2.5}
                 strokeDasharray={`${dash} 1`}
                 strokeDashoffset={-i / segments}
                 transform="rotate(-90 50 50)"
