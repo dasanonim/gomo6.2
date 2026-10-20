@@ -61,6 +61,22 @@ import { useStoryProgress } from "./useStoryProgress";
 import "./stories.css";
 
 const IMAGE_DURATION_MS = 6000;
+
+/** Sound preference for the session: the first story tries to play with sound,
+ * and the mute button carries the choice over to the next slides. */
+let soundEnabled = true;
+
+/** `play()` returns a promise in modern engines and `undefined` in old ones
+ * (and in jsdom). Resolves to false when playback was refused. */
+async function tryPlay(video: HTMLVideoElement): Promise<boolean> {
+  try {
+    const result = video.play();
+    if (result && typeof result.then === "function") await result;
+    return true;
+  } catch {
+    return false;
+  }
+}
 const EMPTY_STORIES: Story[] = [];
 const SWIPE_CLOSE_PX = 120;
 const HOLD_MS = 220;
@@ -128,7 +144,7 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
   const [privacyOpen, setPrivacyOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [viewersOpen, setViewersOpen] = useState(false);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(!soundEnabled);
   const [loadFailed, setLoadFailed] = useState(false);
 
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -239,9 +255,39 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
     if (!isVideo) return;
     const video = videoRef.current;
     if (!video) return;
-    if (isPaused) video.pause();
-    else void video.play().catch(() => undefined);
-  }, [isPaused, isVideo, story?.id]);
+    if (isPaused) {
+      video.pause();
+      return;
+    }
+    let cancelled = false;
+    const start = async () => {
+      if (cancelled) return;
+      video.muted = muted;
+      if (await tryPlay(video)) return;
+      if (muted) return;
+      // Autoplay with sound was refused (browser policy): fall back to a muted
+      // start and let the user unmute with one tap.
+      video.muted = true;
+      setMuted(true);
+      // Do NOT persist the fallback: the refusal may be transient (a hidden
+      // tab, a strict policy for this one load). The next slide tries sound
+      // again; only the user's own mute button changes the session preference.
+      await tryPlay(video);
+    };
+    void start();
+    // A play() issued while the file is still loading can be aborted; retry
+    // once the media is ready so a slide never sits on a frozen first frame.
+    const retry = () => {
+      if (!cancelled && video.paused) void start();
+    };
+    video.addEventListener("loadeddata", retry);
+    video.addEventListener("canplay", retry);
+    return () => {
+      cancelled = true;
+      video.removeEventListener("loadeddata", retry);
+      video.removeEventListener("canplay", retry);
+    };
+  }, [isPaused, isVideo, story?.id, muted]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -459,7 +505,13 @@ function StoryViewerInner({ viewer }: { viewer: StoryViewerState }) {
         {isVideo && (
           <button
             type="button"
-            onClick={() => setMuted((value) => !value)}
+            onClick={() => {
+              const next = !muted;
+              setMuted(next);
+              soundEnabled = !next;
+              const video = videoRef.current;
+              if (video) video.muted = next;
+            }}
             aria-label={muted ? t("stories.unmute") : t("stories.mute")}
             className="grid h-9 w-9 place-items-center rounded-full bg-black/30 text-white transition-colors hover:bg-black/50"
           >

@@ -77,7 +77,7 @@ export function StoryComposer() {
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [videoTime, setVideoTime] = useState(0);
   const [playing, setPlaying] = useState(true);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(false);
   const [text, setText] = useState("");
   const [preset, setPreset] = useState<StoryTextPreset>("sunset");
   const [privacy, setPrivacy] = useState<StoryPrivacy>("everyone");
@@ -126,9 +126,30 @@ export function StoryComposer() {
     if (!isVideo || !previewUrl) return;
     const video = videoRef.current;
     if (!video) return;
-    if (playing) void video.play().catch(() => undefined);
-    else video.pause();
-  }, [playing, isVideo, previewUrl]);
+    if (!playing) {
+      video.pause();
+      return;
+    }
+    void (async () => {
+      video.muted = muted;
+      try {
+        const result = video.play();
+        if (result && typeof result.then === "function") await result;
+      } catch {
+        // The preview may not autoplay with sound before the user interacts;
+        // fall back to muted rather than a frozen frame.
+        if (!muted) {
+          video.muted = true;
+          setMuted(true);
+          try {
+            await video.play();
+          } catch {
+            /* leave paused */
+          }
+        }
+      }
+    })();
+  }, [playing, isVideo, previewUrl, muted]);
 
   useEffect(() => {
     if (!target) return;
@@ -386,6 +407,17 @@ export function StoryComposer() {
                   muted={muted}
                   onClick={() => setPlaying((value) => !value)}
                   onTimeUpdate={(event) => setVideoTime(event.currentTarget.currentTime)}
+                  onCanPlay={(event) => {
+                    // Same autoplay-policy fallback as the player: if the sound
+                    // attempt was aborted while loading, start muted instead of
+                    // leaving a frozen frame.
+                    const video = event.currentTarget;
+                    if (playing && video.paused) {
+                      video.muted = true;
+                      setMuted(true);
+                      void video.play().catch(() => undefined);
+                    }
+                  }}
                 />
                 <div className="absolute right-2 top-2 flex gap-1.5">
                   <RoundButton
