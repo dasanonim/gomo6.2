@@ -37,7 +37,7 @@ export function StoriesRail() {
     return (
       <div className="mb-4 flex gap-4 overflow-hidden" aria-hidden="true">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="flex w-16 shrink-0 flex-col items-center gap-2">
+          <div key={i} className="flex w-[76px] shrink-0 flex-col items-center gap-2">
             <div className="h-12 w-12 animate-pulse rounded-full bg-muted" />
             <div className="h-2 w-10 animate-pulse rounded bg-muted" />
           </div>
@@ -51,7 +51,7 @@ export function StoriesRail() {
   return (
     <nav aria-label={t("stories.railTitle")} className="mb-4">
       <div className="flex gap-4 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="flex w-16 shrink-0 flex-col items-center gap-1.5">
+        <div className="flex w-[76px] shrink-0 flex-col items-center gap-1.5">
           <div className="relative">
             <StoryAvatar
               ownerType="user"
@@ -90,7 +90,7 @@ export function StoriesRail() {
           .map((group) => (
             <div
               key={`${group.owner.type}:${group.owner.id}`}
-              className="flex w-16 shrink-0 flex-col items-center gap-1.5"
+              className="flex w-[76px] shrink-0 flex-col items-center gap-1.5"
             >
               <StoryAvatar
                 ownerType={group.owner.type}

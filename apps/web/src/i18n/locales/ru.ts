@@ -832,7 +832,7 @@ const ru: LocaleResources = {
   },
   stories: {
     railTitle: "Истории",
-    yourStory: "Ваша история",
+    yourStory: "Моя история",
     you: "Вы",
     addYourStory: "Добавить историю",
     openOwner: "Открыть историю: {{name}}",
