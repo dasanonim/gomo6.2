@@ -16,6 +16,8 @@
 #     BuildKit (type=gha — только в docker-build);
 #   · в PR-прогоне НЕТ сборки образов, кроме случая, когда правда менялись
 #     Dockerfile/compose (job docker-build) — он же и необязательный чек;
+#   · тяжёлые джобы запускаются только по задетым путям (job `changes`,
+#     dorny/paths-filter): правка README не гоняет ни Go, ни vitest;
 #   · тесты шардятся на 3 раннера (frontend-tests): набор файлов режется, а не
 #     глубина проверки — прогоняются те же 271 файл / 2840 тестов, но за ~треть
 #     времени. Замер реального прогона: шард ~85s (install 19s + vitest 51s);
@@ -25,18 +27,18 @@
 #   · тяжёлое (race + настоящие Postgres/Redis + e2e) вынесено в tests-full.yml
 #     (ночью по расписанию), чтобы PR оставался быстрым.
 #
-# Обязательные чеки для branch protection (Settings → Branches → main).
-# В UI задаются ОТОБРАЖАЕМЫЕ ИМЕНА джобов, не их id:
-#   Go · build · vet · fmt · test
-#   Go · lint · vuln
-#   Frontend · checks (tsc · eslint · build)
-#   Frontend · tests (shard 1/3)
-#   Frontend · tests (shard 2/3)
-#   Frontend · tests (shard 3/3)
-#   Secrets scan
-#   Dockerfile lint
-# docker-build обязательным НЕ делать: он скипается, когда docker-файлы не
-# менялись, а скипнутый обязательный чек блокирует merge.
+# Обязательный чек для branch protection — РОВНО ОДИН: `CI · все проверки`
+# (job ci-ok). Он агрегирует остальные и считает skipped успехом, поэтому
+# path-фильтры и скипы не блокируют merge. Отдельные джобы обязательными НЕ
+# делать: скипнутый required-чек висит в «Expected» и вешает PR навсегда.
+#
+# Что запускается на pull_request (path-фильтр в job `changes`):
+#   apps/web|docs|dev-dashboard|packages|package*.json|turbo.json → frontend
+#   apps/backend-go/**                                           → backend (Go)
+#   Dockerfile|nginx.conf|compose|.dockerignore|scripts/**       → сборка образов
+#   .github/workflows/**                                         → всё сразу
+#   секреты (gitleaks) и hadolint                                → всегда
+# На push (гейт деплоя) фильтры не применяются: гейт обязан быть полным.
 #
 # Секреты:
 #   CODECOV_TOKEN — необязателен. Без него upload деградирует до tokenless
@@ -64,7 +66,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
+  # pull-requests: read — dorny/paths-filter (job `changes`) читает список
+  # изменённых файлов PR через API; без этого права на PR-событиях он упадёт.
   contents: read
+  pull-requests: read
 
 env:
   NODE_VERSION: '22'
@@ -75,22 +80,42 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Что изменилось (нужно только для docker-build ниже).
+  # Что изменилось. От этого зависит, какие тяжёлые джобы вообще запускать:
+  # правка в README не должна гонять ни Go, ни 271 файл vitest.
+  #
+  # ВАЖНО: фильтрация действует ТОЛЬКО на pull_request. Когда ci.yml вызывается
+  # из deploy.yml (event = push) — это гейт прода, и он обязан быть полным:
+  # там все выходы принудительно true (шаг «Everything (gate run)»).
   # ---------------------------------------------------------------------------
   changes:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
-      docker: ${{ steps.filter.outputs.docker }}
+      backend: ${{ steps.filter.outputs.backend == 'true' || steps.all.outputs.backend == 'true' }}
+      frontend: ${{ steps.filter.outputs.frontend == 'true' || steps.all.outputs.frontend == 'true' }}
+      docker: ${{ steps.filter.outputs.docker == 'true' || steps.all.outputs.docker == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Detect docker-relevant changes
+      - name: Detect changed areas
         id: filter
         if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@v3
         with:
           filters: |
+            # Правка воркфлоу прогоняет всё: иначе поломку самого CI не поймать.
+            backend:
+              - 'apps/backend-go/**'
+              - '.github/workflows/**'
+            frontend:
+              - 'apps/web/**'
+              - 'apps/docs/**'
+              - 'apps/dev-dashboard/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'turbo.json'
+              - '.github/workflows/**'
             docker:
               - 'apps/**/Dockerfile'
               - 'apps/**/nginx.conf'
@@ -100,11 +125,23 @@ jobs:
               - 'package.json'
               - 'scripts/**'
 
+      - name: Everything (gate run)
+        id: all
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            echo "backend=true"
+            echo "frontend=true"
+            echo "docker=true"
+          } >> "$GITHUB_OUTPUT"
+
   # ---------------------------------------------------------------------------
   # Go: сборка, формат, vet, tidy, юнит-тесты с покрытием.
   # ---------------------------------------------------------------------------
   go:
     name: Go · build · vet · fmt · test
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -173,6 +210,8 @@ jobs:
   # ---------------------------------------------------------------------------
   go-lint:
     name: Go · lint · vuln
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -204,6 +243,8 @@ jobs:
   # ---------------------------------------------------------------------------
   frontend-checks:
     name: Frontend · checks (tsc · eslint · build)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -263,6 +304,8 @@ jobs:
   # ---------------------------------------------------------------------------
   frontend-tests:
     name: Frontend · tests (shard ${{ matrix.shard }}/3)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -364,3 +407,103 @@ jobs:
           build-args: |
             VITE_GIT_COMMIT=${{ github.sha }}
             VITE_TURNSTILE_SITEKEY=${{ secrets.VITE_TURNSTILE_SITEKEY }}
+
+  # ---------------------------------------------------------------------------
+  # Контракт заголовка PR: `type(scope): description` (Conventional Commits).
+  # Это не бюрократия — на этих префиксах держится авто-релиз (release-please
+  # читает их, чтобы посчитать следующий номер и собрать CHANGELOG).
+  # Историю это не переписывает: с включённым squash тема PR = коммит на main.
+  # ---------------------------------------------------------------------------
+  pr-title:
+    name: PR title (conventional commits)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Релиз считают только feat/fix (+ perf); остальное уходит в CHANGELOG
+          # как Maintenance и версию не двигает.
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            test
+            build
+            ci
+            chore
+            style
+            revert
+          requireScope: false
+          # `!` (feat!:) и `BREAKING CHANGE:` в теле разрешены — это major.
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            Описание начинается со строчной буквы: `fix(api): убрать гонку`,
+            а не `fix(api): Убрать гонку`.
+
+  # ---------------------------------------------------------------------------
+  # ЕДИНСТВЕННЫЙ обязательный чек в branch protection.
+  #
+  # Зачем агрегатор, а не 9 обязательных джобов: с path-фильтрами джоба может
+  # быть skipped, а скипнутый required-чек висит в «Expected» и блокирует merge
+  # навсегда. Здесь skipped считается успехом, а failure/cancelled — провалом,
+  # поэтому набор тяжёлых джобов можно менять, не трогая настройки ветки.
+  # ---------------------------------------------------------------------------
+  ci-ok:
+    name: CI · все проверки
+    needs:
+      - changes
+      - go
+      - go-lint
+      - frontend-checks
+      - frontend-tests
+      - pr-title
+      - gitleaks
+      - dockerfile
+      - docker-build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate
+        env:
+          R_CHANGES: ${{ needs.changes.result }}
+          R_GO: ${{ needs.go.result }}
+          R_GO_LINT: ${{ needs.go-lint.result }}
+          R_FRONTEND_CHECKS: ${{ needs.frontend-checks.result }}
+          R_FRONTEND_TESTS: ${{ needs.frontend-tests.result }}
+          R_PR_TITLE: ${{ needs.pr-title.result }}
+          R_GITLEAKS: ${{ needs.gitleaks.result }}
+          R_DOCKERFILE: ${{ needs.dockerfile.result }}
+          R_DOCKER_BUILD: ${{ needs.docker-build.result }}
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS='=' read -r name result; do
+            [ -z "$name" ] && continue
+            printf '%-18s %s\n' "$name" "$result"
+            case "$result" in
+              success|skipped) ;;   # skipped = этот участок не задет (path-фильтр)
+              *) fail=1 ;;
+            esac
+          done <<EOF
+          Changes=$R_CHANGES
+          Go=$R_GO
+          Go-lint=$R_GO_LINT
+          Frontend-checks=$R_FRONTEND_CHECKS
+          Frontend-tests=$R_FRONTEND_TESTS
+          PR-title=$R_PR_TITLE
+          Secrets-scan=$R_GITLEAKS
+          Dockerfile-lint=$R_DOCKERFILE
+          Images=$R_DOCKER_BUILD
+          EOF
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Одна из обязательных проверок не зелёная — merge запрещён."
+            exit 1
+          fi
+          echo "Все проверки зелёные (пропущенные по path-фильтру считаются успехом)."
