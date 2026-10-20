@@ -2,6 +2,7 @@ import { render, screen, fireEvent, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { VoicePlayer } from "./VoicePlayer";
 import { VOICE_BARS } from "./voice";
+import { __resetVoiceRateForTests } from "./core/voiceRate";
 import type { Attachment } from "./types";
 
 const attachment: Attachment = {
@@ -38,6 +39,7 @@ function stubMedia(audio: HTMLAudioElement) {
 beforeEach(() => {
   blobState.url = "blob:voice";
   localStorage.clear();
+  __resetVoiceRateForTests();
   mockHaptics.tick.mockClear();
   // The rAF loop would run forever otherwise.
   vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
@@ -131,20 +133,58 @@ describe("VoicePlayer", () => {
     expect(audio.currentTime).toBeCloseTo(7.5, 1);
   });
 
-  it("cycles the speed and keeps the voice's pitch", async () => {
-    const { container } = render(<VoicePlayer attachment={attachment} />);
+  it("shows the rate pill only on the playing note, and the rate is global", async () => {
+    const first = render(<VoicePlayer attachment={attachment} />);
+    const firstAudio = first.container.querySelector("audio") as HTMLAudioElement;
+    stubMedia(firstAudio);
+
+    // Not playing → no pill (Telegram shows it on the active note only).
+    expect(screen.queryByRole("button", { name: /Скорость/ })).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Воспроизвести/ }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Скорость 1×/ }));
+
+    expect(screen.getByRole("button", { name: /Скорость 1.5×/ })).toBeInTheDocument();
+    expect(firstAudio.playbackRate).toBe(1.5);
+    expect(localStorage.getItem("gomo6:voice:rate")).toBe("1.5");
+    // The voice's pitch must not rise with the speed.
+    expect(firstAudio.preservesPitch).toBe(true);
+  });
+
+  it("applies a rate change to every mounted player", async () => {
+    const first = render(<VoicePlayer attachment={attachment} />);
+    const second = render(<VoicePlayer attachment={{ ...attachment }} />);
+    const firstAudio = first.container.querySelector("audio") as HTMLAudioElement;
+    const secondAudio = second.container.querySelector("audio") as HTMLAudioElement;
+    stubMedia(firstAudio);
+    stubMedia(secondAudio);
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: /Воспроизвести/ })[0]);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Скорость 1×/ }));
+
+    expect(secondAudio.playbackRate).toBe(1.5);
+  });
+
+  it("reports the first playback of an incoming note exactly once", async () => {
+    const onListen = vi.fn();
+    const { container } = render(<VoicePlayer attachment={attachment} onListen={onListen} />);
     const audio = container.querySelector("audio") as HTMLAudioElement;
     stubMedia(audio);
-    const rate = screen.getByRole("button", { name: /Скорость 1×/ });
 
-    fireEvent.click(rate);
-    expect(screen.getByRole("button", { name: /Скорость 1.5×/ })).toBeInTheDocument();
-    expect(audio.playbackRate).toBe(1.5);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Воспроизвести/ }));
+    });
+    expect(onListen).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: /Скорость 1.5×/ }));
-    expect(audio.playbackRate).toBe(2);
-    // The choice survives the next mount (Telegram remembers it too).
-    expect(localStorage.getItem("gomo6:voice:rate")).toBe("2");
+    fireEvent.click(screen.getByRole("button", { name: /Пауза/ }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Воспроизвести/ }));
+    });
+    expect(onListen).toHaveBeenCalledTimes(1); // not again
   });
 
   it("reports a media failure instead of pretending to play", () => {

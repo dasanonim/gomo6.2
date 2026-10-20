@@ -393,6 +393,8 @@ type MessengerStore = {
   toggleReaction: (messageId: string, emoji: string) => Promise<void>;
   /** Folds a peer's reaction delta from the realtime hub into the open chat. */
   applyReactionEvent: (event: ReactionEvent) => void;
+  /** The reader played an incoming voice note: drops its "unheard" dot. */
+  markVoiceListened: (messageId: string) => void;
   /** Updates a note's encrypted metadata (pin/folder/tags) and syncs it. */
   setNotesMeta: (messageId: string, meta: NotesMeta) => Promise<void>;
   /** Flips the pin flag of a note. */
@@ -941,6 +943,15 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
     get().updateMessage(event.message_id, {
       reactions: applyReaction(message.reactions, event.emoji, user, event.action, viewerId),
     });
+  },
+
+  // ── Voice notes ─────────────────────────────────────────────────────
+  markVoiceListened: (messageId) => {
+    const message = get().messages.find((entry) => entry.id === messageId);
+    if (!message || message.voiceListened) return;
+    // `updateMessage` persists the conversation snapshot (IndexedDB), so the dot
+    // does not come back after a reload.
+    get().updateMessage(messageId, { voiceListened: true });
   },
 
   // ── Notes metadata (pin/folder/tags, client-side E2E) ────────────────

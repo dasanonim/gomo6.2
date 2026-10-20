@@ -4,6 +4,7 @@ import type { Attachment } from "./types";
 import { useAuthenticatedAttachmentUrl } from "./attachmentMedia";
 import { barCountForWidth, formatVoiceTime, normalizeWaveform, parseVoiceMeta } from "./voice";
 import { WaveformRenderer } from "./core/waveformRenderer";
+import { nextVoiceRate, setVoiceRate, useVoiceRate } from "./core/voiceRate";
 import { hapticTick } from "@/lib/haptics";
 
 // ─── Voice message player ───────────────────────────────────────────────────
@@ -19,18 +20,6 @@ import { hapticTick } from "@/lib/haptics";
 /** The element that is currently playing — a voice message at a time, like TG. */
 let currentAudio: HTMLAudioElement | null = null;
 
-const SPEEDS = [1, 1.5, 2] as const;
-const RATE_KEY = "gomo6:voice:rate";
-
-function readRate(): number {
-  try {
-    const stored = Number(localStorage.getItem(RATE_KEY));
-    return SPEEDS.includes(stored as (typeof SPEEDS)[number]) ? stored : 1;
-  } catch {
-    return 1;
-  }
-}
-
 interface Props {
   attachment: Attachment;
   isMine?: boolean;
@@ -41,6 +30,8 @@ interface Props {
    * composer). When set, the authenticated loader is skipped entirely.
    */
   src?: string;
+  /** Called once when an incoming note is actually played (the unheard dot). */
+  onListen?: () => void;
   /**
    * `message` — the bubble's player (meta row under the waveform).
    * `draft` — Telegram's composer pill: the waveform fills a tinted pill and the
@@ -49,7 +40,7 @@ interface Props {
   variant?: "message" | "draft";
 }
 
-export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = false, from, src, variant = "message" }: Props) {
+export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = false, from, src, variant = "message", onListen }: Props) {
   const meta = parseVoiceMeta(attachment);
   const duration = meta?.duration ?? 0;
   // The bar count follows the available width, so the waveform reads as a
@@ -83,9 +74,11 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
   const draggingRef = useRef(false);
 
   const [playing, setPlaying] = useState(false);
-  const [rate, setRate] = useState<number>(() => readRate());
+  // ONE rate for every voice message, like Telegram's tab player.
+  const rate = useVoiceRate();
   const [elapsed, setElapsed] = useState(0);
   const [failed, setFailed] = useState(false);
+  const listenedRef = useRef(false);
 
   const paint = useCallback(() => {
     const audio = audioRef.current;
@@ -196,15 +189,7 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
   }, [duration, paint, toggle]);
 
   const cycleRate = useCallback(() => {
-    const next = SPEEDS[(SPEEDS.indexOf(rate as (typeof SPEEDS)[number]) + 1) % SPEEDS.length];
-    setRate(next);
-    try {
-      localStorage.setItem(RATE_KEY, String(next));
-    } catch {
-      /* private mode */
-    }
-    const audio = audioRef.current;
-    if (audio) audio.playbackRate = next;
+    setVoiceRate(nextVoiceRate(rate));
     hapticTick(4);
   }, [rate]);
 
@@ -219,9 +204,13 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
   const handlePlay = useCallback(() => {
     setPlaying(true);
     setFailed(false);
+    if (!listenedRef.current) {
+      listenedRef.current = true;
+      onListen?.();
+    }
     stopLoop();
     loop();
-  }, [loop, stopLoop]);
+  }, [loop, onListen, stopLoop]);
 
   const handlePause = useCallback(() => {
     setPlaying(false);
@@ -246,7 +235,10 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
   const handleError = useCallback(() => setFailed(true), []);
 
   useEffect(() => {
-    if (audioRef.current) audioRef.current.playbackRate = rate;
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.playbackRate = rate;
+    audio.preservesPitch = true;
   }, [rate]);
 
   useEffect(() => {
@@ -390,14 +382,17 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
         {variant === "message" ? (
           <div className="voice-meta">
             <span className="voice-time">{failed ? "Ошибка" : label}</span>
-            <button
-              type="button"
-              className="voice-rate"
-              onClick={cycleRate}
-              aria-label={`Скорость ${rate}×`}
-            >
-              {rate}×
-            </button>
+            {playing && (
+              <button
+                type="button"
+                className="voice-rate"
+                onClick={cycleRate}
+                aria-label={`Скорость ${rate}×`}
+                title="Скорость воспроизведения"
+              >
+                {rate}×
+              </button>
+            )}
           </div>
         ) : null}
       </div>

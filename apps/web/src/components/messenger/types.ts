@@ -82,6 +82,12 @@ export type MessageView = {
   attachments?: Attachment[];
   /** Reaction chips, ordered by popularity (see `reactions.ts`). */
   reactions?: ReactionSummary[];
+  /**
+   * An incoming voice note was actually played (Telegram's media-unread dot).
+   * Local to this device: the audio is E2E, so "listened" is a client fact and
+   * is persisted with the cached conversation.
+   */
+  voiceListened?: boolean;
   // Notes self-chat: client-side E2E-encrypted metadata (pin/folder/tags).
   // notes_meta is the wire ciphertext; notesPinned/notesFolder/notesTags are
   // the decrypted values the store exposes to the UI.

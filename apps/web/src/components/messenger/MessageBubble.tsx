@@ -70,6 +70,8 @@ interface Props {
   peerDeliveredAt?: string | null;
   /** The reader's user id — reaction labels say "Вы" for their own chip. */
   viewerId?: string;
+  /** An incoming voice note started playing (drops its unheard dot). */
+  onVoiceListen?: () => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -93,6 +95,7 @@ export const MessageBubble = memo(function MessageBubble({
   peerReadAt,
   peerDeliveredAt,
   viewerId = "",
+  onVoiceListen,
 }: Props) {
   // Message bubbles are memoized; subscribe explicitly so their timestamps
   // refresh when the language changes even if message props stay identical.
@@ -641,9 +644,15 @@ export const MessageBubble = memo(function MessageBubble({
             attachments={message.attachments}
             hasQuotedMessage={Boolean(quotedMessage)}
             isMine={isMine}
+            onVoiceListen={onVoiceListen}
           />
 
           <div className="message-meta">
+            {/* Telegram's media-unread dot: an incoming voice note nobody has
+                listened to yet. It disappears on the first playback. */}
+            {isVoiceBubble && !isMine && !message.voiceListened && (
+              <span className="message-unheard-dot" aria-label="Не прослушано" role="img" />
+            )}
             <span className="message-time">{formatTime(message.sent_at)}</span>
             {message.is_edited && <span className="edited-label">изм.</span>}
             {isMine && (

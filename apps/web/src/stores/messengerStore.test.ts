@@ -434,6 +434,32 @@ describe("messengerStore", () => {
     });
   });
 
+  describe("markVoiceListened", () => {
+    it("drops the unheard dot of an incoming voice note", () => {
+      useMessengerStore.setState({
+        selectedConversationId: "conv-1",
+        messages: [mockMsg({ id: "msg-1", voiceListened: false })],
+      });
+
+      useMessengerStore.getState().markVoiceListened("msg-1");
+
+      expect(useMessengerStore.getState().messages[0].voiceListened).toBe(true);
+    });
+
+    it("is idempotent and ignores unknown messages", () => {
+      useMessengerStore.setState({
+        selectedConversationId: "conv-1",
+        messages: [mockMsg({ id: "msg-1", voiceListened: true })],
+      });
+
+      useMessengerStore.getState().markVoiceListened("msg-1");
+      useMessengerStore.getState().markVoiceListened("msg-404");
+
+      expect(useMessengerStore.getState().messages).toHaveLength(1);
+      expect(useMessengerStore.getState().messages[0].voiceListened).toBe(true);
+    });
+  });
+
   describe("applyReactionEvent", () => {
     it("folds a peer's delta into the chips", () => {
       useMessengerStore.setState({

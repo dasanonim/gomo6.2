@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, SendHorizontal, Trash2, Lock } from "lucide-react";
+import { Lock, Mic, Pause, Play, SendHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { hapticSuccess, hapticTick } from "@/lib/haptics";
 import { messengerApi } from "@/services/messengerApi";
 import type { Attachment } from "./types";
 import { VoicePlayer } from "./VoicePlayer";
 import { WaveformRenderer } from "./core/waveformRenderer";
+import { getVoiceRate } from "./core/voiceRate";
 import {
   agcPeak,
   createAgc,
@@ -173,6 +174,14 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
   const [locked, setLocked] = useState(false);
   const [cancelArmed, setCancelArmed] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  /** Recorded time of the finished segments (pause/resume accumulates here). */
+  const accumulatedMsRef = useRef(0);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
   const [draft, setDraft] = useState<VoiceDraft | null>(null);
   const draftRef = useRef<VoiceDraft | null>(null);
 
@@ -189,6 +198,10 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
   const waveRendererRef = useRef<WaveformRenderer | null>(null);
   const liveBarsRef = useRef<number[]>([]);
   const lastBarAtRef = useRef(0);
+  /** Total recorded time: finished segments plus the current one. */
+  const elapsedMs = useCallback(() => (
+    accumulatedMsRef.current + (pausedRef.current ? 0 : performance.now() - startedAtRef.current)
+  ), []);
   const warmupUntilRef = useRef(0);
   const agcRef = useRef(createAgc());
   const phaseRef = useRef<Phase>("idle");
@@ -208,7 +221,25 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
     streamRef.current = null;
   }, []);
 
+  const stopPreview = useCallback((revoke: boolean) => {
+    const audio = previewAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+    }
+    previewAudioRef.current = null;
+    setPreviewPlaying(false);
+    if (revoke && previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+      setPreviewUrl(null);
+    }
+  }, []);
+
   const teardown = useCallback(() => {
+    stopPreview(true);
+    pausedRef.current = false;
+    accumulatedMsRef.current = 0;
     if (tickRef.current !== null) {
       clearInterval(tickRef.current);
       tickRef.current = null;
@@ -229,13 +260,14 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
     pressRef.current = null;
     releasedWhileRequestingRef.current = false;
     liveBarsRef.current = [];
-  }, [stopTracks]);
+  }, [stopPreview, stopTracks]);
 
   const reset = useCallback(() => {
     teardown();
     setPhase("idle");
     setLocked(false);
     setCancelArmed(false);
+    setPaused(false);
     setElapsed(0);
     onRowLockChange?.(false);
   }, [onRowLockChange, teardown]);
@@ -258,7 +290,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
       }
       finishingRef.current = true;
 
-      const duration = (performance.now() - startedAtRef.current) / 1000;
+      const duration = elapsedMs() / 1000;
       const stopped = settleChunks(recorder);
       try {
         if (recorder.state !== "inactive") recorder.stop();
@@ -320,7 +352,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
         reset();
       }
     },
-    [onSend, reset, teardown],
+    [elapsedMs, onSend, reset, teardown],
   );
 
   /**
@@ -338,7 +370,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
     }
     finishingRef.current = true;
 
-    const duration = (performance.now() - startedAtRef.current) / 1000;
+    const duration = elapsedMs() / 1000;
     const settled = settleChunks(recorder);
 
     try {
@@ -388,7 +420,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
     setPhase("ready");
     // Already locked since the recording started; a draft keeps it locked.
     hapticTick(6);
-  }, [reset, teardown]);
+  }, [elapsedMs, reset, teardown]);
 
   const discardDraft = useCallback(() => {
     if (draftRef.current) URL.revokeObjectURL(draftRef.current.url);
@@ -457,17 +489,110 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
     rafRef.current = requestAnimationFrame(frame);
 
     startedAtRef.current = performance.now();
-    warmupUntilRef.current = startedAtRef.current + WAVE_WARMUP_MS;
-    agcRef.current = createAgc();
     tickRef.current = setInterval(() => {
-      if ((phaseRef.current as Phase) !== "recording") return;
-      const seconds = (performance.now() - startedAtRef.current) / 1000;
+      if ((phaseRef.current as Phase) !== "recording" || pausedRef.current) return;
+      const seconds = elapsedMs() / 1000;
       setElapsed(seconds);
       if (seconds >= VOICE_MAX_SECONDS) {
         void finish(true);
       }
     }, TICK_MS);
-  }, [finish]);
+  }, [elapsedMs, finish]);
+
+  /**
+   * Pause a locked recording.
+   *
+   * The captured audio is turned into a local preview: Telegram lets you listen
+   * to what you have so far before deciding to send it, and the waveform becomes
+   * seekable while paused. Nothing is uploaded until the note is sent.
+   */
+  const pauseRecording = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state !== "recording") return;
+
+    accumulatedMsRef.current = elapsedMs();
+    pausedRef.current = true;
+    setPaused(true);
+    setElapsed(accumulatedMsRef.current / 1000);
+
+    if (tickRef.current !== null) {
+      clearInterval(tickRef.current);
+      tickRef.current = null;
+    }
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    try {
+      recorder.requestData();
+    } catch {
+      /* not implemented everywhere */
+    }
+    try {
+      recorder.pause();
+    } catch {
+      /* already paused */
+    }
+
+    const mime = mimeRef.current.split(";")[0] || "audio/webm";
+    const blob = new Blob(chunksRef.current, { type: mime });
+    stopPreview(true);
+    if (blob.size > 0) {
+      const url = URL.createObjectURL(blob);
+      previewUrlRef.current = url;
+      setPreviewUrl(url);
+    }
+    waveRendererRef.current?.setSeekable(true);
+    waveRendererRef.current?.setProgress(0);
+    hapticTick(6);
+  }, [elapsedMs, stopPreview]);
+
+  const resumeRecording = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state !== "paused") return;
+
+    stopPreview(true);
+    pausedRef.current = false;
+    setPaused(false);
+    try {
+      recorder.resume();
+    } catch {
+      /* already recording */
+    }
+    waveRendererRef.current?.setSeekable(false);
+    waveRendererRef.current?.setProgress(undefined);
+    startLoops();
+    hapticTick(6);
+  }, [startLoops, stopPreview]);
+
+  const togglePreview = useCallback(() => {
+    const audio = previewAudioRef.current;
+    if (!audio) return;
+    if (!audio.paused) {
+      audio.pause();
+      return;
+    }
+    audio.playbackRate = getVoiceRate();
+    audio.preservesPitch = true;
+    void audio.play().catch(() => setPreviewPlaying(false));
+  }, []);
+
+  // The preview writes its position into the same renderer, so the paused bar
+  // looks and behaves like a played voice note (seek included).
+  useEffect(() => {
+    if (!previewPlaying) return;
+    let raf = 0;
+    const tick = () => {
+      const audio = previewAudioRef.current;
+      if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+        waveRendererRef.current?.setProgress(audio.currentTime / audio.duration);
+        setElapsed(audio.currentTime);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [previewPlaying]);
 
   const cancel = useCallback(() => {
     hapticTick(10);
@@ -522,6 +647,8 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
     chunksRef.current = [];
     liveBarsRef.current = [];
     lastBarAtRef.current = 0;
+    warmupUntilRef.current = performance.now() + WAVE_WARMUP_MS;
+    agcRef.current = createAgc();
 
     // Safari refuses `new MediaRecorder(stream, { mimeType })` in some versions
     // even when `isTypeSupported` says yes, so the requested container is a
@@ -598,6 +725,11 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
       return; // no 2d context: the timer and the hint still work
     }
     renderer.setSeekable(false);
+    renderer.onSeek = (progress) => {
+      const audio = previewAudioRef.current;
+      if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
+      audio.currentTime = progress * audio.duration;
+    };
     waveRendererRef.current = renderer;
     liveBarsRef.current.forEach((value) => renderer?.pushPeak(value / 100));
     const observer = typeof ResizeObserver !== "undefined"
@@ -779,24 +911,70 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowL
       </button>
 
       <div className="voice-record-pill">
-        <span className="voice-record-dot" aria-hidden="true" />
+        {paused ? (
+          <button
+            type="button"
+            className="voice-record-play"
+            onClick={togglePreview}
+            aria-label={previewPlaying ? "Пауза прослушивания" : "Прослушать запись"}
+            title={previewPlaying ? "Пауза" : "Прослушать"}
+          >
+            {previewPlaying ? <Pause size={12} /> : <Play size={12} />}
+          </button>
+        ) : (
+          <span className="voice-record-dot" aria-hidden="true" />
+        )}
         <span className="voice-record-time" aria-live="off">{formatVoiceTime(elapsed)}</span>
         {locked && <Lock size={12} className="voice-record-lock" aria-label="Запись закреплена" />}
         <canvas ref={waveCanvasRef} className="voice-record-canvas" aria-hidden="true" />
-        <span className="voice-record-hint" aria-live="polite">
-          {cancelArmed ? "Отпусти — отмена" : locked ? "" : "← отмена · ↑ закрепить"}
-        </span>
+        {!paused && (
+          <span className="voice-record-hint" aria-live="polite">
+            {cancelArmed ? "Отпусти — отмена" : locked ? "" : "← отмена · ↑ закрепить"}
+          </span>
+        )}
       </div>
 
-      <button
-        type="button"
-        className={`composer-mic is-action${locked ? " is-send" : ""}`}
-        onClick={locked ? () => void finish(true) : undefined}
-        aria-label={locked ? "Отправить голосовое" : "Идёт запись"}
-        title={locked ? "Отправить" : undefined}
-      >
-        {busy ? <span className="voice-record-spinner" aria-hidden="true" /> : locked ? <SendHorizontal size={16} /> : <Mic size={17} />}
-      </button>
+      <div className="voice-record-actions">
+        {/* Pause is only reachable once the recording is locked: while a finger
+            holds the mic there is nothing to tap it with. */}
+        {locked && (
+          <button
+            type="button"
+            className="composer-mic is-action is-ghost"
+            onClick={paused ? resumeRecording : pauseRecording}
+            aria-label={paused ? "Продолжить запись" : "Пауза записи"}
+            title={paused ? "Продолжить" : "Пауза"}
+          >
+            {paused ? <Mic size={16} /> : <Pause size={16} />}
+          </button>
+        )}
+        <button
+          type="button"
+          className={`composer-mic is-action${locked ? " is-send" : ""}`}
+          onClick={locked ? () => void finish(true) : undefined}
+          aria-label={locked ? "Отправить голосовое" : "Идёт запись"}
+          title={locked ? "Отправить" : undefined}
+        >
+          {busy ? <span className="voice-record-spinner" aria-hidden="true" /> : locked ? <SendHorizontal size={16} /> : <Mic size={17} />}
+        </button>
+      </div>
+
+      {previewUrl && (
+        // The unfinished recording, playable and seekable while paused.
+        // eslint-disable-next-line jsx-a11y/media-has-caption
+        <audio
+          ref={previewAudioRef}
+          src={previewUrl}
+          preload="auto"
+          onPlay={() => setPreviewPlaying(true)}
+          onPause={() => setPreviewPlaying(false)}
+          onEnded={() => {
+            setPreviewPlaying(false);
+            waveRendererRef.current?.setProgress(1);
+          }}
+          className="voice-record-preview-audio"
+        />
+      )}
     </div>
   );
 }
