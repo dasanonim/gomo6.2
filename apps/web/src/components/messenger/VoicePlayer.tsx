@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import type { Attachment } from "./types";
 import { useAuthenticatedAttachmentUrl } from "./attachmentMedia";
-import { formatVoiceTime, parseVoiceMeta } from "./voice";
+import { barCountForWidth, formatVoiceTime, normalizeWaveform, parseVoiceMeta } from "./voice";
+import { WaveformRenderer } from "./core/waveformRenderer";
 import { hapticTick } from "@/lib/haptics";
 
 // ─── Voice message player ───────────────────────────────────────────────────
@@ -40,12 +41,24 @@ interface Props {
    * composer). When set, the authenticated loader is skipped entirely.
    */
   src?: string;
+  /**
+   * `message` — the bubble's player (meta row under the waveform).
+   * `draft` — Telegram's composer pill: the waveform fills a tinted pill and the
+   * play control with the duration sits centred ON TOP of it.
+   */
+  variant?: "message" | "draft";
 }
 
-export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = false, from, src }: Props) {
+export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = false, from, src, variant = "message" }: Props) {
   const meta = parseVoiceMeta(attachment);
   const duration = meta?.duration ?? 0;
-  const bars = meta?.waveform ?? [];
+  // The bar count follows the available width, so the waveform reads as a
+  // waveform in a 240px bubble and in a full-width composer row alike.
+  const [barCount, setBarCount] = useState<number>(() => (meta?.waveform?.length ?? 0) || 40);
+  const bars = useMemo(
+    () => normalizeWaveform(meta?.waveform, barCount),
+    [meta?.waveform, barCount],
+  );
 
   // The blob is authenticated (fetched with the session cookie) and cached by
   // the shared attachment cache, so remounting a scrolled-away bubble is free.
@@ -62,6 +75,10 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const waveRef = useRef<HTMLDivElement | null>(null);
+  const draftCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const draftRendererRef = useRef<WaveformRenderer | null>(null);
+  const barsCountRef = useRef(0);
+  barsCountRef.current = barCount;
   const rafRef = useRef<number | null>(null);
   const draggingRef = useRef(false);
 
@@ -77,6 +94,7 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
     const total = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : duration;
     const progress = total > 0 ? Math.min(1, Math.max(0, audio.currentTime / total)) : 0;
     root.style.setProperty("--voice-progress", String(progress));
+    draftRendererRef.current?.setProgress(progress);
     // The label follows whole seconds only: 60 text updates a second would be
     // wasted renders for a string that changes once a second.
     setElapsed((previous) => (Math.abs(previous - audio.currentTime) >= 0.9 ? audio.currentTime : previous));
@@ -235,6 +253,54 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
     paint();
   }, [paint]);
 
+  // The draft pill uses the canvas renderer (the same one the recorder draws
+  // with): one visual language for recording and for the unsent note.
+  useEffect(() => {
+    if (variant !== "draft") return;
+    const canvas = draftCanvasRef.current;
+    if (!canvas || !meta) return;
+    let renderer: WaveformRenderer | null = null;
+    try {
+      renderer = new WaveformRenderer(canvas);
+    } catch {
+      return;
+    }
+    renderer.setPeaks(meta.waveform.map((peak) => peak / 100));
+    renderer.setProgress(0);
+    renderer.setSeekable(true);
+    renderer.onSeek = (progress) => seekTo(progress);
+    draftRendererRef.current = renderer;
+
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => {
+          const rect = canvas.getBoundingClientRect();
+          renderer?.handleResize(rect.width, rect.height);
+          renderer?.setPeaks(meta.waveform.map((peak) => peak / 100));
+        })
+      : null;
+    observer?.observe(canvas);
+    return () => {
+      observer?.disconnect();
+      renderer?.destroy();
+      draftRendererRef.current = null;
+    };
+  }, [meta, seekTo, variant]);
+
+  // Resample to the wave's real width (a fixed count turns into sticks in a
+  // wide composer row). One observer, one state update per resize.
+  useEffect(() => {
+    const wave = waveRef.current;
+    if (!wave || typeof ResizeObserver === "undefined") return;
+    const update = () => {
+      const next = barCountForWidth(wave.getBoundingClientRect().width);
+      if (next !== barsCountRef.current) setBarCount(next);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(wave);
+    return () => observer.disconnect();
+  }, []);
+
   // One automatic retry, once: a transient 403/network error must not leave a
   // voice note permanently unplayable.
   useEffect(() => {
@@ -256,10 +322,21 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
   return (
     <div
       ref={rootRef}
-      className={`voice-player${isMine ? " is-mine" : ""}${failed ? " is-failed" : ""}`}
+      className={`voice-player${isMine ? " is-mine" : ""}${failed ? " is-failed" : ""}${variant === "draft" ? " is-draft" : ""}`}
       style={{ ["--voice-progress" as string]: 0 }}
       data-testid="voice-player"
     >
+      {variant === "draft" ? (
+        <button
+          type="button"
+          className="voice-draft-play"
+          onClick={url ? toggle : retryLoad}
+          aria-label={playing ? "Пауза" : "Прослушать черновик"}
+        >
+          {playing ? <Pause size={14} /> : <Play size={14} />}
+          <span>{playing ? formatVoiceTime(elapsed) : formatVoiceTime(total)}</span>
+        </button>
+      ) : (
       <button
         type="button"
         className="voice-play"
@@ -272,6 +349,7 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
       >
         {playing ? <Pause size={16} /> : <Play size={16} />}
       </button>
+      )}
 
       <div className="voice-main">
         <div
@@ -283,35 +361,45 @@ export const VoicePlayer = memo(function VoicePlayer({ attachment, isMine = fals
           aria-valuemin={0}
           aria-valuemax={Math.round(total)}
           aria-valuenow={Math.round(elapsed)}
-          onPointerDown={handleWavePointerDown}
-          onPointerMove={handleWavePointerMove}
-          onPointerUp={handleWavePointerUp}
-          onPointerCancel={handleWavePointerUp}
+          onPointerDown={variant === "draft" ? undefined : handleWavePointerDown}
+          onPointerMove={variant === "draft" ? undefined : handleWavePointerMove}
+          onPointerUp={variant === "draft" ? undefined : handleWavePointerUp}
+          onPointerCancel={variant === "draft" ? undefined : handleWavePointerUp}
           onKeyDown={handleKeyDown}
         >
-          <div className="voice-bars" aria-hidden="true">
-            {bars.map((peak, index) => (
-              <span key={index} className="voice-bar" style={{ ["--h" as string]: `${Math.max(8, peak)}%` }} />
-            ))}
-          </div>
-          <div className="voice-bars is-played" aria-hidden="true">
-            {bars.map((peak, index) => (
-              <span key={index} className="voice-bar" style={{ ["--h" as string]: `${Math.max(8, peak)}%` }} />
-            ))}
-          </div>
+          {variant === "draft" ? (
+            // Telegram's canvas renderer: seeking is handled by the canvas
+            // itself (`onSeek`), so the wave keeps no pointer logic here.
+            <canvas ref={draftCanvasRef} className="voice-draft-canvas" aria-hidden="true" />
+          ) : (
+            <>
+              <div className="voice-bars" aria-hidden="true">
+                {bars.map((peak, index) => (
+                  <span key={index} className="voice-bar" style={{ ["--h" as string]: `${Math.max(8, peak)}%` }} />
+                ))}
+              </div>
+              <div className="voice-bars is-played" aria-hidden="true">
+                {bars.map((peak, index) => (
+                  <span key={index} className="voice-bar" style={{ ["--h" as string]: `${Math.max(8, peak)}%` }} />
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
-        <div className="voice-meta">
-          <span className="voice-time">{failed ? "Ошибка" : label}</span>
-          <button
-            type="button"
-            className="voice-rate"
-            onClick={cycleRate}
-            aria-label={`Скорость ${rate}×`}
-          >
-            {rate}×
-          </button>
-        </div>
+        {variant === "message" ? (
+          <div className="voice-meta">
+            <span className="voice-time">{failed ? "Ошибка" : label}</span>
+            <button
+              type="button"
+              className="voice-rate"
+              onClick={cycleRate}
+              aria-label={`Скорость ${rate}×`}
+            >
+              {rate}×
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {/* The element is mounted only once a blob URL exists, so iOS can honour

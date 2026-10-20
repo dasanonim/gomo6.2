@@ -71,6 +71,15 @@ describe("VoicePlayer", () => {
     expect(screen.getByRole("button", { name: /Воспроизвести/ })).toBeInTheDocument();
   });
 
+  it("drafts as Telegram's pill: a canvas waveform and a centred play + duration", () => {
+    const { container } = render(<VoicePlayer attachment={attachment} variant="draft" src="blob:draft" />);
+
+    expect(container.querySelector("canvas.voice-draft-canvas")).not.toBeNull();
+    expect(container.querySelector(".voice-bars")).toBeNull();
+    const overlay = screen.getByRole("button", { name: "Прослушать черновик" });
+    expect(overlay.textContent).toContain("0:30");
+  });
+
   it("subscribes to a late-mounted audio element (the blob arrives async)", async () => {
     // Regression: the element only exists once the authenticated blob resolves.
     // Listeners registered in an effect keyed on callbacks run while it is still

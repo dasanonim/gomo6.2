@@ -52,6 +52,134 @@ export function normalizeWaveform(values: number[] | undefined, bars = VOICE_BAR
 }
 
 /** The voice metadata of an attachment, or null when it is not a voice note. */
+/**
+ * How many bars fit a given pixel width.
+ *
+ * A fixed 40 bars looks right in a 240px bubble and like scattered sticks in a
+ * wide composer row, so the count follows the width: ~3px per bar plus a 2px
+ * gap, within sane bounds. The waveform is resampled to it (see `normalizeWaveform`).
+ */
+export function barCountForWidth(width: number): number {
+  if (!Number.isFinite(width) || width <= 0) return VOICE_BARS;
+  const perBar = 3 + 2;
+  return Math.min(160, Math.max(16, Math.round(width / perBar)));
+}
+
+/**
+ * RMS of an analyser's time-domain buffer (128 = silence, 0/255 = full swing).
+ *
+ * An all-zero buffer is NOT full volume: it is a buffer the analyser never
+ * wrote — a suspended AudioContext, a stopped source, a freshly allocated
+ * array. Read naively, zeros compute as `(0-128)/128 = -1` for every sample,
+ * i.e. RMS 1.0, which is exactly how a live waveform ends up pinned to the
+ * ceiling before the first sound (and why only the *second* recording showed
+ * it: the first context runs, later ones can start suspended).
+ */
+export function rmsFromTimeDomain(buffer: ArrayLike<number>): number {
+  const length = buffer.length;
+  if (!length) return 0;
+  let sum = 0;
+  let wrote = false;
+  for (let i = 0; i < length; i += 1) {
+    const value = buffer[i];
+    if (value !== 0) wrote = true;
+    const centred = (value - 128) / 128;
+    sum += centred * centred;
+  }
+  if (!wrote) return 0;
+  return Math.sqrt(sum / length);
+}
+
+/**
+ * Peak normalisation, Telegram's model.
+ *
+ * Their stored waveform is scaled by the **average** peak times 1.8 (floored at
+ * MIN_NORM_PEAK), not by the loudest sample. That is what makes a note read the
+ * same everywhere: the average bar sits at ~55% of the height, loud syllables
+ * clip at the top, quiet ones stay low — and a single startup thump (or a door
+ * slam) cannot flatten the rest of the recording into dots, nor paint the whole
+ * preview at full height.
+ */
+export const PEAK_SCALE_MULTIPLIER = 1.8;
+/** Below this a "scale" is just noise; keeps silence at zero instead of 100%. */
+export const MIN_PEAK_SCALE = 0.02;
+
+export function peakScale(peaks: ArrayLike<number>): number {
+  const length = peaks.length;
+  if (!length) return MIN_PEAK_SCALE;
+  let sum = 0;
+  for (let i = 0; i < length; i += 1) sum += peaks[i];
+  return Math.max((sum / length) * PEAK_SCALE_MULTIPLIER, MIN_PEAK_SCALE);
+}
+
+/**
+ * Automatic gain for the live waveform, done the safe way.
+ *
+ * Public absolute levels are honest but ugly: a quiet voice renders as a row of
+ * dots, and Telegram's look needs the wave to fill the pill. Normalising by a
+ * running maximum (what the renderer used to do) or by a rolling mean (what this
+ * recorder used to do) both couples the drawing to the *last* loud frame — the
+ * first thump owns the scale, or steady noise inflates to full height.
+ *
+ * This is an AGC with three guards:
+ *  • an absolute noise gate, so silence is exactly 0 and never "grows";
+ *  • an attack-limited reference — one frame can raise the scale by at most 40%,
+ *    so a single spike cannot own it, while sustained speech converges in ~5
+ *    frames (300ms) and the wave grows smoothly;
+ *  • a slow decay, so a quieter passage is lifted back into view instead of
+ *    staying flat.
+ */
+export type AgcState = { ref: number };
+
+/**
+ * Absolute gate on the level scale (0..1). Everything below it is drawn as a
+ * dot: room tone, the hiss of a laptop fan, the tail of a previous word. This is
+ * the threshold that keeps silence silent — without it the gain lifts noise.
+ */
+const AGC_GATE = 0.045;
+const AGC_MIN_REF = 0.1;
+const AGC_ATTACK_LIMIT = 1.4;
+const AGC_ATTACK_STEP = 0.02;
+/** Slow release while the level stays near the reference… */
+const AGC_DECAY = 0.995;
+/** …and a fast one when it drops far below it (a shout followed by a whisper). */
+const AGC_DROP_DECAY = 0.9;
+const AGC_DROP_RATIO = 0.6;
+const AGC_HEADROOM = 1.2;
+
+export function createAgc(): AgcState {
+  return { ref: AGC_MIN_REF };
+}
+
+/** One sampled level (0..1, absolute) → its bar height (0..1, relative). */
+export function agcPeak(level: number, state: AgcState): number {
+  const signal = Math.max(0, Math.min(1, level) - AGC_GATE);
+  // Nothing above the gate means nothing to gain up: keep the reference still
+  // so silence cannot pump it.
+  if (signal === 0) {
+    state.ref = Math.max(AGC_MIN_REF, state.ref * AGC_DECAY);
+    return 0;
+  }
+  const attacked = Math.min(signal, state.ref * AGC_ATTACK_LIMIT + AGC_ATTACK_STEP);
+  const decay = signal < state.ref * AGC_DROP_RATIO ? AGC_DROP_DECAY : AGC_DECAY;
+  state.ref = Math.max(AGC_MIN_REF, attacked, state.ref * decay);
+  return Math.min(1, signal / (state.ref * AGC_HEADROOM));
+}
+
+/**
+ * A live analyser's RMS → 0..1 peak, with the same curve the file-based
+ * waveform uses. No floor: the renderer normalises against a running maximum
+ * that starts at 0.05, so a floored silence would read as full height.
+ */
+export function livePeak(rms: number): number {
+  return Math.min(1, Math.max(0, Math.pow(rms * 4.2, 0.75)));
+}
+
+/** The 0..100 value stored in a message's waveform: silence keeps a visible 6%. */
+export function storedPeak(peak: number): number {
+  return Math.round(Math.min(100, Math.max(6, peak * 100)));
+}
+
 export function parseVoiceMeta(attachment: Attachment | undefined | null): VoiceMeta | null {
   if (!attachment || attachment.type !== "audio" || !attachment.meta) return null;
   try {
@@ -153,13 +281,10 @@ export async function extractWaveform(blob: Blob, bars = VOICE_BARS): Promise<nu
       }
       peaks.push(peak);
     }
-    // Soft normalization: quiet recordings still read as a waveform instead of
-    // a flat line, loud ones do not clip into a wall.
-    const max = Math.max(0.0001, ...peaks);
-    return peaks.map((peak) => {
-      const scaled = Math.pow(peak / max, 0.75) * 100;
-      return Math.round(Math.min(100, Math.max(6, scaled)));
-    });
+    // Telegram's scale: relative to the average, so the average bar sits at
+    // ~55% and one loud transient cannot compress the rest into dots.
+    const scale = peakScale(peaks);
+    return peaks.map((peak) => Math.round(Math.min(100, Math.max(6, (peak / scale) * 100))));
   } catch {
     return null;
   } finally {

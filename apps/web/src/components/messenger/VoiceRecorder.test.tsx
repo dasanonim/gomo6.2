@@ -28,6 +28,8 @@ class FakeMediaRecorder {
   static refuseRequested = false;
   /** WebKit habit: the final `dataavailable` fires AFTER the `stop` event. */
   static lateFinalChunk = false;
+  /** The instance the component is holding, for OS-level simulations. */
+  static last: FakeMediaRecorder | null = null;
   state: "inactive" | "recording" = "inactive";
   mimeType: string;
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
@@ -39,9 +41,24 @@ class FakeMediaRecorder {
       throw new DOMException("unsupported", "NotSupportedError");
     }
     this.mimeType = options?.mimeType ?? FakeMediaRecorder.defaultMime;
+    FakeMediaRecorder.last = this;
+  }
+
+  /**
+   * iOS and Safari stop the recorder THEMSELVES when the page is hidden: by the
+   * time the visibility handler runs, the recorder is inactive and `stop` has
+   * already fired.
+   */
+  simulateOsStop(withData = true) {
+    this.state = "inactive";
+    if (withData) this.ondataavailable?.({ data: new Blob(["voice-bytes"], { type: "audio/webm" }) });
+    (this.listeners.stop ?? []).forEach((callback) => callback());
   }
   addEventListener(type: string, callback: () => void) {
     (this.listeners[type] ??= []).push(callback);
+  }
+  removeEventListener(type: string, callback: () => void) {
+    this.listeners[type] = (this.listeners[type] ?? []).filter((entry) => entry !== callback);
   }
   start() {
     this.state = "recording";
@@ -76,6 +93,7 @@ beforeEach(() => {
   FakeMediaRecorder.defaultMime = "audio/webm";
   FakeMediaRecorder.refuseRequested = false;
   FakeMediaRecorder.lateFinalChunk = false;
+  FakeMediaRecorder.last = null;
   vi.spyOn(performance, "now").mockImplementation(() => now);
   vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
   Object.defineProperty(navigator, "mediaDevices", {
@@ -108,12 +126,24 @@ async function pressMic() {
 }
 
 describe("VoiceRecorder", () => {
+  it("locks the composer row from the first second of recording", async () => {
+    const onRowLockChange = vi.fn();
+    render(<VoiceRecorder onSend={vi.fn()} onRowLockChange={onRowLockChange} />);
+
+    await pressMic();
+    expect(onRowLockChange).toHaveBeenLastCalledWith(true);
+
+    now = 1500;
+    fireEvent.pointerUp(window);
+    await waitFor(() => expect(onRowLockChange).toHaveBeenLastCalledWith(false));
+  });
+
   it("records, then uploads and hands the parent a voice attachment", async () => {
     const onSend = vi.fn();
     render(<VoiceRecorder onSend={onSend} />);
 
     await pressMic();
-    await screen.findByText(/Отпусти — отправить/);
+    await waitFor(() => expect(document.querySelector(".voice-record-pill")).not.toBeNull());
 
     now = 2400; // 2.4s of speech
     fireEvent.pointerUp(window);
@@ -168,8 +198,7 @@ describe("VoiceRecorder", () => {
     expect(onSend).not.toHaveBeenCalled();
     expect(mockUpload).not.toHaveBeenCalled();
     // …the note waits in the composer with its own player.
-    const draft = await screen.findByText(/Запись остановлена/);
-    expect(draft).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector(".voice-record.is-ready")).not.toBeNull());
     expect(document.querySelector(".voice-record.is-ready .voice-player")).not.toBeNull();
 
     // Sending it from there works (and uploads only now).
@@ -191,13 +220,69 @@ describe("VoiceRecorder", () => {
       document.dispatchEvent(new Event("visibilitychange"));
       await new Promise((resolve) => setTimeout(resolve, 120));
     });
-    await screen.findByText(/Запись остановлена/);
+    await waitFor(() => expect(document.querySelector(".voice-record.is-ready")).not.toBeNull());
 
     fireEvent.click(screen.getByRole("button", { name: "Удалить запись" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Записать голосовое" })).toBeInTheDocument());
     expect(onSend).not.toHaveBeenCalled();
     expect(mockUpload).not.toHaveBeenCalled();
+  });
+
+  it("records in slices, so a frozen page keeps everything but the last slice", async () => {
+    // iOS freezes the tab on hide and the recorder's memory goes with it: the
+    // slices already handed over are the only thing left to keep.
+    const starts: unknown[] = [];
+    class SpyRecorder extends FakeMediaRecorder {
+      start(...args: unknown[]) {
+        starts.push(args[0]);
+        super.start();
+      }
+    }
+    vi.stubGlobal("MediaRecorder", SpyRecorder);
+    render(<VoiceRecorder onSend={vi.fn()} />);
+
+    await pressMic();
+
+    expect(starts[0]).toBe(250);
+  });
+
+  it("still keeps the note when the browser stopped the recorder first", async () => {
+    // iOS stops the recorder by itself on hide: waiting for its `stop` event
+    // would hang and the note would vanish without a word.
+    const onSend = vi.fn();
+    render(<VoiceRecorder onSend={onSend} />);
+
+    await pressMic();
+    now = 1800;
+    FakeMediaRecorder.last?.simulateOsStop();
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+
+    expect(onSend).not.toHaveBeenCalled();
+    await waitFor(() => expect(document.querySelector(".voice-record.is-ready")).not.toBeNull());
+    expect(document.querySelector(".voice-record.is-ready .voice-player")).not.toBeNull();
+  });
+
+  it("says so when the browser killed the recording before it handed anything over", async () => {
+    const onSend = vi.fn();
+    render(<VoiceRecorder onSend={onSend} />);
+
+    await pressMic();
+    now = 1800;
+    FakeMediaRecorder.last?.simulateOsStop(false);
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(expect.stringMatching(/не сохранилась/i)));
+    expect(screen.getByRole("button", { name: "Записать голосовое" })).toBeInTheDocument();
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("drops a mis-tap instead of sending an empty voice message", async () => {
@@ -234,12 +319,13 @@ describe("VoiceRecorder", () => {
 
     await pressMic();
     fireEvent.pointerMove(window, { clientX: 12, clientY: -120 });
-    await screen.findByText(/Идёт запись/);
+    // Locked: the bar offers a send button instead of a hint.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Отправить голосовое" })).toBeInTheDocument());
 
     now = 1800;
     fireEvent.pointerUp(window);
     // Still recording after the finger left.
-    expect(screen.getByText(/Идёт запись/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Отправить голосовое" })).toBeInTheDocument();
     expect(onSend).not.toHaveBeenCalled();
 
     now = 2200;

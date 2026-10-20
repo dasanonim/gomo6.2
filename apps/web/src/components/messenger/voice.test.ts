@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   VOICE_BARS,
+  MIN_PEAK_SCALE,
+  PEAK_SCALE_MULTIPLIER,
+  agcPeak,
+  barCountForWidth,
+  createAgc,
+  livePeak,
+  peakScale,
+  rmsFromTimeDomain,
+  storedPeak,
   extensionForMime,
   formatVoiceTime,
   isVoiceAttachment,
@@ -35,6 +44,120 @@ describe("formatVoiceTime", () => {
   it("survives garbage", () => {
     expect(formatVoiceTime(Number.NaN)).toBe("0:00");
     expect(formatVoiceTime(-4)).toBe("0:00");
+  });
+});
+
+describe("live AGC", () => {
+  const run = (levels: number[], state = createAgc()) => levels.map((level) => agcPeak(level, state));
+
+  it("keeps silence at zero and never lets it grow", () => {
+    const state = createAgc();
+    // Even after a loud passage, silence is exactly 0 — no drift upward.
+    run([0.4, 0.4, 0.4, 0.4, 0.4], state);
+    expect(run([0, 0, 0], state)).toEqual([0, 0, 0]);
+  });
+
+  it("keeps room tone at zero and lifts a quiet voice into view", () => {
+    // Levels sit on the same 0..1 scale as the gate: ~0.02 is room tone,
+    // ~0.08 a quiet voice, ~0.3 normal speech.
+    expect(run([0.02, 0.02, 0.03, 0.02])).toEqual([0, 0, 0, 0]);
+    const quiet = run([0.08, 0.08, 0.08]);
+    expect(Math.max(...quiet)).toBeGreaterThan(0.1);
+    // …and it stays visibly below normal speech.
+    const normal = run([0.3, 0.3, 0.3]);
+    expect(Math.max(...quiet)).toBeLessThan(Math.max(...normal));
+  });
+
+  it("does not let one spike own the scale", () => {
+    const state = createAgc();
+    const spike = run([0.95], state)[0];
+    expect(spike).toBe(1);
+    // Speech right after the spike must still read as speech, not vanish.
+    const after = run([0.12, 0.12, 0.12, 0.12], state);
+    expect(Math.max(...after)).toBeGreaterThan(0.4);
+  });
+
+  it("lifts a whisper back into view after a shout", () => {
+    const state = createAgc();
+    run(new Array(10).fill(0.5), state); // a loud passage sets a high reference
+    const whisper = run(new Array(20).fill(0.12), state);
+    // It starts quiet and recovers within about a second of frames.
+    expect(whisper[0]).toBeLessThan(0.2);
+    expect(whisper[whisper.length - 1]).toBeGreaterThan(0.4);
+  });
+});
+
+describe("peakScale (Telegram's 1.8x average)", () => {
+  it("scales by the average, not by the loudest sample", () => {
+    // A flat room tone sits well below the ceiling instead of filling it.
+    expect(peakScale(new Array(40).fill(0.2))).toBeCloseTo(0.36, 3);
+    // One loud spike barely moves the scale: the rest of the note survives.
+    const spiky = [1, ...new Array(39).fill(0.1)];
+    expect(peakScale(spiky)).toBeCloseTo(((1 + 39 * 0.1) / 40) * 1.8, 3);
+  });
+
+  it("keeps a floor so silence stays silent", () => {
+    expect(peakScale([])).toBe(MIN_PEAK_SCALE);
+    expect(peakScale(new Array(40).fill(0))).toBe(MIN_PEAK_SCALE);
+  });
+
+  it("puts the average bar at ~55% of the height", () => {
+    const mean = 0.3;
+    const values = new Array(40).fill(mean);
+    const scale = peakScale(values);
+    expect((mean / scale) * 100).toBeCloseTo(100 / PEAK_SCALE_MULTIPLIER, 0);
+  });
+});
+
+describe("rmsFromTimeDomain", () => {
+  it("reads a silent analyser buffer as silence", () => {
+    expect(rmsFromTimeDomain(new Uint8Array([128, 128, 128, 128]))).toBe(0);
+    expect(rmsFromTimeDomain(new Uint8Array(1024).fill(128))).toBe(0);
+  });
+
+  it("does not mistake an unwritten buffer for full volume", () => {
+    // The bug: an analyser that never wrote leaves the array at zeros, which
+    // naively computes as RMS 1.0 — a waveform pinned to the ceiling before the
+    // first sound (the second recording, whose context starts suspended).
+    expect(rmsFromTimeDomain(new Uint8Array(1024))).toBe(0);
+    expect(rmsFromTimeDomain([])).toBe(0);
+  });
+
+  it("measures a real signal", () => {
+    // samples are centred on 128 and scaled to -1..1
+    expect(rmsFromTimeDomain([128, 255, 128, 0])).toBeCloseTo(0.704, 3);
+    expect(rmsFromTimeDomain([128, 228, 128, 28])).toBeCloseTo(0.552, 3);
+  });
+});
+
+describe("live peaks", () => {
+  it("keeps the stored floor and the live value on separate scales", () => {
+    // Silence: the message's waveform keeps a visible 6%, the live renderer
+    // must receive 0 — a floored value is above its running maximum (0.05) and
+    // would render as full height until the first real sound.
+    expect(livePeak(0)).toBe(0);
+    expect(storedPeak(livePeak(0))).toBe(6);
+  });
+
+  it("curves a normal level without ever exceeding one", () => {
+    expect(livePeak(0.05)).toBeGreaterThan(0);
+    expect(livePeak(0.05)).toBeLessThan(0.5);
+    expect(livePeak(0.5)).toBeLessThanOrEqual(1);
+    expect(livePeak(1)).toBe(1);
+  });
+});
+
+describe("barCountForWidth", () => {
+  it("sizes the bar count to the width so a waveform always reads as one", () => {
+    // 240px bubble: about 3px per bar with a 2px gap.
+    expect(barCountForWidth(240)).toBe(48);
+    // A full-width composer row would stretch 40 bars into sticks; the count
+    // grows (and stays sane at absurd widths).
+    expect(barCountForWidth(700)).toBe(140);
+    expect(barCountForWidth(5000)).toBe(160);
+    expect(barCountForWidth(10)).toBe(16);
+    // Unknown width: the message's own stored count.
+    expect(barCountForWidth(0)).toBe(VOICE_BARS);
   });
 });
 

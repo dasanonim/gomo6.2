@@ -5,8 +5,13 @@ import { hapticSuccess, hapticTick } from "@/lib/haptics";
 import { messengerApi } from "@/services/messengerApi";
 import type { Attachment } from "./types";
 import { VoicePlayer } from "./VoicePlayer";
+import { WaveformRenderer } from "./core/waveformRenderer";
 import {
-  VOICE_BARS,
+  agcPeak,
+  createAgc,
+  livePeak,
+  rmsFromTimeDomain,
+  storedPeak,
   VOICE_MAX_BYTES,
   VOICE_MAX_SECONDS,
   extensionForMime,
@@ -35,10 +40,95 @@ const CANCEL_DISTANCE_PX = 110;
 const LOCK_DISTANCE_PX = 70;
 /** Shorter than this is a mis-tap, not a message. */
 const MIN_SENT_SECONDS = 0.6;
+/** Grace for a final `dataavailable` after the recorder reports it stopped. */
+const CHUNK_GRACE_MS = 100;
+/** Ceiling for the whole wait — a silent recorder must never hang the UI. */
+const CHUNK_HARD_MS = 600;
+
+/**
+ * How often the recorder hands its buffered audio over.
+ *
+ * A timeslice is not about streaming (the live waveform comes from the
+ * analyser): it is what survives a page that is frozen mid-recording. iOS
+ * suspends the tab the moment it is hidden and the recorder's in-memory buffer
+ * goes with it — with no slices there is nothing left to keep and the note is
+ * lost. Every 250ms means losing at most the last quarter second instead.
+ */
+const RECORD_TIMESLICE_MS = 250;
+/**
+ * The first moments of a recording are not the voice: opening the microphone
+ * (and auto-gain settling) produces a click/thump that is genuinely loud.
+ * Nothing is drawn for this long — the audio itself still records it.
+ */
+const WAVE_WARMUP_MS = 350;
+
+/**
+ * Resolve when the recorder's chunks have stopped arriving.
+ *
+ * Order-independent on purpose: iOS and WebKit stop the recorder BY THEMSELVES
+ * when the page is hidden, so by the time the visibility handler runs the
+ * recorder may already be `inactive` and its `stop` event long gone — waiting
+ * for that event would hang forever and the recording would simply vanish.
+ */
+function settleChunks(recorder: MediaRecorder): Promise<void> {
+  const wasActive = recorder.state !== "inactive";
+  return new Promise((resolve) => {
+    let done = false;
+    let ceiling: ReturnType<typeof setTimeout> | null = null;
+    const finishSettle = () => {
+      if (done) return;
+      done = true;
+      if (ceiling !== null) clearTimeout(ceiling);
+      try {
+        recorder.removeEventListener("stop", onStop);
+      } catch {
+        /* not a full EventTarget — the promise must still resolve */
+      }
+      resolve();
+    };
+    // Hoisted: the finalizer above detaches it (mutual reference).
+    function onStop() {
+      setTimeout(finishSettle, CHUNK_GRACE_MS);
+    }
+    if (wasActive) {
+      recorder.addEventListener("stop", onStop);
+      ceiling = setTimeout(finishSettle, CHUNK_HARD_MS);
+    } else {
+      // Already stopped (or never started): give a trailing chunk its grace.
+      setTimeout(finishSettle, CHUNK_GRACE_MS);
+    }
+  });
+}
 const TICK_MS = 100;
 const BAR_INTERVAL_MS = 70;
 
 type Phase = "idle" | "requesting" | "recording" | "uploading" | "ready";
+
+/**
+ * One AudioContext for every recording.
+ *
+ * Chrome caps how many can coexist and a context created later may start
+ * suspended; a suspended analyser reports no data at all, which is how the live
+ * waveform ended up pinned to the ceiling on a second recording. One context,
+ * resumed on demand, removes that whole class of failure.
+ */
+let audioContext: AudioContext | null = null;
+
+function getAudioContext(): AudioContext | null {
+  const Ctor = typeof window === "undefined"
+    ? undefined
+    : window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctor) return null;
+  if (!audioContext || audioContext.state === "closed") {
+    try {
+      audioContext = new Ctor();
+    } catch {
+      return null;
+    }
+  }
+  if (audioContext.state === "suspended") void audioContext.resume().catch(() => undefined);
+  return audioContext;
+}
 
 /** A finished recording that has not been sent: it lives in the composer. */
 type VoiceDraft = {
@@ -56,6 +146,12 @@ interface Props {
   disabled?: boolean;
   /** Hides the mic entirely (editing an existing message, for instance). */
   hidden?: boolean;
+  /**
+   * The recorder owns the composer row — while recording and while a draft is
+   * held. The parent then makes the input inert (no click, no Tab focus, out of
+   * the a11y tree), the way Telegram's record bar disables the composer.
+   */
+  onRowLockChange?: (locked: boolean) => void;
 }
 
 function describePermissionError(error: unknown): string {
@@ -72,7 +168,7 @@ function describePermissionError(error: unknown): string {
   return "Не удалось начать запись";
 }
 
-export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Props) {
+export function VoiceRecorder({ onSend, disabled = false, hidden = false, onRowLockChange }: Props) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [locked, setLocked] = useState(false);
   const [cancelArmed, setCancelArmed] = useState(false);
@@ -87,11 +183,14 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
   const startedAtRef = useRef(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const rafRef = useRef<number | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const barsRef = useRef<HTMLDivElement | null>(null);
+  const waveCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const waveRendererRef = useRef<WaveformRenderer | null>(null);
   const liveBarsRef = useRef<number[]>([]);
   const lastBarAtRef = useRef(0);
+  const warmupUntilRef = useRef(0);
+  const agcRef = useRef(createAgc());
   const phaseRef = useRef<Phase>("idle");
   const lockedRef = useRef(false);
   const cancelRef = useRef(false);
@@ -103,17 +202,6 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
   phaseRef.current = phase;
   lockedRef.current = locked;
   cancelRef.current = cancelArmed;
-
-  const paintBars = useCallback(() => {
-    const holder = barsRef.current;
-    if (!holder) return;
-    const bars = liveBarsRef.current;
-    const children = holder.children;
-    for (let i = 0; i < children.length; i += 1) {
-      const value = bars[Math.max(0, bars.length - VOICE_BARS + i)] ?? 0;
-      (children[i] as HTMLElement).style.setProperty("--h", `${Math.max(6, value)}%`);
-    }
-  }, []);
 
   const stopTracks = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -129,8 +217,12 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    void audioCtxRef.current?.close().catch(() => undefined);
-    audioCtxRef.current = null;
+    try {
+      sourceRef.current?.disconnect();
+    } catch {
+      /* already disconnected */
+    }
+    sourceRef.current = null;
     analyserRef.current = null;
     stopTracks();
     recorderRef.current = null;
@@ -145,7 +237,8 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     setLocked(false);
     setCancelArmed(false);
     setElapsed(0);
-  }, [teardown]);
+    onRowLockChange?.(false);
+  }, [onRowLockChange, teardown]);
 
   useEffect(
     () => () => {
@@ -166,15 +259,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
       finishingRef.current = true;
 
       const duration = (performance.now() - startedAtRef.current) / 1000;
-      const stopped = new Promise<void>((resolve) => {
-        recorder.addEventListener("stop", () => {
-          // WebKit has shipped versions that fire the FINAL `dataavailable`
-          // after `stop`. Reading the chunks right on `stop` kept only the
-          // first timeslice — the note played ~0.5s and then went silent.
-          // One macrotask is enough for that late chunk to land.
-          setTimeout(resolve, 40);
-        }, { once: true });
-      });
+      const stopped = settleChunks(recorder);
       try {
         if (recorder.state !== "inactive") recorder.stop();
       } catch {
@@ -188,7 +273,13 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
       const liveBars = [...liveBarsRef.current];
       teardown();
 
-      if (!send || duration < MIN_SENT_SECONDS || chunks.length === 0) {
+      if (chunks.length === 0) {
+        finishingRef.current = false;
+        if (send && duration >= MIN_SENT_SECONDS) toast.error("Запись не сохранилась — микрофон отключился");
+        reset();
+        return;
+      }
+      if (!send || duration < MIN_SENT_SECONDS) {
         finishingRef.current = false;
         reset();
         return;
@@ -248,10 +339,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     finishingRef.current = true;
 
     const duration = (performance.now() - startedAtRef.current) / 1000;
-    // Same grace as the send path: WebKit fires the final chunk after `stop`.
-    const settled = new Promise<void>((resolve) => {
-      recorder.addEventListener("stop", () => setTimeout(resolve, 40), { once: true });
-    });
+    const settled = settleChunks(recorder);
 
     try {
       if (recorder.state !== "inactive") {
@@ -274,17 +362,31 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
 
     const type = mime.split(";")[0] || "audio/webm";
     const blob = new Blob(chunksRef.current, { type });
-    if (duration < MIN_SENT_SECONDS || blob.size === 0) {
+    if (blob.size === 0) {
+      // The browser killed the recorder before it handed anything over. Say so
+      // instead of making the recording disappear without a word.
+      if (duration >= MIN_SENT_SECONDS) toast.error("Запись не сохранилась — микрофон отключился");
+      reset();
+      return;
+    }
+    if (duration < MIN_SENT_SECONDS) {
       reset();
       return;
     }
 
     const waveform = (await extractWaveform(blob)) ?? liveBars;
+    // The draft bar takes the composer row over; a focused editor would keep
+    // the soft keyboard up, resizing the row under the bar.
+    const active = document.activeElement as HTMLElement | null;
+    if (active && (active.isContentEditable || active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
+      active.blur();
+    }
     if (draftRef.current) URL.revokeObjectURL(draftRef.current.url);
     const next: VoiceDraft = { blob, mime, duration, waveform, url: URL.createObjectURL(blob) };
     draftRef.current = next;
     setDraft(next);
     setPhase("ready");
+    // Already locked since the recording started; a draft keeps it locked.
     hapticTick(6);
   }, [reset, teardown]);
 
@@ -325,30 +427,38 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
   // ── Sampling: one rAF loop for the live waveform, one tick for the timer ──
   const startLoops = useCallback(() => {
     const analyser = analyserRef.current;
-    const buffer = analyser ? new Uint8Array(analyser.fftSize) : null;
+    // Filled with 128 (silence) on purpose: a buffer the analyser never writes
+    // must read as silence, not as a full-scale signal (see rmsFromTimeDomain).
+    const buffer = analyser ? new Uint8Array(analyser.fftSize).fill(128) : null;
 
     const frame = () => {
       const now = performance.now();
-      if (analyser && buffer && now - lastBarAtRef.current >= BAR_INTERVAL_MS) {
+      if (analyser && buffer && now - lastBarAtRef.current >= BAR_INTERVAL_MS && now >= warmupUntilRef.current) {
         lastBarAtRef.current = now;
         analyser.getByteTimeDomainData(buffer);
-        let sum = 0;
-        for (let i = 0; i < buffer.length; i += 1) {
-          const centred = (buffer[i] - 128) / 128;
-          sum += centred * centred;
-        }
-        const rms = Math.sqrt(sum / buffer.length);
+        const rms = rmsFromTimeDomain(buffer);
         // Same curve the file-based waveform uses, so the live preview and the
         // delivered bars look like the same voice.
-        const value = Math.round(Math.min(100, Math.max(6, Math.pow(rms * 4.2, 0.75) * 100)));
-        liveBarsRef.current.push(value);
-        paintBars();
+        // Two consumers, two scales: the stored waveform keeps a 6% floor so a
+        // silent bar still reads in the message bubble, but the live renderer
+        // must get the RAW level — its running maximum starts at 0.05, and a
+        // floored 0.06 would normalise to full height before the first sound.
+        // Two consumers, two scales: the stored bars keep a 6% floor (silence
+        // stays visible in the bubble); the live canvas gets the level through
+        // the AGC — gated at zero, attack-limited, slowly decaying — so a quiet
+        // voice still fills the pill and no single frame can lock the scale.
+        const level = livePeak(rms);
+        const shown = agcPeak(level, agcRef.current);
+        liveBarsRef.current.push(storedPeak(shown));
+        waveRendererRef.current?.pushPeak(shown);
       }
       rafRef.current = requestAnimationFrame(frame);
     };
     rafRef.current = requestAnimationFrame(frame);
 
     startedAtRef.current = performance.now();
+    warmupUntilRef.current = startedAtRef.current + WAVE_WARMUP_MS;
+    agcRef.current = createAgc();
     tickRef.current = setInterval(() => {
       if ((phaseRef.current as Phase) !== "recording") return;
       const seconds = (performance.now() - startedAtRef.current) / 1000;
@@ -357,7 +467,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
         void finish(true);
       }
     }, TICK_MS);
-  }, [paintBars, finish]);
+  }, [finish]);
 
   const cancel = useCallback(() => {
     hapticTick(10);
@@ -389,7 +499,12 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        // Telegram records raw (`getUserMedia({ audio: true })`): its waveform is
+        // honest about silence. Browser AGC is the thing that "pumps" — it lifts
+        // room tone to full scale the moment the room is quiet, which is exactly
+        // the wave that grew by itself. Noise suppression stays (it removes the
+        // steady hiss, so the dots really are dots).
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
       });
     } catch (error) {
       releasedWhileRequestingRef.current = false;
@@ -440,22 +555,22 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
       toast.error("Запись прервалась");
       void finish(false);
     };
-    // No timeslice: the recorder buffers the note and hands it over whole at
-    // stop. The live waveform comes from the analyser, so streaming chunks buy
-    // nothing — and a partial chunk stream is exactly how a voice note ends up
-    // truncated on WebKit.
-    recorder.start();
+    // Periodic slices: see RECORD_TIMESLICE_MS — they are the difference
+    // between "the last quarter second is missing" and "the note is gone" when
+    // the OS freezes the page. The assembly waits for the tail, so slicing
+    // never costs the end of the note.
+    recorder.start(RECORD_TIMESLICE_MS);
     recorderRef.current = recorder;
 
     // Live levels. Failure to build the analyser must not break recording.
     try {
-      const Ctor = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (Ctor) {
-        const context = new Ctor();
+      const context = getAudioContext();
+      if (context) {
         const analyser = context.createAnalyser();
         analyser.fftSize = 1024;
-        context.createMediaStreamSource(stream).connect(analyser);
-        audioCtxRef.current = context;
+        const source = context.createMediaStreamSource(stream);
+        source.connect(analyser);
+        sourceRef.current = source;
         analyserRef.current = analyser;
       }
     } catch {
@@ -464,9 +579,40 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
 
     setPhase("recording");
     setElapsed(0);
+    onRowLockChange?.(true);
     hapticTick(8);
     startLoops();
-  }, [disabled, finish, startLoops]);
+  }, [disabled, finish, onRowLockChange, startLoops]);
+
+  // The live waveform is a canvas (Telegram's renderer): 3px rounded bars that
+  // scroll from the right, silence as a dot. It is created once the bar mounts,
+  // then fed by the sampling loop above.
+  useEffect(() => {
+    if (phase !== "recording") return;
+    const canvas = waveCanvasRef.current;
+    if (!canvas) return;
+    let renderer: WaveformRenderer | null = null;
+    try {
+      renderer = new WaveformRenderer(canvas);
+    } catch {
+      return; // no 2d context: the timer and the hint still work
+    }
+    renderer.setSeekable(false);
+    waveRendererRef.current = renderer;
+    liveBarsRef.current.forEach((value) => renderer?.pushPeak(value / 100));
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => {
+          const rect = canvas.getBoundingClientRect();
+          renderer?.handleResize(rect.width, rect.height);
+        })
+      : null;
+    observer?.observe(canvas);
+    return () => {
+      observer?.disconnect();
+      renderer?.destroy();
+      waveRendererRef.current = null;
+    };
+  }, [phase]);
 
   // A release that arrives while the permission prompt is still open opens a
   // hands-free recording: the user asked to record, and the prompt is ours to
@@ -579,6 +725,7 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
         </button>
         <div className="voice-record-preview">
           <VoicePlayer
+            variant="draft"
             attachment={{
               url: draft.url,
               type: "audio",
@@ -588,8 +735,8 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
               meta: JSON.stringify({ voice: true, duration: draft.duration, waveform: draft.waveform }),
             }}
             src={draft.url}
+            from="черновик"
           />
-          <span className="voice-record-note">Запись остановлена — отправь или удали</span>
         </div>
         <button
           type="button"
@@ -631,24 +778,14 @@ export function VoiceRecorder({ onSend, disabled = false, hidden = false }: Prop
         <Trash2 size={16} />
       </button>
 
-      <div className="voice-record-body">
-        <div className="voice-record-timer">
-          <span className="voice-record-dot" aria-hidden="true" />
-          <span className="voice-record-time" aria-live="off">{formatVoiceTime(elapsed)}</span>
-          {locked && <Lock size={12} className="voice-record-lock" aria-label="Запись закреплена" />}
-        </div>
-        <div className="voice-record-wave" ref={barsRef} aria-hidden="true">
-          {Array.from({ length: VOICE_BARS }).map((_, index) => (
-            <span key={index} className="voice-record-bar" />
-          ))}
-        </div>
-        <div className="voice-record-hint" aria-live="polite">
-          {cancelArmed
-            ? "Отпусти — отмена"
-            : locked
-              ? "Идёт запись — нажми, чтобы отправить"
-              : "Отпусти — отправить · ← отмена · ↑ закрепить"}
-        </div>
+      <div className="voice-record-pill">
+        <span className="voice-record-dot" aria-hidden="true" />
+        <span className="voice-record-time" aria-live="off">{formatVoiceTime(elapsed)}</span>
+        {locked && <Lock size={12} className="voice-record-lock" aria-label="Запись закреплена" />}
+        <canvas ref={waveCanvasRef} className="voice-record-canvas" aria-hidden="true" />
+        <span className="voice-record-hint" aria-live="polite">
+          {cancelArmed ? "Отпусти — отмена" : locked ? "" : "← отмена · ↑ закрепить"}
+        </span>
       </div>
 
       <button
