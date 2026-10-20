@@ -29,6 +29,23 @@ describe("CookieBanner", () => {
     vi.useRealTimers();
   });
 
+  // Regression: the strip lived inside the app layout, where a transformed
+  // ancestor scoped `fixed` and the banner could end up under content — a click
+  // "fell through" into the page below. It must be portalled to <body> and be
+  // the top-most layer.
+  it("renders in a portal above the whole app", () => {
+    const { container } = render(<CookieBanner />);
+    show();
+
+    const title = screen.getByText("Мы используем куки");
+    expect(container).toBeEmptyDOMElement();
+    expect(document.body).toContainElement(title);
+
+    const layer = title.closest(".fixed");
+    expect(layer).not.toBeNull();
+    expect(layer?.className).toContain("z-[1000]");
+  });
+
   it("does not show once a choice has been made", () => {
     localStorage.setItem(
       CONSENT_KEY,
