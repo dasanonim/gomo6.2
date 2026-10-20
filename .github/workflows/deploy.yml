@@ -74,7 +74,12 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  # pull-requests: read — его требует ci.yml (dorny/paths-filter) и его джоба
+  # pr-title. Вызываемый reusable-воркфлоу НЕ может поднять права выше
+  # вызывающего, поэтому право обязано быть выдано здесь; иначе весь Deploy
+  # падает на старте (startup_failure) ещё до plan/build.
   contents: read
+  pull-requests: read
 
 jobs:
   # ---------------------------------------------------------------------------
