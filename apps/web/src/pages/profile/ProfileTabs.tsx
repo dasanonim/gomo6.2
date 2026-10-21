@@ -1,7 +1,7 @@
 import { lazy, Suspense, useLayoutEffect, useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "motion/react";
+import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import { ChevronDown, Gift, Layers, LayoutGrid, MessageSquareText, Plus, Trophy, Users, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -290,24 +290,19 @@ export function ProfileTabs({
   // sticky offset, i.e. its computed `top` (which follows --app-header-pad as
   // the header hides/shows), so no extra geometry bookkeeping is needed.
   const [barStuck, setBarStuck] = useState(false);
-  // Hysteresis: once pinned, the bar must travel 12px back down before it
-  // counts as released, so a one-pixel wobble at the pin edge cannot re-fire
-  // the arrival spring on every scroll tick.
-  const stuckRef = useRef(false);
 
-  // ── Pin spring ───────────────────────────────────────────────────────────
-  // The bar arrives a few pixels high and springs into place the moment it
-  // attaches to the header. No scroll tracking, no latches — one gesture.
-  const pinY = useMotionValue(0);
-  useLayoutEffect(() => {
-    if (!barStuck || reduceMotion) {
-      pinY.set(0);
-      return;
-    }
-    pinY.set(-12);
-    const controls = animate(pinY, 0, springFor("eject", reduceMotion));
-    return () => controls.stop();
-  }, [barStuck, pinY, reduceMotion]);
+  // ── Delayed pin ──────────────────────────────────────────────────────────
+  // The bar is NOT sticky. It scrolls under the header like any other block;
+  // once ~65% of it has disappeared, it is pinned and the swallowed part
+  // springs back out under the header. `track` keeps it at the header on every
+  // following scroll tick, `pop` is the one-shot spring that brings it out.
+  const track = useMotionValue(0);
+  const pop = useMotionValue(0);
+  const popAnimRef = useRef<ReturnType<typeof animate> | null>(null);
+  const barY = useTransform([track, pop], (latest: number[]) => latest[0] + latest[1]);
+  const pinnedRef = useRef(false);
+
+  useEffect(() => () => popAnimRef.current?.stop(), []);
 
   useEffect(() => {
     const bar = stickyBarRef.current;
@@ -318,16 +313,46 @@ export function ProfileTabs({
       // in sync: cheaper than getComputedStyle (no style recalc) and identical.
       const pad =
         parseFloat(document.documentElement.style.getPropertyValue("--app-header-pad")) || 0;
-      // The bar is translated by the pin spring, so its own rect would feed the
-      // spring back into the "is it pinned?" test (and a 1px overshoot flipped
-      // the state on every scroll tick). Subtract the spring's current offset:
-      // what remains is the bar's real position, unaffected by the animation.
-      const top = bar.getBoundingClientRect().top - pinY.get();
-      const stuck = top <= (stuckRef.current ? pad + 12 : pad + 1);
-      if (stuck !== stuckRef.current) {
-        stuckRef.current = stuck;
-        setBarStuck(stuck);
+      const rect = bar.getBoundingClientRect();
+      // The bar is translated while pinned; subtracting the current offset
+      // recovers its honest, animation-free position in the flow.
+      const natural = rect.top - barY.get();
+      const pinAt = pad - rect.height * (reduceMotion ? 0 : 0.65);
+
+      if (!pinnedRef.current) {
+        if (natural <= pinAt) {
+          // 65% of the bar is gone under the header — pin it and spring the
+          // swallowed part back out. `pop` starts at minus the whole offset so
+          // the first frame matches where the scroll left the bar.
+          pinnedRef.current = true;
+          setBarStuck(true);
+          const target = pad - natural;
+          track.set(target);
+          popAnimRef.current?.stop();
+          if (reduceMotion) {
+            pop.set(0);
+          } else {
+            pop.set(-target);
+            popAnimRef.current = animate(pop, 0, springFor("eject", reduceMotion));
+          }
+        } else if (track.get() !== 0 || pop.get() !== 0) {
+          track.set(0);
+          pop.set(0);
+        }
+        return;
       }
+
+      // Pinned: stay glued to the header. Release only once the flow position
+      // has caught up with the header again, so there is never a jump.
+      if (natural >= pad) {
+        pinnedRef.current = false;
+        setBarStuck(false);
+        popAnimRef.current?.stop();
+        track.set(0);
+        pop.set(0);
+        return;
+      }
+      track.set(pad - natural);
     };
 
     // No rAF throttling on purpose: rAF is paused in a background/occluded tab,
@@ -344,14 +369,20 @@ export function ProfileTabs({
     // a scroll event, which would otherwise leave the state stale.
     const ro = new ResizeObserver(update);
     ro.observe(document.body);
+    // The app header slides away on scroll and writes --app-header-pad frame by
+    // frame; while the bar is pinned it must follow that edge even when no
+    // scroll events arrive.
+    const mo = new MutationObserver(update);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
 
     return () => {
       window.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
       document.removeEventListener("visibilitychange", update);
       ro.disconnect();
+      mo.disconnect();
     };
-  }, [pinY]);
+  }, [barY, pop, reduceMotion, track]);
 
   const snapToBar = () => {
     const bar = stickyBarRef.current;
@@ -500,8 +531,8 @@ export function ProfileTabs({
           (offset comes from --app-header-pad, kept in sync by AppLayout). */}
       <motion.div
         ref={stickyBarRef}
-        className={`profile-tabbar sticky z-30 ${panel ? "profile-tabbar--panel overflow-hidden border border-border/60" : "border-b border-border"}${barStuck && !panel ? " profile-tabbar--stuck" : ""}`}
-        style={{ top: "var(--app-header-pad, 0px)", y: pinY }}
+        className={`profile-tabbar relative z-30 ${panel ? "profile-tabbar--panel overflow-hidden border border-border/60" : "border-b border-border"}${barStuck && !panel ? " profile-tabbar--stuck" : ""}`}
+        style={{ y: barY }}
       >
         {/* One background layer behind the content: an opaque strip while the
             bar travels with the page, frosted once it pins. It sits on the bar
