@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useLayoutEffect, useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { AnimatePresence, animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useScroll, useSpring, useTransform } from "motion/react";
+import { AnimatePresence, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useScroll, useSpring, useTransform } from "motion/react";
 import { ChevronDown, Gift, Layers, LayoutGrid, MessageSquareText, Plus, Trophy, Users, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,11 @@ export type ProfileTab = "all" | "wall" | "achievements" | "threads" | "gifts" |
 
 /** Rendered left-to-right order of the tabs — the axis content travels along. */
 const TAB_ORDER: ProfileTab[] = ["all", "wall", "achievements", "threads", "gifts", "subscribers"];
+
+/** Scroll distance past the pin at which the bar is fully tucked under the header. */
+const TUCK_DISTANCE = 180;
+/** How far the bar travels under the header — almost its whole height. */
+const TUCK_PX = 34;
 
 export interface ProfileTabsProps {
   activeTab: ProfileTab;
@@ -306,23 +311,29 @@ export function ProfileTabs({
   const lastScrollYRef = useRef<number | null>(null);
   const { scrollY } = useScroll();
 
-  // ── Pin tuck ─────────────────────────────────────────────────────────────
-  // The instant the bar pins under the header it is already tucked underneath
-  // it, then ejects down into its resting place — the bar arrives with weight
-  // instead of simply appearing. `pinTuck` is a one-shot offset added to the
-  // scroll nudge; it returns to zero when the bar releases mid-pop.
-  const pinTuck = useMotionValue(0);
-  const barY = useTransform([nudge, pinTuck], (latest: number[]) => latest[0] + latest[1]);
+  // ── Suck under the header ────────────────────────────────────────────────
+  // While the bar is pinned, every pixel the page scrolls down drags it under
+  // the header — real scroll-linked travel, not a one-shot. At TUCK_DISTANCE
+  // the bar has covered TUCK_PX and is let go; it springs back into place with
+  // the eject curve's barely-there overshoot. Scrolling up before that point
+  // reverses the pull pixel for pixel, and a release mid-suck simply unwinds.
+  const pinStartRef = useRef<number | null>(null);
+  const releasedRef = useRef(false);
+  const tuckTarget = useMotionValue(0);
+  const tuck = useSpring(tuckTarget, SPRING.eject);
+  const barY = useTransform([tuck, nudge], (latest: number[]) => latest[0] + latest[1]);
 
   useLayoutEffect(() => {
-    if (reduceMotion) {
-      pinTuck.set(0);
+    if (!barStuck) {
+      releasedRef.current = false;
+      pinStartRef.current = null;
+      tuckTarget.set(0);
       return;
     }
-    if (barStuck) pinTuck.set(-28);
-    const controls = animate(pinTuck, 0, springFor(barStuck ? "eject" : "reveal", reduceMotion));
-    return () => controls.stop();
-  }, [barStuck, pinTuck, reduceMotion]);
+    releasedRef.current = false;
+    pinStartRef.current = window.scrollY;
+    tuckTarget.set(0);
+  }, [barStuck, tuckTarget]);
 
   const settleNudge = useCallback(() => {
     if (nudgeTimerRef.current !== null) {
@@ -347,6 +358,22 @@ export function ProfileTabs({
       settleNudge();
       return;
     }
+
+    // The suck owns the bar until it is let go: position-linked, reversible.
+    if (!releasedRef.current) {
+      const start = pinStartRef.current;
+      if (start === null) return;
+      const d = Math.max(0, y - start);
+      if (d >= TUCK_DISTANCE) {
+        releasedRef.current = true;
+        tuckTarget.set(0);
+      } else {
+        tuckTarget.set(-(d / TUCK_DISTANCE) * TUCK_PX);
+      }
+      settleNudge();
+      return;
+    }
+
     if (dy > 0.5) {
       nudgeTarget.set(Math.max(-3, nudgeTarget.get() - dy * 0.04));
       if (nudgeTimerRef.current !== null) window.clearTimeout(nudgeTimerRef.current);
