@@ -46,12 +46,11 @@ export const SPRING = {
   pop: SPRING_BOUNCY,
   bouncy: SPRING_BOUNCY,
   /**
-   * A latched element being let go. Deliberately under-damped (ζ ≈ 0.34): the
-   * release is allowed to overshoot ~33% of its travel, which on the profile's
-   * 0.24 scale range lands at the requested 6–7% pop above 1. Used once, at the
-   * end of a pull, never for ordinary movement.
+   * A latched element being let go. Under-damped enough to feel spring-loaded
+   * (ζ ≈ 0.49, ~17% of travel), but deliberately restrained: on the profile's
+   * 0.24 scale range that is a ~3% pop above 1 — a settle, not a bounce.
    */
-  eject: { type: "spring", stiffness: 500, damping: 15, mass: 1 },
+  eject: { type: "spring", stiffness: 500, damping: 22, mass: 1 },
   /**
    * A measured dimension — `width`/`height` of a label, row or chip that opens
    * to its content. Deliberately over-damped: a spring overshoot on a measured
