@@ -21,6 +21,53 @@
   to { opacity: 1; }
 }
 
+/* ── Avatar morph (components/profile/AvatarMorph) ──────────────────────────
+   The viewer is the backdrop underneath the flying image: its chrome and its own
+   copy of the photo stay hidden so only one image is on screen. The photo keeps
+   its layout (opacity only), because the morph measures its box to know where to
+   land. The backdrop still fades in — that is the depth cue. */
+/* `is-morphed` outlives the flight (see the note in Lightbox.tsx): the slide's
+   own fade+scale entrance must not restart when `is-morphing` is dropped. */
+.msg-lightbox.is-morphing .msg-lightbox-slide,
+.msg-lightbox.is-morphed .msg-lightbox-slide {
+  animation: none;
+}
+
+/* Only for the first frame of a flight — the chrome then fades in on its own
+   transition while the photo is still moving (see the note in Lightbox.tsx). */
+.msg-lightbox.is-chrome-hidden .msg-lightbox-topbar,
+.msg-lightbox.is-chrome-hidden .msg-lightbox-thumbnails,
+.msg-lightbox.is-chrome-hidden .msg-lightbox-arrow {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.msg-lightbox.is-morphing .msg-lightbox-slide[data-active] .msg-lightbox-media {
+  opacity: 0;
+}
+
+/* Closing: the dimming lifts WHILE the photo flies home, so the page comes back
+   gradually instead of the backdrop staying black and then being torn away. The
+   clone rides above this (z-index 200), so only the surroundings change. */
+.msg-lightbox.is-morph-out {
+  opacity: 0;
+  transition: opacity 420ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* The handover at the end of a flight is deliberately INSTANT: the clone and the
+   gallery's own photo sit in the same box at the same size, so swapping them is
+   invisible — while a crossfade would dip (both at half opacity over a dark
+   backdrop) and read as a flicker. The clone dissolves on top of the real photo
+   instead. */
+
+/* Chrome arrives WITH the photo rather than snapping on over it. */
+.msg-lightbox-topbar,
+.msg-lightbox-thumbnails,
+.msg-lightbox-arrow {
+  transition: opacity 260ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+
 .msg-lightbox-topbar {
   position: absolute;
   top: 0;

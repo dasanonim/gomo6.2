@@ -1,7 +1,7 @@
 import { lazy, Suspense, useLayoutEffect, useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { ChevronDown, Gift, Layers, LayoutGrid, MessageSquareText, Plus, Trophy, Users, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { ProfileWall } from "@/components/ProfileWall";
 import { ProfileAlbumView } from "@/components/ProfileAlbumView";
 import { useFriendsStore } from "@/stores/friendsStore";
-import { transitionEnterClass } from "@/lib/viewTransitions";
-import { useTransitionStyle } from "@/hooks/useTransitionStyle";
+import { springFor, spatialEnter, SPATIAL_OFFSET, SPRING, travelDirection } from "@/lib/motion";
 import { useProfileAlbums } from "./useProfileAlbums";
 import { TrophyShowcase } from "@/components/TrophyShowcase";
 import type { GiftCatalogItem } from "@/components/GiftCard";
@@ -26,6 +25,9 @@ const ProfileThreadsTab = lazy(() => import("./ProfileThreadsTab").then((m) => (
 const ProfileAllTab = lazy(() => import("./ProfileAllTab").then((m) => ({ default: m.ProfileAllTab })));
 
 export type ProfileTab = "all" | "wall" | "achievements" | "threads" | "gifts" | "subscribers";
+
+/** Rendered left-to-right order of the tabs — the axis content travels along. */
+const TAB_ORDER: ProfileTab[] = ["all", "wall", "achievements", "threads", "gifts", "subscribers"];
 
 export interface ProfileTabsProps {
   activeTab: ProfileTab;
@@ -93,7 +95,7 @@ const TabButton = ({ tab, active, onClick }: { tab: TabDef; active: boolean; onC
         <motion.span
           layoutId="profile-tabs-indicator"
           className="absolute bottom-0 left-2 right-2 h-[2.5px] rounded-full bg-gradient-to-r from-primary to-accent"
-          transition={{ type: "spring", stiffness: 450, damping: 36 }}
+          transition={SPRING.snappy}
         />
       )}
       <Icon className="relative z-10 h-4 w-4 shrink-0" />
@@ -176,7 +178,7 @@ const WallTabButton = ({
         <motion.span
           layoutId="profile-tabs-indicator"
           className="absolute bottom-0 left-2 right-2 h-[2.5px] rounded-full bg-gradient-to-r from-primary to-accent"
-          transition={{ type: "spring", stiffness: 450, damping: 36 }}
+          transition={SPRING.snappy}
         />
       )}
     </div>
@@ -250,7 +252,7 @@ export function ProfileTabs({
   onGiftSent,
 }: ProfileTabsProps) {
   const { t } = useTranslation();
-  const transitionStyle = useTransitionStyle();
+  const reduceMotion = useReducedMotion();
 
   // Warm the lazy tab-body chunks as soon as the profile mounts, so opening a
   // tab swaps its data in fully instead of popping the card/panel in a beat
@@ -422,6 +424,31 @@ export function ProfileTabs({
     }`;
 
   const selectedAlbum = selectedAlbumId ? albums.find((a) => a.id === selectedAlbumId) || null : null;
+
+  // ── Directed content swap ────────────────────────────────────────────────
+  // The tabs are an ordered row, so switching one has a spatial direction: the
+  // new body arrives from the side the bar travelled towards. The offset is
+  // deliberately small (14px) — enough to read as «this came from there»
+  // without the content sliding across the screen. The body is keyed by tab +
+  // album, so a swap mounts a fresh motion element and its `initial` runs.
+  const bodyKey = `${activeTab}:${selectedAlbumId ?? "all"}`;
+  // The previous position is kept in a ref and updated AFTER the render that
+  // mounts the new body, so that render still knows which way it travelled.
+  const previousPositionRef = useRef(activeTab);
+  const bodyDirection = travelDirection(TAB_ORDER.indexOf(previousPositionRef.current), TAB_ORDER.indexOf(activeTab));
+  // The first paint comes from the page-level enter animation; don't stack a
+  // second one on top of it.
+  const hasPaintedRef = useRef(false);
+
+  useEffect(() => {
+    hasPaintedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    previousPositionRef.current = activeTab;
+  }, [activeTab]);
+
+  const bodyEnter = spatialEnter(bodyDirection, SPATIAL_OFFSET.tab, reduceMotion, hasPaintedRef.current);
 
   return (
     <>
@@ -600,6 +627,12 @@ export function ProfileTabs({
         ref={tabBodyWrapRef}
         className={`min-h-[100dvh]${contentPanel ? " surface-panel mt-3 rounded-xl border border-border/60 p-3 shadow-sm" : ""}`}
       >
+        <motion.div
+          key={bodyKey}
+          initial={bodyEnter.initial}
+          animate={bodyEnter.animate}
+          transition={springFor("standard", reduceMotion)}
+        >
         {activeTab === 'all' && allTabVisible && (
           <Suspense fallback={null}>
             <ProfileAllTab
@@ -649,7 +682,7 @@ export function ProfileTabs({
       )}
 
       {activeTab === 'achievements' && canViewAchievements && trophiesLoaded && (
-        <div className={transitionEnterClass(transitionStyle)}>
+        <div>
           {trophies.length === 0 ? (
             <p className="text-muted-foreground">{t("profile.noAchievements")}</p>
           ) : (
@@ -712,6 +745,7 @@ export function ProfileTabs({
           </Suspense>
         </div>
       )}
+        </motion.div>
       </div>
     </>
   );

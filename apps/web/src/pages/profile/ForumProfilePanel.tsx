@@ -26,6 +26,8 @@ export interface ForumProfilePanelProps {
   onOpenMessages: () => void;
   /** isEditing ? save-and-exit : start editing (own profile). */
   onEditClick: () => void;
+  /** The avatar cover — named by the page for the avatar → gallery morph. */
+  avatarRef?: (el: HTMLElement | null) => void;
 }
 
 /**
@@ -44,6 +46,7 @@ export function ForumProfilePanel({
   onAvatarClick,
   onOpenMessages,
   onEditClick,
+  avatarRef,
 }: ForumProfilePanelProps) {
   const { t } = useTranslation();
   const displayName = profile.display_name?.trim() || profile.username;
@@ -59,6 +62,7 @@ export function ForumProfilePanel({
             onClick={onAvatarClick}
             aria-label={displayName}
             className="group/avatar relative block w-full overflow-hidden bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            ref={avatarRef}
           >
             <UserAvatar
               src={avatarUrl}

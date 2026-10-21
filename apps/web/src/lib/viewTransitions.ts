@@ -166,22 +166,15 @@ export interface RunTransitionOptions {
   force?: boolean;
 }
 
-/** Run `update` through the View Transitions API (or apply it directly). */
-export const runTransition = (
-  style: TransitionStyle,
+/**
+ * The single-flight wrapper both kinds of transition go through. At most one
+ * DOM swap animates at a time; a second request made while one runs is held and
+ * applied once the first finishes. See the note on `activeTransition`.
+ */
+const scheduleTransition = (
   update: () => void,
-  options: RunTransitionOptions = {},
+  hooks?: { before?: () => void; afterCommit?: () => void; after?: () => void },
 ): void => {
-  if (
-    !isViewTransitionStyle(style) ||
-    !supportsViewTransitions() ||
-    prefersReducedMotion() ||
-    (!options.force && isPerfLite())
-  ) {
-    update();
-    return;
-  }
-
   if (activeTransition) {
     // A swap is already animating; remember this one and run it after, so the
     // final state is never stranded on the wrong view.
@@ -197,8 +190,12 @@ export const runTransition = (
       return;
     }
     activeTransition = true;
+    hooks?.before?.();
     const transition = document.startViewTransition!(() => {
       flushSync(update);
+      // Still inside the capture callback: the DOM is committed and the "after"
+      // snapshot has not been taken yet.
+      hooks?.afterCommit?.();
     });
     // A skipped transition rejects `ready`/`finished`; that is expected when a
     // swap is superseded and must never surface as an unhandled rejection. The
@@ -207,12 +204,38 @@ export const runTransition = (
       .catch(() => {})
       .finally(() => {
         activeTransition = false;
+        hooks?.after?.();
         const next = queuedUpdate;
         queuedUpdate = null;
         // The superseded update is stale by a whole animation; apply it plainly.
         next?.();
       });
   });
+};
+
+
+/**
+ * Run `update` through the View Transitions API (or apply it directly).
+ *
+ * `style` decides whether the browser animates at all: a plain CSS-entrance
+ * style never reaches this function's happy path.
+ */
+export const runTransition = (
+  style: TransitionStyle,
+  update: () => void,
+  options: RunTransitionOptions = {},
+): void => {
+  if (
+    !isViewTransitionStyle(style) ||
+    !supportsViewTransitions() ||
+    prefersReducedMotion() ||
+    (!options.force && isPerfLite())
+  ) {
+    update();
+    return;
+  }
+
+  scheduleTransition(update);
 };
 
 /**

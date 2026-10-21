@@ -1,5 +1,6 @@
 import { lazy, Suspense, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { motion, useReducedMotion } from "framer-motion";
 import { Camera, Edit2, MessageSquare, Plus, Smile, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import { OnlineStatus } from "@/components/OnlineStatus";
 import { UserAvatar } from "@/components/UserAvatar";
 import { StoryRing } from "@/components/stories/StoryRing";
 import { parseCssToStyle, type ProfileCustomization } from "@/utils/profileCustomization";
+import { hoverLift, pressFeedback, springFor } from "@/lib/motion";
 import type { AvatarDragHandlers, Profile } from "./types";
 
 // Heavy interaction-only component — split into a separate chunk so the
@@ -56,6 +58,12 @@ export interface ProfileHeaderProps {
   onOpenStories?: () => void;
   /** Opens the composer (own profile, no live story). */
   onAddStory?: () => void;
+  /** The avatar circle — the page uses it as the origin of the
+      avatar → gallery morph (see components/profile/AvatarMorph). */
+  avatarRef?: (el: HTMLElement | null) => void;
+  /** A morph is in flight: the avatar's own furniture (the add-story badge) gets
+      out of the way instead of sitting on top of the flying photo. */
+  avatarMorphing?: boolean;
 }
 
 /** Header row (avatar + identity + actions) — rendered inside the active
@@ -89,8 +97,11 @@ export function ProfileHeader({
   storyCloseFriends = false,
   onOpenStories,
   onAddStory,
+  avatarRef,
+  avatarMorphing = false,
 }: ProfileHeaderProps) {
   const { t } = useTranslation();
+  const reduceMotion = useReducedMotion();
   const nicknameEmojiButtonRef = useRef<HTMLDivElement>(null);
 
   return (
@@ -100,13 +111,18 @@ export function ProfileHeader({
         {avatarVisible && !forumMode && (
           <StoryRing total={storyCount} read={storyReadCount} closeFriends={storyCloseFriends}>
             <div className="relative">
-              <div
+              <motion.div
                 {...(isOwnProfile && isEditing ? avatarDragHandlers : {})}
-                className={`w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-muted flex items-center justify-center overflow-hidden cursor-pointer hover:opacity-80 transition-all duration-150 ${
+                {...hoverLift(reduceMotion, 1.03)}
+                {...pressFeedback(reduceMotion, 0.95)}
+                transition={springFor("snappy", reduceMotion)}
+                className={`w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-muted flex items-center justify-center overflow-hidden cursor-pointer ${
                   isOwnProfile && isEditing && isAvatarDragging
-                    ? "ring-2 ring-primary ring-offset-2 ring-offset-background scale-105"
+                    ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
                     : ""
                 }`}
+                animate={{ scale: isOwnProfile && isEditing && isAvatarDragging ? 1.05 : 1 }}
+                ref={avatarRef}
                 onClick={() => {
                   // Tapping the avatar opens the story when there is one to
                   // watch — the photo itself stays reachable from the menu.
@@ -115,7 +131,7 @@ export function ProfileHeader({
                 }}
               >
                 <UserAvatar src={avatarUrl} userId={profile.id} alt="Avatar" className="w-full h-full" />
-              </div>
+              </motion.div>
               {avatarUploading && <AvatarUploadProgress percent={avatarUploadPercent} />}
               {isOwnProfile && isEditing && (
                 <label className="absolute -bottom-1 -right-1 w-8 h-8 bg-primary rounded-full flex items-center justify-center cursor-pointer hover:bg-primary/80 transition-colors">
@@ -129,15 +145,25 @@ export function ProfileHeader({
                 </label>
               )}
               {isOwnProfile && !isEditing && onAddStory && (
-                <button
+                <motion.button
                   type="button"
                   onClick={onAddStory}
                   aria-label={t("stories.addYourStory")}
                   title={t("stories.addYourStory")}
-                  className="absolute -bottom-1 -right-1 grid h-7 w-7 place-items-center rounded-full border-2 border-background bg-primary text-primary-foreground transition-transform hover:scale-105"
+                  {...hoverLift(reduceMotion, 1.08)}
+                  {...pressFeedback(reduceMotion, 0.9)}
+                  // Leaves on a spring before the photo lifts (it belongs to the
+                  // avatar, not to the photo) and springs back when it lands.
+                  animate={{
+                    scale: avatarMorphing ? 0.2 : 1,
+                    opacity: avatarMorphing ? 0 : 1,
+                  }}
+                  transition={springFor("pop", reduceMotion)}
+                  className="absolute -bottom-1 -right-1 grid h-7 w-7 place-items-center rounded-full border-2 border-background bg-primary text-primary-foreground"
+                  style={{ pointerEvents: avatarMorphing ? "none" : undefined }}
                 >
                   <Plus className="h-3.5 w-3.5" strokeWidth={3} />
-                </button>
+                </motion.button>
               )}
             </div>
           </StoryRing>
