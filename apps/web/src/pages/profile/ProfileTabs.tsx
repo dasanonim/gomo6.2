@@ -1,7 +1,7 @@
-import { lazy, Suspense, useCallback, useLayoutEffect, useRef, useEffect, useState } from "react";
+import { lazy, Suspense, useLayoutEffect, useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { AnimatePresence, animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useScroll, useSpring, useTransform } from "motion/react";
+import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { ChevronDown, Gift, Layers, LayoutGrid, MessageSquareText, Plus, Trophy, Users, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -36,11 +36,6 @@ export type ProfileTab = "all" | "wall" | "achievements" | "threads" | "gifts" |
 
 /** Rendered left-to-right order of the tabs — the axis content travels along. */
 const TAB_ORDER: ProfileTab[] = ["all", "wall", "achievements", "threads", "gifts", "subscribers"];
-
-/** How far before the pin the bar starts sliding under the header. */
-const TUCK_LEAD = 180;
-/** How far the bar travels under the header — almost its whole height. */
-const TUCK_PX = 34;
 
 export interface ProfileTabsProps {
   activeTab: ProfileTab;
@@ -296,80 +291,19 @@ export function ProfileTabs({
   // the header hides/shows), so no extra geometry bookkeeping is needed.
   const [barStuck, setBarStuck] = useState(false);
 
-  // ── Scroll tug ───────────────────────────────────────────────────────────
-  // A pinned bar is otherwise dead flat while the page moves under it. This
-  // gives it a physical reaction: scrolling down tucks it up by a few pixels,
-  // and the moment the gesture stops it springs back into place with a
-  // barely-there overshoot. The lift follows the scroll (a flick lifts more,
-  // a slow drag almost nothing), so it reads as weight, not as an effect.
-  // Transform only — sticky geometry and native scrolling are untouched.
-  const nudgeTarget = useMotionValue(0);
-  // No overshoot here on purpose: this is a 3px reaction, and a spring that
-  // overshoots by even a pixel reads as a glitch at this amplitude.
-  const nudge = useSpring(nudgeTarget, SPRING.reveal);
-  const nudgeTimerRef = useRef<number | null>(null);
-  const lastScrollYRef = useRef<number | null>(null);
-  const { scrollY } = useScroll();
-
-  // ── Suck under the header ────────────────────────────────────────────────
-  // The bar starts sliding under the header before it pins: the last
-  // TUCK_LEAD pixels of its approach are mapped to TUCK_PX of upward travel,
-  // so it arrives already swallowed. The instant it pins it is released and
-  // springs down into its resting place. Scrolling up before the pin reverses
-  // the suck pixel for pixel, and the bar's own box is never transformed — only
-  // its content — so the stuck measurement stays honest.
-  const tuck = useMotionValue(0);
-  const tuckAnimRef = useRef<ReturnType<typeof animate> | null>(null);
-  const lastBarTopRef = useRef(Number.POSITIVE_INFINITY);
-  const barY = useTransform([tuck, nudge], (latest: number[]) => latest[0] + latest[1]);
-
+  // ── Pin spring ───────────────────────────────────────────────────────────
+  // The bar arrives a few pixels high and springs into place the moment it
+  // attaches to the header. No scroll tracking, no latches — one gesture.
+  const pinY = useMotionValue(0);
   useLayoutEffect(() => {
-    if (!barStuck) {
-      tuckAnimRef.current?.stop();
-      tuckAnimRef.current = null;
+    if (!barStuck || reduceMotion) {
+      pinY.set(0);
       return;
     }
-    tuckAnimRef.current?.stop();
-    tuck.set(-TUCK_PX);
-    tuckAnimRef.current = animate(tuck, 0, springFor("eject", reduceMotion));
-    return () => {
-      tuckAnimRef.current?.stop();
-      tuckAnimRef.current = null;
-    };
-  }, [barStuck, tuck, reduceMotion]);
-
-  const settleNudge = useCallback(() => {
-    if (nudgeTimerRef.current !== null) {
-      window.clearTimeout(nudgeTimerRef.current);
-      nudgeTimerRef.current = null;
-    }
-    nudgeTarget.set(0);
-  }, [nudgeTarget]);
-
-  useEffect(() => () => {
-    if (nudgeTimerRef.current !== null) window.clearTimeout(nudgeTimerRef.current);
-  }, []);
-
-  useMotionValueEvent(scrollY, "change", (y) => {
-    if (reduceMotion) return;
-    const prev = lastScrollYRef.current;
-    lastScrollYRef.current = y;
-    if (prev === null) return;
-    const dy = y - prev;
-
-    if (!barStuck) {
-      settleNudge();
-      return;
-    }
-
-    if (dy > 0.5) {
-      nudgeTarget.set(Math.max(-3, nudgeTarget.get() - dy * 0.04));
-      if (nudgeTimerRef.current !== null) window.clearTimeout(nudgeTimerRef.current);
-      nudgeTimerRef.current = window.setTimeout(settleNudge, 90);
-      return;
-    }
-    if (dy < -0.5) settleNudge();
-  });
+    pinY.set(-12);
+    const controls = animate(pinY, 0, springFor("eject", reduceMotion));
+    return () => controls.stop();
+  }, [barStuck, pinY, reduceMotion]);
 
   useEffect(() => {
     const bar = stickyBarRef.current;
@@ -380,35 +314,7 @@ export function ProfileTabs({
       // in sync: cheaper than getComputedStyle (no style recalc) and identical.
       const pad =
         parseFloat(document.documentElement.style.getPropertyValue("--app-header-pad")) || 0;
-      // The bar itself moves with the suck, so its own rect cannot locate its
-      // flow position. The body wrapper is never sticky or transformed and
-      // directly follows the bar, so (body top − bar height) is the honest
-      // untransformed top — the same trick snapToBar already uses.
-      const body = tabBodyWrapRef.current;
-      const barHeight = bar.getBoundingClientRect().height;
-      const top = body
-        ? body.getBoundingClientRect().top - barHeight
-        : bar.getBoundingClientRect().top;
-      const stuck = top <= pad + 1;
-
-      if (!stuck && !reduceMotion) {
-        // Pre-pin suck: only while the bar is still approaching the header.
-        // Moving down maps the last TUCK_LEAD pixels of the approach to TUCK_PX
-        // of travel under the header; scrolling back up releases it at once so
-        // there is never a jump when the bar unpins.
-        const approaching = top < lastBarTopRef.current - 0.5;
-        tuckAnimRef.current?.stop();
-        tuckAnimRef.current = null;
-        if (approaching) {
-          const distance = Math.max(0, top - pad);
-          const pull = 1 - Math.min(1, distance / TUCK_LEAD);
-          tuck.set(-pull * TUCK_PX);
-        } else {
-          tuck.set(0);
-        }
-      }
-
-      lastBarTopRef.current = top;
+      const stuck = bar.getBoundingClientRect().top <= pad + 1;
       setBarStuck((prev) => (prev === stuck ? prev : stuck));
     };
 
@@ -433,7 +339,7 @@ export function ProfileTabs({
       document.removeEventListener("visibilitychange", update);
       ro.disconnect();
     };
-  }, [reduceMotion, tuck]);
+  }, []);
 
   const snapToBar = () => {
     const bar = stickyBarRef.current;
@@ -583,7 +489,7 @@ export function ProfileTabs({
       <motion.div
         ref={stickyBarRef}
         className={`profile-tabbar sticky z-30 ${panel ? "profile-tabbar--panel overflow-hidden border border-border/60" : "border-b border-border"}${barStuck && !panel ? " profile-tabbar--stuck" : ""}`}
-        style={{ top: "var(--app-header-pad, 0px)", y: barY }}
+        style={{ top: "var(--app-header-pad, 0px)", y: pinY }}
       >
         {/* One background layer behind the content: an opaque strip while the
             bar travels with the page, frosted once it pins. It sits on the bar
