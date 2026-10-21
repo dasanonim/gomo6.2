@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ImagePlus, Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -29,7 +29,7 @@ import { useStoriesStore } from "@/stores/storiesStore";
 import { hasUnreadCloseFriends } from "@/types/stories";
 import { UsernameDialog, AvatarGalleryDialog } from "./profile/ProfileDialogs";
 import type { Profile, ProfilePrivacyData } from "./profile/types";
-import { AnimatePresence, motion, useReducedMotion, useScroll, useTransform } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   EASE_OUT_EXPO,
   hoverLift,
@@ -39,6 +39,7 @@ import {
   springFor,
 } from "@/lib/motion";
 import { AvatarMorph } from "@/components/profile/AvatarMorph";
+import { RecedeOnScroll } from "@/components/profile/RecedeOnScroll";
 import { toViewportRect, type ViewportRect } from "@/utils/domRect";
 import { ForumProfilePanel } from "./profile/ForumProfilePanel";
 import { DEFAULT_FORUM_SIDE, PROFILE_VIEW_MODE_EVENT, getProfileViewMode, type ForumSide } from "@/lib/profileViewMode";
@@ -135,25 +136,6 @@ const Profile = () => {
   useEffect(() => {
     didPaintRef.current = true;
   }, []);
-
-  // ── Header recede ─────────────────────────────────────────────────────────
-  // The identity block (avatar, name, banner) shrinks a touch and loses a little
-  // contrast as it scrolls out, so it recedes instead of being cut off by the
-  // pinned tab bar. Scroll-linked on purpose: no state per frame, no re-render,
-  // geometry on `transform` only. Measured once per layout change (doc top +
-  // height) so the transform callback never reads layout.
-  const headerBlockRef = useRef<HTMLDivElement | null>(null);
-  const headerExitRef = useRef(1);
-  const { scrollY } = useScroll();
-  const recede = (y: number) => {
-    const p = Math.min(1, Math.max(0, y / headerExitRef.current));
-    // Smoothstep: the first few pixels barely move the block, then it is drawn
-    // in decisively — acceleration reads as suction instead of a linear zoom.
-    return p * p * (3 - 2 * p);
-  };
-  const headerScale = useTransform(scrollY, (y) => 1 - 0.24 * recede(y));
-  const headerLift = useTransform(scrollY, (y) => -44 * recede(y));
-  const headerFade = useTransform(scrollY, (y) => 1 - 0.6 * recede(y));
 
   // Resolve the effective variant from the owner's stored choice.
   useEffect(() => {
@@ -538,25 +520,6 @@ const Profile = () => {
   const forumMode = forumLayout;
   const panelVisibleRef = useRef(false);
 
-  // Measure where the identity block ends in the document so the scroll-linked
-  // recede has a stable range (no layout reads inside the transform callback).
-  useLayoutEffect(() => {
-    const measure = () => {
-      const el = headerBlockRef.current;
-      if (!el) {
-        headerExitRef.current = 1;
-        return;
-      }
-      const rect = el.getBoundingClientRect();
-      // Complete the pull-in while the block is still partly on screen (70% of
-      // its height has passed the top edge), not after it is already gone.
-      headerExitRef.current = Math.max(1, rect.top + window.scrollY + rect.height * 0.7);
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [profile?.id, forumMode, editing.isEditing]);
-
   useEffect(() => {
     panelVisibleRef.current = panelVisible;
   }, [panelVisible]);
@@ -920,14 +883,7 @@ const Profile = () => {
             </>
           ) : (
           <>
-          <motion.div
-            ref={headerBlockRef}
-            style={
-              prefersReducedMotion
-                ? undefined
-                : { scale: headerScale, y: headerLift, opacity: headerFade, transformOrigin: "50% 0%" }
-            }
-          >
+          <RecedeOnScroll>
           {cardVariantActive ? (
             <div className="relative overflow-hidden">
               <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url("${bgUrl}")` }} />
@@ -990,7 +946,7 @@ const Profile = () => {
           ) : (
             headerElement
           )}
-          </motion.div>
+          </RecedeOnScroll>
 
           <AnimatePresence mode="wait">
           {editing.isEditing ? (
@@ -1027,14 +983,16 @@ const Profile = () => {
             >
               {/** stats visibility logic — moved to the ProfileStats component; the
                   "card" background variant renders it inside the card. */}
-              {cardVariantActive ? null : (
-                <ProfileStats profile={profile} show={statsSummaryAllowed} onOpenWall={() => setActiveTab('wall')} />
+              {!cardVariantActive && statsSummaryAllowed && (
+                <RecedeOnScroll intensity={0.85}>
+                  <ProfileStats profile={profile} show onOpenWall={() => setActiveTab('wall')} />
+                </RecedeOnScroll>
               )}
 
               {profile.bio && !isNonFriendOnPrivate && (
-                <div className="text-sm">
+                <RecedeOnScroll intensity={0.85} className="text-sm">
                   <ProcessedContent content={profile.bio} contentJson={(profile as { bio_json?: unknown }).bio_json} currentUserId={currentUser?.id || null} isAdmin={isModerator} currentUsername={currentUserUsername} currentUserColor={currentUserColor} postAuthorId={profile.id} postAuthorPublicId={profile.public_id} authorUsername={profile.username} />
-                </div>
+                </RecedeOnScroll>
               )}
 
               {/* Spotify Now Playing */}
