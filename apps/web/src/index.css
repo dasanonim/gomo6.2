@@ -742,6 +742,11 @@ html.perf-lite .app-header-glass::before {
 
 .profile-tabbar--stuck .profile-tabbar__bg {
   --tabbar-glass-blur: 14px;
+  /* Extend the pane upward when pinned: while the swallowed part springs back
+     out from under the header, the strip above the bar must read as the same
+     surface, never as an empty gap. It sits behind the header when one is
+     visible and off-screen when it is not. */
+  top: -1.25rem;
   background-color: oklch(var(--background) / 0.62);
   -webkit-backdrop-filter: blur(var(--tabbar-glass-blur)) saturate(150%);
   backdrop-filter: blur(var(--tabbar-glass-blur)) saturate(150%);
