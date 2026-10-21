@@ -1,7 +1,7 @@
 import { lazy, Suspense, useLayoutEffect, useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useMotionValueEvent, useReducedMotion, useScroll } from "motion/react";
 import { ChevronDown, Gift, Layers, LayoutGrid, MessageSquareText, Plus, Trophy, Users, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import {
   travelDirection,
 } from "@/lib/motion";
 import { useProfileAlbums } from "./useProfileAlbums";
+import { releasePullPx } from "@/lib/scrollResistance";
 import { TrophyShowcase } from "@/components/TrophyShowcase";
 import type { GiftCatalogItem } from "@/components/GiftCard";
 import type { Trophy as TrophyData } from "@/utils/trophies";
@@ -295,6 +296,53 @@ export function ProfileTabs({
   // the header hides/shows), so no extra geometry bookkeeping is needed.
   const [barStuck, setBarStuck] = useState(false);
 
+  // The strip above the tabs is latched like a receding profile block: it opens
+  // the instant the bar pins, but does not fold back the moment the bar
+  // releases — the user has to pull it away. The pull shortens with speed, so a
+  // flick frees it almost at once while a slow drag has to travel further.
+  const [stripOpen, setStripOpen] = useState(false);
+  const stripPullRef = useRef(0);
+  const stripLastYRef = useRef<number | null>(null);
+  const stripLastTRef = useRef(0);
+  const { scrollY } = useScroll();
+
+  useEffect(() => {
+    if (!barStuck) return;
+    setStripOpen(true);
+    stripPullRef.current = 0;
+  }, [barStuck]);
+
+  useMotionValueEvent(scrollY, "change", (y) => {
+    if (reduceMotion) return;
+    const now = performance.now();
+    const prev = stripLastYRef.current;
+    stripLastYRef.current = y;
+    if (prev === null) {
+      stripLastTRef.current = now;
+      return;
+    }
+    const dt = Math.max(8, now - stripLastTRef.current);
+    stripLastTRef.current = now;
+    const dy = y - prev;
+
+    if (barStuck || !stripOpen) {
+      stripPullRef.current = 0;
+      return;
+    }
+    if (dy > 0.5) {
+      // Scrolling back down: the pull is off, the bar will pin again shortly.
+      stripPullRef.current = 0;
+      return;
+    }
+    if (dy > -0.5) return;
+
+    stripPullRef.current += Math.abs(dy);
+    if (stripPullRef.current >= releasePullPx(Math.abs(dy) / dt, 100, 24)) {
+      setStripOpen(false);
+      stripPullRef.current = 0;
+    }
+  });
+
   useEffect(() => {
     const bar = stickyBarRef.current;
     if (!bar) return;
@@ -497,7 +545,7 @@ export function ProfileTabs({
             below settle with weight instead of snapping. Small avatar on the
             left, the person's name on the right. */}
         <AnimatePresence initial={false}>
-          {barStuck && !panel && (
+          {(reduceMotion ? barStuck : stripOpen) && !panel && (
             <motion.div
               key="compact-identity"
               initial={reduceMotion ? false : { height: 0, opacity: 0 }}

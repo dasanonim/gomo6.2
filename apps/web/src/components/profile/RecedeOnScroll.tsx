@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
-import { motion, useReducedMotion, useScroll, useTransform } from "motion/react";
+import {
+  animate,
+  motion,
+  useMotionValue,
+  useMotionValueEvent,
+  useReducedMotion,
+  useScroll,
+  useTransform,
+} from "motion/react";
+import { springFor } from "@/lib/motion";
+import { releasePullPx } from "@/lib/scrollResistance";
 
 export interface RecedeOnScrollProps {
   children: ReactNode;
@@ -13,17 +23,26 @@ export interface RecedeOnScrollProps {
   intensity?: number;
 }
 
+type Mode = "follow" | "locked" | "releasing";
+
 /**
  * Pulls a block "into" the top edge as the page scrolls: the block scales down,
  * rises and loses contrast just before it leaves the viewport, then the next
  * block does the same. Every instance measures its own document box, so stacked
- * blocks (header → stats → bio) are drawn in one after another with no shared
- * timeline and no per-frame React state.
+ * blocks (header → stats → bio → pins) are drawn in one after another with no
+ * shared timeline and no per-frame React state.
+ *
+ * Coming back up is NOT the same curve in reverse. Once a block has been drawn
+ * in past the visible edge it latches: the page keeps scrolling, the block
+ * stays compressed, and it takes a deliberate upward pull (more distance the
+ * slower you scroll) to free it. The release runs on the under-damped `eject`
+ * spring, so it overshoots ~6–8% and settles instead of sliding back. A scroll
+ * down at any point cancels the pull or the release and re-latches immediately,
+ * so the gesture is always interruptible and native scrolling is never blocked.
  *
  * The measuring wrapper never receives the transform — only the inner element
  * does — so `getBoundingClientRect` on the wrapper keeps returning the layout
- * box even while the content is scaled, and the range can be re-measured safely
- * after content grows.
+ * box even while the content is scaled.
  */
 export function RecedeOnScroll({
   children,
@@ -37,6 +56,13 @@ export function RecedeOnScroll({
   const spanRef = useRef(1);
   const reduce = useReducedMotion();
   const { scrollY } = useScroll();
+
+  const progress = useMotionValue(0);
+  const modeRef = useRef<Mode>("follow");
+  const pullRef = useRef(0);
+  const lastYRef = useRef<number | null>(null);
+  const lastTRef = useRef(0);
+  const releaseRef = useRef<ReturnType<typeof animate> | null>(null);
 
   const measure = useCallback(() => {
     const el = outerRef.current;
@@ -63,15 +89,73 @@ export function RecedeOnScroll({
     };
   }, [measure]);
 
-  const pull = (y: number) => {
+  useEffect(() => () => releaseRef.current?.stop(), []);
+
+  const rawAt = (y: number) => {
     const p = Math.min(1, Math.max(0, (y - startRef.current) / spanRef.current));
     // Smoothstep: barely moves at first, then accelerates — reads as suction.
     return p * p * (3 - 2 * p);
   };
 
-  const scale = useTransform(scrollY, (y) => 1 - 0.24 * intensity * pull(y));
-  const lift = useTransform(scrollY, (y) => -44 * intensity * pull(y));
-  const fade = useTransform(scrollY, (y) => 1 - 0.6 * intensity * pull(y));
+  useMotionValueEvent(scrollY, "change", (y) => {
+    if (reduce) return;
+
+    const now = performance.now();
+    const prev = lastYRef.current;
+    lastYRef.current = y;
+    if (prev === null) {
+      lastTRef.current = now;
+      progress.set(rawAt(y));
+      return;
+    }
+
+    const dt = Math.max(8, now - lastTRef.current);
+    lastTRef.current = now;
+    const dy = y - prev;
+    const raw = rawAt(y);
+
+    // Down: direct manipulation again. Any latch, pull or release is cancelled.
+    if (dy > 0.5) {
+      releaseRef.current?.stop();
+      releaseRef.current = null;
+      modeRef.current = "follow";
+      pullRef.current = 0;
+      progress.set(raw);
+      return;
+    }
+    if (dy > -0.5) return;
+
+    // Up: latch the block at the state it had when the direction flipped — but
+    // only while it is still meaningfully on screen. A block that is already
+    // fully out must come back normally, otherwise the user would be pulling on
+    // an empty layout box.
+    if (modeRef.current === "follow") {
+      if (raw > 0.03 && raw < 0.8) {
+        modeRef.current = "locked";
+        pullRef.current = 0;
+      } else {
+        progress.set(raw);
+        return;
+      }
+    }
+
+    if (modeRef.current === "locked") {
+      pullRef.current += Math.abs(dy);
+      const speed = Math.abs(dy) / dt;
+      if (pullRef.current >= releasePullPx(speed) || raw <= 0.01) {
+        modeRef.current = "releasing";
+        pullRef.current = 0;
+        releaseRef.current?.stop();
+        // Fully open, not just "back to the scroll position": the point of the
+        // gesture is that the block leaps out once it gives way.
+        releaseRef.current = animate(progress, 0, springFor("eject", reduce));
+      }
+    }
+  });
+
+  const scale = useTransform(progress, (p) => 1 - 0.24 * intensity * p);
+  const lift = useTransform(progress, (p) => -44 * intensity * p);
+  const fade = useTransform(progress, (p) => 1 - 0.6 * intensity * p);
 
   return (
     <div ref={outerRef} className={className}>
