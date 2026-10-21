@@ -126,7 +126,7 @@ export function ProfileHeader({
       initial={reduceMotion ? false : "hidden"}
       animate="show"
       variants={CASCADE}
-      className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+      className="flex items-center justify-between gap-2 sm:gap-3"
     >
       <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
         {/* Avatar */}
@@ -293,7 +293,7 @@ export function ProfileHeader({
           transition={itemTransition}
           style={morphOrigin({ x: 1 })}
           {...pressFeedback(reduceMotion)}
-          className="shrink-0 self-end sm:self-auto"
+          className="shrink-0"
         >
           <Button
             variant="ghost"
@@ -317,18 +317,18 @@ export function ProfileHeader({
           variants={item}
           transition={itemTransition}
           style={morphOrigin({ x: 1 })}
-          className="flex shrink-0 items-center gap-2 self-end sm:self-auto"
+          className="flex shrink-0 items-center gap-1.5 sm:gap-2"
         >
           <motion.div {...pressFeedback(reduceMotion)}>
             <Button
               variant="default"
               size="sm"
               onClick={onOpenMessages}
-              className="h-9 gap-1.5 rounded-xl px-4 text-sm font-medium shadow-sm outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              className="h-9 w-9 gap-1.5 rounded-xl px-0 text-sm font-medium shadow-sm outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:w-auto sm:px-4"
               title={t("profile.write")}
             >
               <MessageSquare className="h-4 w-4" />
-              <span>{t("profile.write")}</span>
+              <span className="hidden sm:inline">{t("profile.write")}</span>
             </Button>
           </motion.div>
           <FriendButton userId={profile.id} isOwnProfile={isOwnProfile} />
