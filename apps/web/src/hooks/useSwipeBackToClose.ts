@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { animate, useMotionValue } from "framer-motion";
+import { SPRING } from "@/lib/motion";
 
 // ─── Swipe-right-to-go-back (mobile chat → conversation list) ──────────────
 // The chat panel follows the finger horizontally, revealing the conversation
@@ -119,7 +120,7 @@ export function useSwipeBackToClose(options: { enabled: boolean; onBack: () => v
           });
         } else {
           // Snap back with a spring (the WallPost overlay feel).
-          animate(x, 0, { type: "spring", stiffness: 300, damping: 30 });
+          animate(x, 0, SPRING.sheet);
         }
       }
     };

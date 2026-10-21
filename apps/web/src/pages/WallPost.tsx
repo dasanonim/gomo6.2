@@ -10,6 +10,7 @@ import { canStartOverlayDrag } from "@/utils/overlaySwipeGesture";
 import { recordContentView } from "@/utils/viewHistory";
 import type { WallPost as WallPostData } from "@/utils/wallNormalizers";
 import { isPublicId } from "@/utils/entityUrl";
+import { SPRING } from "@/lib/motion";
 
 const SWIPE_THRESHOLD = 90;
 
@@ -51,7 +52,7 @@ const WallPost = () => {
   // Slide the overlay in from the right on mount.
   useEffect(() => {
     if (!isOverlay) return;
-    animate(x, 0, { type: "spring", stiffness: 300, damping: 30 });
+    animate(x, 0, SPRING.sheet);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -271,7 +272,7 @@ const WallPost = () => {
         if (intentional) {
           close();
         } else {
-          animate(x, 0, { type: "spring", stiffness: 300, damping: 30 });
+          animate(x, 0, SPRING.sheet);
         }
       }}
     >

@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { SubscriptionList } from "@/components/SubscriptionList";
 import { useFriendsStore } from "@/stores/friendsStore";
+import { SPRING } from "@/lib/motion";
 import { transitionEnterClass } from "@/lib/viewTransitions";
 import { useTransitionStyle } from "@/hooks/useTransitionStyle";
 
@@ -75,7 +76,7 @@ export const SubscriptionsPanel = ({ userId, limit }: { userId: string; limit?: 
                 <motion.span
                   layoutId="subscriptions-panel-toggle"
                   className="absolute inset-0 rounded-full bg-background shadow-sm"
-                  transition={{ type: "spring", stiffness: 450, damping: 36 }}
+                  transition={SPRING.snappy}
                 />
               )}
               <span className="relative z-10">

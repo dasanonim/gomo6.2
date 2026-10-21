@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { SPRING } from "@/lib/motion";
 import { Plus, Check, Users, UserMinus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -31,7 +32,7 @@ const ICON_ANIM = {
   initial: { scale: 0.3, rotate: -90, opacity: 0 },
   animate: { scale: 1, rotate: 0, opacity: 1 },
   exit: { scale: 0.3, rotate: 90, opacity: 0 },
-  transition: { type: "spring" as const, stiffness: 500, damping: 26 },
+  transition: SPRING.pop,
 };
 
 type Pulse = "follow" | "friend" | "unfollow";

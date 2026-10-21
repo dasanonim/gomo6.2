@@ -4,6 +4,7 @@
 
 import { forwardRef, useCallback, useRef, useState, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import { springFor } from "@/lib/motion";
 
 /** Mark a child so the ink blob glides under it. */
 export const INK_ATTR = "data-ink";
@@ -81,7 +82,7 @@ export const InkBar = ({
         aria-hidden="true"
         initial={false}
         animate={{ x: ink.x, y: ink.y, opacity: ink.visible ? 1 : 0, scale: ink.visible ? 1 : 0.55 }}
-        transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 700, damping: 38, mass: 0.6 }}
+        transition={springFor("snappy", reduceMotion)}
         className={`pointer-events-none absolute left-0 top-0 z-0 rounded-full bg-primary/30 blur-[7px] ${blobClassName}`}
       />
       {children}
