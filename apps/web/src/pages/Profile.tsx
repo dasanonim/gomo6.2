@@ -54,6 +54,10 @@ const Profile = () => {
   const prefersReducedMotion = useReducedMotion();
 
   const [profile, setProfile] = useState<Profile | null>(null);
+  // A route parameter can resolve to nothing (deleted account, or an old public
+  // number that was reissued). Without this flag the page rendered an empty
+  // <main> forever — a link to a dead profile used to look like a broken site.
+  const [notFound, setNotFound] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ id: string } | null>(null);
   const [isModerator, setIsModerator] = useState(false);
   const [currentUserUsername, setCurrentUserUsername] = useState("");
@@ -168,6 +172,8 @@ const Profile = () => {
     const profileData = await warmProfilePageRow(localSessionUser?.id, userId ?? "");
 
     const data = profileData;
+
+    setNotFound(!data);
 
     // Paint the row the moment it is known — the route preloader usually has it
     // cached already, so this lands immediately after the swap. Privacy,
@@ -640,6 +646,20 @@ const Profile = () => {
             )}
           </>
         ) : null)}
+        {!profile && notFound && (
+          <motion.div
+            initial={prefersReducedMotion ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={springFor("standard", prefersReducedMotion)}
+            className="mt-16 flex flex-col items-center gap-3 text-center"
+          >
+            <h1 className="text-xl font-bold">{t("profile.notFoundTitle")}</h1>
+            <p className="max-w-sm text-sm text-muted-foreground">{t("profile.notFoundHint")}</p>
+            <Button variant="secondary" className="mt-2" onClick={() => navigate("/")}>
+              {t("common.goHome")}
+            </Button>
+          </motion.div>
+        )}
         {profile && (
           <div className={transitionEnterClass(transitionStyle)}>
           {/* Two-column forum layout: when a side is active, the relocated
