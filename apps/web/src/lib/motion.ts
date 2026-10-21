@@ -44,6 +44,7 @@ export const SPRING = {
   soft: { type: "spring", stiffness: 260, damping: 30, mass: 1 },
   sheet: { type: "spring", stiffness: 300, damping: 32, mass: 0.9 },
   pop: SPRING_BOUNCY,
+  bouncy: SPRING_BOUNCY,
   /**
    * A measured dimension — `width`/`height` of a label, row or chip that opens
    * to its content. Deliberately over-damped: a spring overshoot on a measured

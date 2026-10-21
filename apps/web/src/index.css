@@ -784,6 +784,37 @@ html.perf-lite .profile-tabbar--stuck .profile-tabbar__bg {
   backdrop-filter: blur(var(--surface-blur, 0px)) saturate(var(--surface-saturate, 100%));
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Overlay surfaces — spring in, short tween out
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Entry is Framer (components/ui/overlay-motion.tsx): opacity + scale + blur
+   anchored to the Radix transform-origin. Exit is this keyframe because Radix
+   unmounts the content on `animationend`; without a CSS animation the panel
+   would disappear in one frame. The fade and the scale share the same expo
+   curve so the closing reads as one object stepping back, not two effects. */
+@keyframes gomo-overlay-out {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+    filter: blur(4px);
+  }
+}
+
+.gomo-overlay-surface {
+  will-change: transform, opacity;
+}
+
+.gomo-overlay-surface[data-state="closed"] {
+  animation: gomo-overlay-out 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gomo-overlay-surface[data-state="closed"] {
+    animation-duration: 1ms;
+  }
+}
+
 /* Soft content surface for cards, the feed sidebar and panels: `--card` at
    40% over the page background. Mixed to an OPAQUE colour so the surface is
    identical everywhere — a translucent fill would read lighter on pages with
