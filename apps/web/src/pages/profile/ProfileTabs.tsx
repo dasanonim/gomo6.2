@@ -1,15 +1,23 @@
 import { lazy, Suspense, useLayoutEffect, useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ChevronDown, Gift, Layers, LayoutGrid, MessageSquareText, Plus, Trophy, Users, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ProfileWall } from "@/components/ProfileWall";
 import { ProfileAlbumView } from "@/components/ProfileAlbumView";
-import { useFriendsStore } from "@/stores/friendsStore";
-import { springFor, spatialEnter, SPATIAL_OFFSET, SPRING, travelDirection } from "@/lib/motion";
+import {
+  EASE_OUT_EXPO,
+  morphOrigin,
+  morphTransition,
+  pressFeedback,
+  SPATIAL_OFFSET,
+  springFor,
+  SPRING,
+  travelDirection,
+} from "@/lib/motion";
 import { useProfileAlbums } from "./useProfileAlbums";
 import { TrophyShowcase } from "@/components/TrophyShowcase";
 import type { GiftCatalogItem } from "@/components/GiftCard";
@@ -66,8 +74,6 @@ export interface ProfileTabsProps {
   trophiesLoaded: boolean;
   // Gifts
   giftCatalog: GiftCatalogItem[];
-  giftCount: number;
-  giftCountLoaded: boolean;
   onGiftSent: () => void;
 }
 
@@ -75,7 +81,6 @@ interface TabDef {
   key: ProfileTab;
   icon: LucideIcon;
   label: string;
-  count?: string;
 }
 
 /** Animated tab button: every tab is an icon; the active one expands to show
@@ -84,9 +89,12 @@ interface TabDef {
  * unfolds after the strip lands — then collapses when switching away. */
 const TabButton = ({ tab, active, onClick }: { tab: TabDef; active: boolean; onClick: () => void }) => {
   const Icon = tab.icon;
+  const reduceMotion = useReducedMotion();
   return (
     <motion.button
       onClick={onClick}
+      {...pressFeedback(reduceMotion)}
+      transition={springFor("snappy", reduceMotion)}
       className={`relative flex items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-2 text-xs sm:text-sm font-medium transition-colors ${
         active ? "text-primary" : "text-muted-foreground hover:text-foreground"
       }`}
@@ -102,11 +110,14 @@ const TabButton = ({ tab, active, onClick }: { tab: TabDef; active: boolean; onC
       <motion.span
         initial={false}
         animate={{ width: active ? "auto" : 0, opacity: active ? 1 : 0 }}
-        transition={{ duration: 0.22, ease: "easeOut", delay: active ? 0.16 : 0 }}
+        transition={{
+          ...springFor("reveal", reduceMotion),
+          opacity: { duration: reduceMotion ? 0 : 0.16, ease: EASE_OUT_EXPO },
+        }}
+        style={morphOrigin({ x: 0 })}
         className="relative z-10 overflow-hidden whitespace-nowrap"
       >
         {tab.label}
-        {tab.count}
       </motion.span>
     </motion.button>
   );
@@ -136,30 +147,40 @@ const WallTabButton = ({
   chevronTitle: string;
 }) => {
   const Icon = LayoutGrid;
+  const reduceMotion = useReducedMotion();
   return (
     <div
       className={`relative flex items-center rounded-lg text-xs sm:text-sm font-medium transition-colors ${
         active ? "text-primary" : "text-muted-foreground hover:text-foreground"
       }`}
     >
-      <button
+      <motion.button
         onClick={onTabClick}
+        {...pressFeedback(reduceMotion)}
+        transition={springFor("snappy", reduceMotion)}
         className="flex items-center gap-1.5 py-2 pl-2.5 sm:pl-3 pr-1"
       >
         <Icon className="relative z-10 h-4 w-4 shrink-0" />
         <motion.span
           initial={false}
           animate={{ width: active ? "auto" : 0, opacity: active ? 1 : 0 }}
-          transition={{ duration: 0.22, ease: "easeOut", delay: active ? 0.16 : 0 }}
+          transition={{
+            ...springFor("reveal", reduceMotion),
+            opacity: { duration: reduceMotion ? 0 : 0.16, ease: EASE_OUT_EXPO },
+          }}
+          style={morphOrigin({ x: 0 })}
           className="relative z-10 overflow-hidden whitespace-nowrap"
         >
           {label}
         </motion.span>
-      </button>
+      </motion.button>
       <motion.span
         initial={false}
         animate={{ width: active && showChevron ? "auto" : 0, opacity: active && showChevron ? 1 : 0 }}
-        transition={{ duration: 0.18, ease: "easeOut" }}
+        transition={{
+          ...springFor("reveal", reduceMotion),
+          opacity: { duration: reduceMotion ? 0 : 0.16, ease: EASE_OUT_EXPO },
+        }}
         className="relative z-10 overflow-hidden"
       >
         <button
@@ -169,9 +190,13 @@ const WallTabButton = ({
           }`}
           title={chevronTitle}
         >
-          <ChevronDown
-            className={`h-4 w-4 transition-transform duration-200 ${chevronOpen ? "rotate-180" : ""}`}
-          />
+          <motion.span
+            className="inline-flex"
+            animate={{ rotate: chevronOpen ? 180 : 0 }}
+            transition={springFor("snappy", reduceMotion)}
+          >
+            <ChevronDown className="h-4 w-4" />
+          </motion.span>
         </button>
       </motion.span>
       {active && (
@@ -185,30 +210,14 @@ const WallTabButton = ({
   );
 };
 
-// Subscribers tab button with count (people who follow this user). The tab
-// itself hosts both lists behind an in-panel toggle.
-const SubscribersTabButton = ({ activeTab, onClick, userId }: { activeTab: string; onClick: () => void; userId: string }) => {
-  const { profileSubscribers, profileSubscribersFor, fetchProfileSubscribers } = useFriendsStore();
+// Subscribers tab button (people who follow this user). The list itself loads
+// lazily inside the tab — the bar deliberately carries no counter: it would pop
+// in only after the tab has been opened once and then stay stale until reload.
+const SubscribersTabButton = ({ activeTab, onClick }: { activeTab: string; onClick: () => void }) => {
   const { t } = useTranslation();
-  const [count, setCount] = useState(0);
-  const [loaded, setLoaded] = useState(false);
-
-  // The list is only needed when the tab is opened — don't fetch it (with every
-  // avatar) on every profile visit just for a count.
-  useEffect(() => {
-    if (activeTab !== 'subscribers' || loaded) return;
-    setLoaded(true);
-    fetchProfileSubscribers(userId);
-  }, [activeTab, loaded, fetchProfileSubscribers, userId]);
-
-  useEffect(() => {
-    // Guard against showing another profile's count while it loads.
-    setCount(profileSubscribersFor === userId ? profileSubscribers.length : 0);
-  }, [profileSubscribers, profileSubscribersFor, userId]);
-
   return (
     <TabButton
-      tab={{ key: "subscribers", icon: Users, label: t("profile.subscribers"), count: ` (${count})` }}
+      tab={{ key: "subscribers", icon: Users, label: t("profile.subscribers") }}
       active={activeTab === 'subscribers'}
       onClick={onClick}
     />
@@ -247,8 +256,6 @@ export function ProfileTabs({
   trophies,
   trophiesLoaded,
   giftCatalog,
-  giftCount,
-  giftCountLoaded,
   onGiftSent,
 }: ProfileTabsProps) {
   const { t } = useTranslation();
@@ -448,7 +455,18 @@ export function ProfileTabs({
     previousPositionRef.current = activeTab;
   }, [activeTab]);
 
-  const bodyEnter = spatialEnter(bodyDirection, SPATIAL_OFFSET.tab, reduceMotion, hasPaintedRef.current);
+  const bodyEnter = (() => {
+    // First paint comes from the page-level enter; a swap is a dimensional
+    // morph: the new body unfolds from the tab bar (origin at the top edge),
+    // travelling a hint in the direction the bar moved.
+    if (!hasPaintedRef.current || reduceMotion) {
+      return { initial: false as const, animate: { opacity: 1, x: 0, scale: 1 } };
+    }
+    return {
+      initial: { opacity: 0, x: bodyDirection * SPATIAL_OFFSET.tab, scale: 0.97 },
+      animate: { opacity: 1, x: 0, scale: 1 },
+    };
+  })();
 
   return (
     <>
@@ -495,7 +513,6 @@ export function ProfileTabs({
                 key: "achievements",
                 icon: Trophy,
                 label: t("profile.achievements"),
-                count: trophiesLoaded ? ` (${trophies.length})` : undefined,
               }}
               active={activeTab === 'achievements'}
               onClick={() => switchTab('achievements')}
@@ -514,7 +531,6 @@ export function ProfileTabs({
                 key: "gifts",
                 icon: Gift,
                 label: t("profile.gifts"),
-                count: giftCountLoaded ? ` (${giftCount})` : undefined,
               }}
               active={activeTab === 'gifts'}
               onClick={() => switchTab('gifts')}
@@ -524,14 +540,24 @@ export function ProfileTabs({
             <SubscribersTabButton
               activeTab={activeTab}
               onClick={() => switchTab('subscribers')}
-              userId={userId}
             />
           )}
         </div>
 
         {/* Album row: «Все» + album chips + create. Drops below the tab
-            buttons inside the sticky bar when opened. */}
+            buttons inside the sticky bar when opened — the row unfolds from
+            the bar itself (height + blur morph), not by popping into place. */}
+        <AnimatePresence initial={false}>
         {showAlbumsRow && (
+          <motion.div
+            key="albums-row"
+            initial={reduceMotion ? false : { height: 0, opacity: 0, filter: "blur(6px)" }}
+            animate={{ height: "auto", opacity: 1, filter: "blur(0px)" }}
+            exit={{ height: 0, opacity: 0, filter: "blur(4px)" }}
+            transition={morphTransition(reduceMotion, springFor("reveal", reduceMotion))}
+            style={morphOrigin({ y: 0 })}
+            className="overflow-hidden"
+          >
           <div className="flex flex-wrap items-center gap-0.5 border-t border-border/60 px-1 pb-1.5 pt-0.5">
             <button
               onClick={() => {
@@ -565,7 +591,9 @@ export function ProfileTabs({
               </button>
             )}
           </div>
+          </motion.div>
         )}
+        </AnimatePresence>
         </div>
       </div>
 
@@ -631,7 +659,8 @@ export function ProfileTabs({
           key={bodyKey}
           initial={bodyEnter.initial}
           animate={bodyEnter.animate}
-          transition={springFor("standard", reduceMotion)}
+          transition={morphTransition(reduceMotion)}
+          style={morphOrigin({ y: 0 })}
         >
         {activeTab === 'all' && allTabVisible && (
           <Suspense fallback={null}>
@@ -716,7 +745,6 @@ export function ProfileTabs({
           <ProfileThreadsTab
             key={userId}
             userId={userId}
-            totalCount={profile.thread_count}
             currentUser={currentUser}
             currentUsername={currentUsername}
             currentUserColor={currentUserColor}

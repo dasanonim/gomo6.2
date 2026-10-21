@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { motion, useReducedMotion, type Variants } from "motion/react";
 
 import { api } from "@/integrations/api/compat";
 import { FeedThreadCard, type FeedThread } from "@/components/FeedThreadCard";
@@ -7,8 +8,7 @@ import { FeedWallPostCard } from "@/components/FeedWallPostCard";
 import { Lightbox, type LightboxItem } from "@/components/Lightbox";
 import { QuietLoading } from "@/components/QuietLoading";
 import { useLoadingBarStore } from "@/stores/loadingBarStore";
-import { transitionEnterClass } from "@/lib/viewTransitions";
-import { useTransitionStyle } from "@/hooks/useTransitionStyle";
+import { morphOrigin, morphTransition, morphVariants, STAGGER } from "@/lib/motion";
 import { normalizeWallPostRecord, type WallPost } from "@/utils/wallNormalizers";
 import { fetchThreadLikesBatch, toFeedThread, type ThreadApiRow } from "@/utils/threadFeedItem";
 
@@ -16,6 +16,10 @@ import { fetchThreadLikesBatch, toFeedThread, type ThreadApiRow } from "@/utils/
 const PAGE_SIZE = 20;
 /** Pull the next page this far before the sentinel reaches the viewport. */
 const PRELOAD_MARGIN_PX = 600;
+
+/** The stream arrives as a rapid cascade of dimensional morphs. */
+const CASCADE: Variants = { hidden: {}, show: { transition: STAGGER } };
+const CARD_ITEM: Variants = morphVariants(0.94, 0);
 
 // Same select as ProfileWall so a card renders identically in both places.
 const WALL_POST_SELECT = `
@@ -76,7 +80,8 @@ export const ProfileAllTab = ({
   currentUserColor,
 }: ProfileAllTabProps) => {
   const { t } = useTranslation();
-  const transitionStyle = useTransitionStyle();
+  const reduceMotion = useReducedMotion();
+  const cardTransition = morphTransition(reduceMotion);
 
   const [items, setItems] = useState<MergedItem[] | null>(null);
   const [likes, setLikes] = useState<Map<string, { count: number; isLiked: boolean }>>(new Map());
@@ -200,36 +205,43 @@ export const ProfileAllTab = ({
   const body = useMemo(() => {
     if (!items) return null;
     return items.map((item) => {
-      if (item.kind === "thread") {
-        const like = likes.get(item.thread.id);
-        return (
+      const key = item.kind === "thread" ? `thread-${item.thread.id}` : `wall-${item.post.id}`;
+      const card =
+        item.kind === "thread" ? (
           <FeedThreadCard
-            key={`thread-${item.thread.id}`}
             thread={item.thread}
             currentUserId={currentUserId}
             currentUsername={currentUsername}
             currentUserColor={currentUserColor}
-            initialLikesCount={like?.count ?? 0}
-            initialUserLiked={like?.isLiked ?? false}
+            initialLikesCount={likes.get(item.thread.id)?.count ?? 0}
+            initialUserLiked={likes.get(item.thread.id)?.isLiked ?? false}
+            onImageClick={openGallery}
+          />
+        ) : (
+          <FeedWallPostCard
+            post={item.post}
+            currentUserId={currentUserId}
+            currentUsername={currentUsername}
+            currentUserColor={currentUserColor}
             onImageClick={openGallery}
           />
         );
-      }
       return (
-        <FeedWallPostCard
-          key={`wall-${item.post.id}`}
-          post={item.post}
-          currentUserId={currentUserId}
-          currentUsername={currentUsername}
-          currentUserColor={currentUserColor}
-          onImageClick={openGallery}
-        />
+        <motion.div
+          key={key}
+          variants={CARD_ITEM}
+          transition={cardTransition}
+          style={morphOrigin({ y: 0 })}
+          layout="position"
+        >
+          {card}
+        </motion.div>
       );
     });
-  }, [items, likes, currentUserId, currentUsername, currentUserColor, openGallery]);
+  }, [items, likes, currentUserId, currentUsername, currentUserColor, openGallery, cardTransition]);
 
   return (
-    <div className={transitionEnterClass(transitionStyle)}>
+    <div>
       {!items ? (
         <QuietLoading />
       ) : items.length === 0 ? (
@@ -240,7 +252,12 @@ export const ProfileAllTab = ({
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
+        <motion.div
+          initial={reduceMotion ? false : "hidden"}
+          animate="show"
+          variants={CASCADE}
+          className="space-y-4"
+        >
           {body}
           {hasMore && <div ref={sentinelRef} className="h-px" aria-hidden="true" />}
           {loadingMore && (
@@ -248,7 +265,7 @@ export const ProfileAllTab = ({
               <QuietLoading className="min-h-0" />
             </div>
           )}
-        </div>
+        </motion.div>
       )}
 
       {gallery && (

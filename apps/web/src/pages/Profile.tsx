@@ -30,7 +30,14 @@ import { hasUnreadCloseFriends } from "@/types/stories";
 import { UsernameDialog, AvatarGalleryDialog } from "./profile/ProfileDialogs";
 import type { Profile, ProfilePrivacyData } from "./profile/types";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { springFor, pressFeedback, hoverLift } from "@/lib/motion";
+import {
+  EASE_OUT_EXPO,
+  hoverLift,
+  morphOrigin,
+  morphTransition,
+  pressFeedback,
+  springFor,
+} from "@/lib/motion";
 import { AvatarMorph } from "@/components/profile/AvatarMorph";
 import { toViewportRect, type ViewportRect } from "@/utils/domRect";
 import { ForumProfilePanel } from "./profile/ForumProfilePanel";
@@ -117,6 +124,17 @@ const Profile = () => {
   const [forumSide, setForumSide] = useState<ForumSide | null>(null);
   const [panelVisible, setPanelVisible] = useState(false);
   const [forumLayout, setForumLayout] = useState(false);
+
+  // First paint vs. later transitions. `AnimatePresence initial={false}` would
+  // reach EVERY nested motion element through PresenceContext — not just its
+  // direct child — and silently suppress the entrance of the header, stats and
+  // cards until the subtree remounts (that is why the wall only started
+  // cascading after one visit to edit mode). So the presence wrapper stays
+  // neutral and the direct children opt out on their own first mount instead.
+  const didPaintRef = useRef(false);
+  useEffect(() => {
+    didPaintRef.current = true;
+  }, []);
 
   // Resolve the effective variant from the owner's stored choice.
   useEffect(() => {
@@ -701,8 +719,6 @@ const Profile = () => {
       trophies={data.trophies}
       trophiesLoaded={data.trophiesLoaded}
       giftCatalog={data.giftCatalog}
-      giftCount={data.giftCount}
-      giftCountLoaded={data.giftCountLoaded}
       onGiftSent={() => {
         data.incrementGiftCount();
         loadProfile();
@@ -816,18 +832,18 @@ const Profile = () => {
           {/* Crossfade between the forum and social variants of the content, so
               the panel styling does not blink out the instant the mode flips.
               `wait` keeps one variant mounted at a time (no double wall). */}
-          <AnimatePresence mode="wait" initial={false}>
+          <AnimatePresence mode="wait">
           <motion.div
             key={forumMode ? "forum" : "social"}
-            initial={{ opacity: 0 }}
+            initial={didPaintRef.current ? { opacity: 0 } : false}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, transition: { duration: prefersReducedMotion ? 0 : 0.14, ease: "easeOut" } }}
+            exit={{ opacity: 0, transition: { duration: prefersReducedMotion ? 0 : 0.14, ease: EASE_OUT_EXPO } }}
             transition={{
               // Entering the social layout (forum → profile) is the tail of the
               // collapse — keep it quick; expanding back into the forum stays
-              // soft.
+              // soft. Opacity only, so a short expo curve, never a spatial ease.
               duration: prefersReducedMotion ? 0 : forumMode ? 0.2 : 0.12,
-              ease: forumMode ? "easeInOut" : "easeOut",
+              ease: EASE_OUT_EXPO,
             }}
             className={forumMode ? "space-y-3" : "space-y-6"}
           >
@@ -928,21 +944,39 @@ const Profile = () => {
             headerElement
           )}
 
+          <AnimatePresence mode="wait">
           {editing.isEditing ? (
-            <ProfileEditPanel
-              isOwnProfile={isOwnProfile}
-              profile={profile}
-              bio={editing.bio}
-              bioJson={editing.bioJson}
-              bioEditorResetKey={editing.bioEditorResetKey}
-              cropImage={editing.cropImage}
-              onBioChange={editing.onBioChange}
-              onCropCancel={() => editing.setCropImage(null)}
-              onCropComplete={editing.handleCropConfirm}
-              onThemeToggle={editing.handleThemeEnabledToggle}
-            />
+            <motion.div
+              key="edit"
+              initial={didPaintRef.current && !prefersReducedMotion ? { opacity: 0, scale: 0.94 } : false}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={morphTransition(prefersReducedMotion)}
+              style={morphOrigin({ y: 0 })}
+            >
+              <ProfileEditPanel
+                isOwnProfile={isOwnProfile}
+                profile={profile}
+                bio={editing.bio}
+                bioJson={editing.bioJson}
+                bioEditorResetKey={editing.bioEditorResetKey}
+                cropImage={editing.cropImage}
+                onBioChange={editing.onBioChange}
+                onCropCancel={() => editing.setCropImage(null)}
+                onCropComplete={editing.handleCropConfirm}
+                onThemeToggle={editing.handleThemeEnabledToggle}
+              />
+            </motion.div>
           ) : (
-            <div className="space-y-4">
+            <motion.div
+              key="view"
+              initial={didPaintRef.current && !prefersReducedMotion ? { opacity: 0, scale: 0.94 } : false}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={morphTransition(prefersReducedMotion)}
+              style={morphOrigin({ y: 0 })}
+              className="space-y-4"
+            >
               {/** stats visibility logic — moved to the ProfileStats component; the
                   "card" background variant renders it inside the card. */}
               {cardVariantActive ? null : (
@@ -974,8 +1008,9 @@ const Profile = () => {
                   (it explains that the wall is hidden) while the rest follow the
                   per-section hide toggles. */}
               {profileTabsElement}
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
           </>
           )}
           </motion.div>

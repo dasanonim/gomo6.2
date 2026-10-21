@@ -20,14 +20,37 @@
  * on, every preset collapses to an instant transition and spatial offsets are
  * dropped.
  */
-import type { Transition } from "motion/react";
+import type { Transition, Variants } from "motion/react";
+
+/**
+ * Telegram-grade physics. These four constants are the whole vocabulary of
+ * spatial motion in the app — every spring below is one of them, not a
+ * hand-tuned copy. Values are physical (stiffness/damping/mass), so an
+ * interrupted animation keeps its velocity instead of restarting.
+ *
+ *   SPRING_SNAPPY — menus, popovers, buttons, toggles, press feedback.
+ *   SPRING_SMOOTH — modals, panels, layout shifts, shared elements.
+ *   SPRING_BOUNCY — micro only: reactions, badges, small icons.
+ *   EASE_OUT_EXPO — opacity / colour / blur only, never movement.
+ */
+export const SPRING_SNAPPY = { type: "spring", stiffness: 500, damping: 32, mass: 0.8 } as const;
+export const SPRING_SMOOTH = { type: "spring", stiffness: 380, damping: 30, mass: 1 } as const;
+export const SPRING_BOUNCY = { type: "spring", stiffness: 600, damping: 20, mass: 0.7 } as const;
+export const EASE_OUT_EXPO: [number, number, number, number] = [0.16, 1, 0.3, 1];
 
 export const SPRING = {
-  snappy: { type: "spring", stiffness: 520, damping: 38, mass: 0.9 },
-  standard: { type: "spring", stiffness: 380, damping: 34, mass: 1 },
+  snappy: SPRING_SNAPPY,
+  standard: SPRING_SMOOTH,
   soft: { type: "spring", stiffness: 260, damping: 30, mass: 1 },
   sheet: { type: "spring", stiffness: 300, damping: 32, mass: 0.9 },
-  pop: { type: "spring", stiffness: 620, damping: 26, mass: 0.7 },
+  pop: SPRING_BOUNCY,
+  /**
+   * A measured dimension — `width`/`height` of a label, row or chip that opens
+   * to its content. Deliberately over-damped: a spring overshoot on a measured
+   * box is not bounce, it is the last glyph of the text sliding a fraction of a
+   * pixel and back at the end of the animation.
+   */
+  reveal: { type: "spring", stiffness: 500, damping: 44, mass: 0.8 },
   /**
    * Shape properties — `border-radius`, `clip-path`. Fast and critically damped:
    * a shape that overshoots is not motion, it is a rendering glitch (a negative
@@ -90,9 +113,71 @@ export const spatialEnter = (
  * Press feedback for a tappable surface: scale in on pointer down, spring back
  * on release. Skipped under reduced motion (the change still happens).
  */
-export const pressFeedback = (reduce: boolean | null, scale = 0.95) =>
+export const pressFeedback = (reduce: boolean | null, scale = 0.96) =>
   reduce ? {} : { whileTap: { scale } };
 
 /** Hover lift — only where hover is a real pointer state. */
 export const hoverLift = (reduce: boolean | null, scale = 1.03) =>
   reduce ? {} : { whileHover: { scale } };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dimensional morph — how an element is allowed to enter or leave the DOM.
+// Never a bare fade: opacity + scale + blur, with a logical origin so the motion
+// reads as the surface unfolding from the thing that opened it (a dropdown from
+// its trigger, a panel from the edge, a row from the list).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A rapid cascade. Tight enough to feel immediate, never blocking. */
+export const STAGGER = { staggerChildren: 0.025, delayChildren: 0.02 } as const;
+
+export interface MorphOrigin {
+  /** 0 = left edge, 0.5 = centre, 1 = right edge. */
+  x?: number;
+  /** 0 = top edge, 0.5 = centre, 1 = bottom edge. */
+  y?: number;
+}
+
+/** The `style` that anchors a morph to its logical origin. */
+export const morphOrigin = ({ x = 0.5, y = 0.5 }: MorphOrigin = {}) => ({
+  originX: x,
+  originY: y,
+});
+
+/**
+ * Enter/exit for any element that mounts inside `AnimatePresence`. `entering`
+ * is the start scale — 0.88 for compact surfaces (menus, cards, popovers),
+ * closer to 1 for large containers where 0.88 would read as a zoom.
+ *
+ * `blurPx` is the defocus the surface enters from. Large containers pass 0:
+ * a `filter` left on a full-page wrapper creates a containing block and a
+ * composited layer for everything inside it, which is exactly how a list ends
+ * up feeling heavier than it looks.
+ */
+export const morphVariants = (entering = 0.88, blurPx = 6): Variants => {
+  const defocus = blurPx > 0 ? { filter: `blur(${blurPx}px)` } : {};
+  const focused = blurPx > 0 ? { filter: "blur(0px)" } : {};
+  const leaving = blurPx > 0 ? { filter: `blur(${Math.min(blurPx, 4)}px)` } : {};
+  return {
+    hidden: { opacity: 0, scale: entering, ...defocus },
+    show: { opacity: 1, scale: 1, ...focused },
+    exit: { opacity: 0, scale: Math.min(1, entering + 0.06), ...leaving },
+  };
+};
+
+/**
+ * Transition for a dimensional morph: the geometry is a spring, the fade and
+ * the blur are short opacity-class tweens (a blur has no physics, and tweening
+ * it longer than ~200 ms is the most expensive thing a browser can do).
+ */
+export const morphTransition = (
+  reduce: boolean | null,
+  spring: Transition = SPRING_SMOOTH,
+): Transition =>
+  reduce
+    ? INSTANT
+    : {
+        ...spring,
+        opacity: { duration: 0.16, ease: EASE_OUT_EXPO },
+        filter: { duration: 0.18, ease: EASE_OUT_EXPO },
+      };
+

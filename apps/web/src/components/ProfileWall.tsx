@@ -1,17 +1,17 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { motion, useReducedMotion, type Variants } from "motion/react";
 import { api } from "@/integrations/api/compat";
 import { Lightbox, type LightboxItem } from "@/components/Lightbox";
 import { Lock } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { wsService } from "@/services/websocket";
+import { morphOrigin, morphTransition, morphVariants, STAGGER } from "@/lib/motion";
 
 import { CreateWallPost } from "@/components/CreateWallPost";
 import { CreateWallPostInline } from "@/components/CreateWallPostInline";
 import { isFeatureEnabled } from "@/lib/featureFlags";
 import { WallPostCard } from "@/components/WallPostCard";
-import { transitionEnterClass } from "@/lib/viewTransitions";
-import { useTransitionStyle } from "@/hooks/useTransitionStyle";
 import {
   type WallPost,
   normalizeWallPostRecord,
@@ -44,6 +44,10 @@ const WALL_POST_SELECT = `
 // (created_at, id), so local inserts/deletes never shift the page window.
 // Pinned posts are only returned on the first page.
 const PAGE_SIZE = 10;
+
+/** First paint of the wall: cards cascade in, each one a dimensional morph. */
+const CASCADE: Variants = { hidden: {}, show: { transition: STAGGER } };
+const CARD_ITEM: Variants = morphVariants(0.94, 0);
 
 // Minimum delay between auto-loads triggered by the scroll sentinel. Prevents
 // a burst of page fetches when the sentinel stays visible after an append
@@ -118,7 +122,8 @@ export const ProfileWall = ({
   createOpen = false,
   onCreateOpenChange,
 }: ProfileWallProps) => {
-  const transitionStyle = useTransitionStyle();
+  const reduceMotion = useReducedMotion();
+  const cardTransition = morphTransition(reduceMotion);
   const [posts, setPosts] = useState<WallPost[]>(() => initialPost ? [initialPost] : []);
   const [loading, setLoading] = useState(!initialPost);
   const [internalCreateOpen, setInternalCreateOpen] = useState(false);
@@ -651,7 +656,7 @@ export const ProfileWall = ({
 
   return (
     <>
-      <div className={`space-y-4 ${transitionEnterClass(transitionStyle)}`}>
+      <div className="space-y-4">
         {canPost && !standalone && !focusedPostId && showCreateForm && currentUserId && (
           <WallComposer
             profileUserId={profileUserId}
@@ -670,12 +675,23 @@ export const ProfileWall = ({
             {!focusedPostId && canPost && <p className="mt-2 text-sm text-muted-foreground">Нажмите `+`, чтобы оставить первую запись.</p>}
           </div>
         ) : (
-          <div className="space-y-4">
+          <motion.div
+            initial={reduceMotion ? false : "hidden"}
+            animate="show"
+            variants={CASCADE}
+            className="space-y-4"
+          >
             {posts
               .filter(post => post.id)
               .map((post, index) => (
-              <WallPostCard
+              <motion.div
                 key={`${post.id}-${post.created_at}-${index}`}
+                variants={CARD_ITEM}
+                transition={cardTransition}
+                style={morphOrigin({ y: 0 })}
+                layout="position"
+              >
+              <WallPostCard
                 post={post}
                 profileUserId={profileUserId}
                 currentUserId={currentUserId}
@@ -697,8 +713,9 @@ export const ProfileWall = ({
                   setGalleryIndex(idx);
                 }}
               />
+              </motion.div>
             ))}
-          </div>
+          </motion.div>
         )}
         {!focusedPostId && hasMore && (
           <div

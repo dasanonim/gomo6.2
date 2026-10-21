@@ -1,6 +1,6 @@
 import { lazy, Suspense, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { motion, useReducedMotion } from "motion/react";
+import { motion, useReducedMotion, type Variants } from "motion/react";
 import { Camera, Edit2, MessageSquare, Plus, Smile, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,8 +13,19 @@ import { OnlineStatus } from "@/components/OnlineStatus";
 import { UserAvatar } from "@/components/UserAvatar";
 import { StoryRing } from "@/components/stories/StoryRing";
 import { parseCssToStyle, type ProfileCustomization } from "@/utils/profileCustomization";
-import { hoverLift, pressFeedback, springFor } from "@/lib/motion";
+import {
+  hoverLift,
+  morphOrigin,
+  morphTransition,
+  morphVariants,
+  pressFeedback,
+  springFor,
+  STAGGER,
+} from "@/lib/motion";
 import type { AvatarDragHandlers, Profile } from "./types";
+
+/** Parent cascade for the header blocks. */
+const CASCADE: Variants = { hidden: {}, show: { transition: STAGGER } };
 
 // Heavy interaction-only component — split into a separate chunk so the
 // profile page's initial JS is small on mobile. Loaded on first use (edit
@@ -104,11 +115,27 @@ export function ProfileHeader({
   const reduceMotion = useReducedMotion();
   const nicknameEmojiButtonRef = useRef<HTMLDivElement>(null);
 
+  // Header blocks arrive as one rapid cascade: the avatar first, then the
+  // identity, then the actions. Each block is a dimensional morph anchored to
+  // its own corner, never a bare fade.
+  const item: Variants = morphVariants(0.88);
+  const itemTransition = morphTransition(reduceMotion);
+
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <motion.div
+      initial={reduceMotion ? false : "hidden"}
+      animate="show"
+      variants={CASCADE}
+      className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+    >
       <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
         {/* Avatar */}
         {avatarVisible && !forumMode && (
+          <motion.div
+            variants={item}
+            transition={itemTransition}
+            style={morphOrigin({ x: 0 })}
+          >
           <StoryRing total={storyCount} read={storyReadCount} closeFriends={storyCloseFriends}>
             <div className="relative">
               <motion.div
@@ -167,10 +194,15 @@ export function ProfileHeader({
               )}
             </div>
           </StoryRing>
+          </motion.div>
         )}
 
         {/* User Info */}
-        <div className="min-w-0 flex-1">
+        <motion.div
+          variants={item}
+          transition={itemTransition}
+          style={morphOrigin({ x: 0 })}
+          className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1">
             {isEditing && isOwnProfile ? (
               <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -251,39 +283,54 @@ export function ProfileHeader({
               </>
             )}
           </div>
-        </div>
+        </motion.div>
       </div>
 
       {/* Edit Button (own profile). In forum mode editing lives in the side panel. */}
       {isOwnProfile && !forumMode && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-9 w-9 shrink-0 self-end rounded-xl text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary sm:self-auto"
-          onClick={onEditClick}
+        <motion.div
+          variants={item}
+          transition={itemTransition}
+          style={morphOrigin({ x: 1 })}
+          {...pressFeedback(reduceMotion)}
+          className="shrink-0 self-end sm:self-auto"
         >
-          {isEditing ? (
-            <span className="text-lg leading-none text-green-500">✓</span>
-          ) : (
-            <Edit2 className="h-4 w-4" />
-          )}
-        </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 shrink-0 rounded-xl text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+            onClick={onEditClick}
+          >
+            {isEditing ? (
+              <span className="text-lg leading-none text-green-500">✓</span>
+            ) : (
+              <Edit2 className="h-4 w-4" />
+            )}
+          </Button>
+        </motion.div>
       )}
 
       {/* Message + subscribe + actions (other profiles). In forum mode the whole
           cluster moves to the side panel. */}
       {!isOwnProfile && currentUser && !forumMode && (
-        <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
-          <Button
-            variant="default"
-            size="sm"
-            onClick={onOpenMessages}
-            className="h-9 gap-1.5 rounded-xl px-4 text-sm font-medium shadow-sm outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
-            title={t("profile.write")}
-          >
-            <MessageSquare className="h-4 w-4" />
-            <span>{t("profile.write")}</span>
-          </Button>
+        <motion.div
+          variants={item}
+          transition={itemTransition}
+          style={morphOrigin({ x: 1 })}
+          className="flex shrink-0 items-center gap-2 self-end sm:self-auto"
+        >
+          <motion.div {...pressFeedback(reduceMotion)}>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={onOpenMessages}
+              className="h-9 gap-1.5 rounded-xl px-4 text-sm font-medium shadow-sm outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              title={t("profile.write")}
+            >
+              <MessageSquare className="h-4 w-4" />
+              <span>{t("profile.write")}</span>
+            </Button>
+          </motion.div>
           <FriendButton userId={profile.id} isOwnProfile={isOwnProfile} />
           <PostActionsMenu
             targetType="user"
@@ -293,8 +340,8 @@ export function ProfileHeader({
             triggerTitle="Действия"
             triggerClassName="rounded-xl border border-border/60 bg-background/85 backdrop-blur-md hover:bg-background"
           />
-        </div>
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   );
 }

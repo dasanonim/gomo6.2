@@ -1,7 +1,9 @@
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
+import { motion, useReducedMotion, type Variants } from "motion/react";
 import { formatCompactNumber } from "@/utils/formatNumber";
 import { ActiEye } from "@/components/ActiEye";
+import { morphOrigin, morphTransition, morphVariants, pressFeedback, STAGGER } from "@/lib/motion";
 import type { Profile } from "./types";
 
 export interface ProfileStatsProps {
@@ -11,6 +13,9 @@ export interface ProfileStatsProps {
   /** Opens the wall tab (used by the views counter — each wall post shows its own). */
   onOpenWall: () => void;
 }
+
+const CASCADE: Variants = { hidden: {}, show: { transition: STAGGER } };
+const STAT_ITEM: Variants = morphVariants(0.88);
 
 /** One clickable stat of the inline row — number + label, X-style. */
 function Stat({
@@ -24,18 +29,24 @@ function Stat({
   onClick?: () => void;
   title?: string;
 }) {
+  const reduceMotion = useReducedMotion();
   return (
-    <button
+    <motion.button
       type="button"
       onClick={onClick}
       title={title}
+      variants={STAT_ITEM}
+      transition={morphTransition(reduceMotion)}
+      style={morphOrigin({ y: 0.5 })}
+      {...pressFeedback(reduceMotion)}
       className="inline-flex items-baseline gap-1 whitespace-nowrap rounded px-1 py-0.5 transition-[text-shadow] duration-150 hover:[text-shadow:0_2px_3px_rgb(0_0_0_/_0.3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <span className="text-sm sm:text-base font-semibold leading-none">{value}</span>
+      <span className="text-sm sm:text-base font-semibold leading-none tabular-nums">{value}</span>
       <span className="text-[11px] sm:text-xs text-muted-foreground leading-none">{label}</span>
-    </button>
+    </motion.button>
   );
 }
+
 
 /**
  * Stats summary — rendered inside the "card" background variant or standalone.
@@ -45,13 +56,19 @@ function Stat({
 export function ProfileStats({ profile, show, onOpenWall }: ProfileStatsProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const reduceMotion = useReducedMotion();
 
   if (!show) return null;
 
   const posts = (profile.thread_count ?? 0) + (profile.wall_post_count ?? 0);
 
   return (
-    <div className="flex items-center justify-between gap-2">
+    <motion.div
+      initial={reduceMotion ? false : "hidden"}
+      animate="show"
+      variants={CASCADE}
+      className="flex items-center justify-between gap-2"
+    >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         {/* Записи (сабы + стена) / Комментарии — объединённый счётчик */}
         <Stat
@@ -83,7 +100,13 @@ export function ProfileStats({ profile, show, onOpenWall }: ProfileStatsProps) {
         />
       </div>
       {/* ActiEye — круг, прижат к правому краю строки */}
-      <ActiEye className="mr-1" />
-    </div>
+      <motion.div
+        variants={STAT_ITEM}
+        transition={morphTransition(reduceMotion)}
+        style={morphOrigin({ x: 1 })}
+      >
+        <ActiEye className="mr-1" />
+      </motion.div>
+    </motion.div>
   );
 }
