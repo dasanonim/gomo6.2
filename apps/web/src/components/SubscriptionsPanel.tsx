@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { SubscriptionList } from "@/components/SubscriptionList";
 import { useFriendsStore } from "@/stores/friendsStore";

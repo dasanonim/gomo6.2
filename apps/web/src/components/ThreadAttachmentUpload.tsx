@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion } from "motion/react";
 import { Upload, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { AttachmentMeta } from "@/utils/mediaUpload";

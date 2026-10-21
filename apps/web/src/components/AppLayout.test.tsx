@@ -82,11 +82,11 @@ vi.mock("@/utils/globalSearch", () => ({
   searchGlobal: mockSearchGlobal,
 }));
 
-// framer-motion: replace motion components with plain elements. The scroll
+// motion/react: replace motion components with plain elements. The scroll
 // machinery is mocked so tests can drive the header hide/show handler directly
 // via __scrollHandler (latest) with the previous scroll position in
 // __scrollPrevious, and assert the resulting animation target on mockAnimate.
-vi.mock("framer-motion", () => ({
+vi.mock("motion/react", () => ({
   motion: {
     header: ({ children, ...props }: any) => <div data-testid="motion-header" {...props}>{children}</div>,
     main: ({ children, ...props }: any) => <main {...props}>{children}</main>,

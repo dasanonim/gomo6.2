@@ -11,7 +11,7 @@ import { VideoEditorHost } from "@/components/VideoEditorHost";
 import { StoryComposer } from "@/components/stories/StoryComposer";
 import { StoryViewer } from "@/components/stories/StoryViewer";
 import { ThemeSync } from "@/components/ThemeSync";
-import { MotionConfig } from "framer-motion";
+import { MotionConfig } from "motion/react";
 import { applyTheme, getStoredPrefs, syncSharedAppearanceCookies, watchSystemMode } from "@/theme";
 import { applyCustomFont, getStoredCustomFont } from "@/lib/customFont";
 import { runTransition, setTransitionDirection, isFeedRoute } from "@/lib/viewTransitions";

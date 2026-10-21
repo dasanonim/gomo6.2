@@ -29,7 +29,7 @@ import { useStoriesStore } from "@/stores/storiesStore";
 import { hasUnreadCloseFriends } from "@/types/stories";
 import { UsernameDialog, AvatarGalleryDialog } from "./profile/ProfileDialogs";
 import type { Profile, ProfilePrivacyData } from "./profile/types";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { springFor, pressFeedback, hoverLift } from "@/lib/motion";
 import { AvatarMorph } from "@/components/profile/AvatarMorph";
 import { toViewportRect, type ViewportRect } from "@/utils/domRect";

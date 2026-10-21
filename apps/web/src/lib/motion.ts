@@ -20,7 +20,7 @@
  * on, every preset collapses to an instant transition and spatial offsets are
  * dropped.
  */
-import type { Transition } from "framer-motion";
+import type { Transition } from "motion/react";
 
 export const SPRING = {
   snappy: { type: "spring", stiffness: 520, damping: 38, mass: 0.9 },

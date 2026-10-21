@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useState, useRef, useCallback, type FormEve
 import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
 import { NavigationLink } from "@/components/NavigationLink";
-import { motion, useScroll, useMotionValueEvent, useMotionValue, useTransform, animate } from "framer-motion";
+import { motion, useScroll, useMotionValueEvent, useMotionValue, useTransform, animate } from "motion/react";
 import { transitionEnterClass, isFeedRoute } from "@/lib/viewTransitions";
 import { useTransitionStyle } from "@/hooks/useTransitionStyle";
 import { useProfileCache } from "@/contexts/ProfileCacheContext";

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { motion, useMotionValue, useDragControls, animate } from "framer-motion";
+import { motion, useMotionValue, useDragControls, animate } from "motion/react";
 import { ArrowLeft } from "lucide-react";
 import { api } from "@/integrations/api/compat";
 import { ProfileWall } from "@/components/ProfileWall";
@@ -249,7 +249,7 @@ const WallPost = () => {
       dragConstraints={{ left: 0 }}
       dragElastic={{ left: 0 }}
       dragControls={dragControls}
-      // `dragListener={false}` disables framer-motion's own pointerdown listener,
+      // `dragListener={false}` disables Motion's own pointerdown listener,
       // which is attached natively on this element and therefore bypasses React's
       // stopPropagation — that is what previously let a compare-handle drag drag
       // the whole page. We start the gesture manually instead.

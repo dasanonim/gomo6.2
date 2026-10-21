@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion } from "motion/react";
 import { FileAudio2, FileText, FileVideo2, Image as ImageIcon, Loader2, Scissors, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import type { AttachmentMeta } from "@/types/forum";

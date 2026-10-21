@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { motion, animate } from "framer-motion";
+import { motion, animate } from "motion/react";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { useMessengerStore, selectSelectedConversation } from "@/stores/messengerStore";
 import { messengerWs } from "@/services/messengerWebSocket";
