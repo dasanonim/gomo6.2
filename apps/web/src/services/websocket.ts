@@ -23,6 +23,12 @@ function getWebSocketUrl(): string {
 export type WebSocketMessageType =
   | 'new_post'
   | 'new_thread'
+  // Stories: lifecycle goes to the owner's room, counters to stories_owner_<id>.
+  | 'new_story'
+  | 'story_updated'
+  | 'story_deleted'
+  | 'story_viewed'
+  | 'story_reaction'
   | 'new_reply'
   | 'like'
   | 'unlike'

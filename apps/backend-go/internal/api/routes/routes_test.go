@@ -390,6 +390,21 @@ var expectedRoutes = []string{
 	"PUT /api/v1/gomosubchat/channels/:id/messages/:msgId",
 	"DELETE /api/v1/gomosubchat/channels/:id/messages/:msgId",
 
+	// Stories
+	"GET /api/v1/stories/rail",
+	"GET /api/v1/stories/close-friends",
+	"GET /api/v1/stories/user/:userId",
+	"GET /api/v1/stories/board/:boardId",
+	"GET /api/v1/stories/:id",
+	"GET /api/v1/stories/:id/viewers",
+	"POST /api/v1/stories",
+	"PUT /api/v1/stories/close-friends",
+	"PUT /api/v1/stories/:id",
+	"DELETE /api/v1/stories/:id",
+	"POST /api/v1/stories/:id/view",
+	"PUT /api/v1/stories/:id/reaction",
+	"DELETE /api/v1/stories/:id/reaction",
+
 	// Content moderation
 	"POST /api/v1/moderation/reports",
 	"GET /api/v1/moderation/reports",

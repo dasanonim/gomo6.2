@@ -8,6 +8,8 @@ import { AppLayout } from "@/components/AppLayout";
 import { LazyPage } from "@/components/LazyPage";
 import { AuthGuard } from "@/components/AuthGuard";
 import { VideoEditorHost } from "@/components/VideoEditorHost";
+import { StoryComposer } from "@/components/stories/StoryComposer";
+import { StoryViewer } from "@/components/stories/StoryViewer";
 import { ThemeSync } from "@/components/ThemeSync";
 import { applyTheme, getStoredPrefs, syncSharedAppearanceCookies, watchSystemMode } from "@/theme";
 import { applyCustomFont, getStoredCustomFont } from "@/lib/customFont";
@@ -224,6 +226,10 @@ const App = () => {
                 <BrowserRouter>
                   <ThemeSync />
                   <AppRoutes />
+                  {/* Stories: both live at the router root so the viewer can
+                      deep-link to the messenger on reply; dialogs portal to body. */}
+                  <StoryComposer />
+                  <StoryViewer />
                 </BrowserRouter>
                 <VideoEditorHost />
               </TooltipProvider>

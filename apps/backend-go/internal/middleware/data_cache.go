@@ -130,6 +130,16 @@ func DataCacheMiddleware(redisClient *redis.Client, ttl time.Duration) gin.Handl
 			return
 		}
 
+		// Stories are per-viewer, time-sensitive and mutated through custom
+		// endpoints (publish / delete / view / react) that have no generic CRUD
+		// invalidation. A cached GET resurrected a deleted slide for the whole
+		// TTL: the player refetched the list right after delete and got the
+		// pre-delete snapshot back.
+		if strings.HasPrefix(path, "/api/v1/stories") {
+			c.Next()
+			return
+		}
+
 		// Skip caching for the viewing history / favorites — per-viewer, change
 		// on every action, and their writes have no generic CRUD invalidator
 		// (the endpoints are custom, not registry tables).

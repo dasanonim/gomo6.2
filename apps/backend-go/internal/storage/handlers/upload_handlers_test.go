@@ -646,6 +646,34 @@ func TestServeObject_CuratedAssetsAreNotImmutable(t *testing.T) {
 	}
 }
 
+// A story's audience can be narrowed after the first fetch, so its bytes must
+// never be cached publicly or as immutable — the browser would keep serving a
+// slide the viewer no longer has access to.
+func TestServeObject_StoriesArePrivateAndShortLived(t *testing.T) {
+	h, f := setupStorageHandlerWithS3(t, nil)
+	f.put("stories", "user-1/story.mp4", []byte("mp4-bytes"), "video/mp4")
+	f.put("stories", "user-1/story.mp4.preview.jpg", []byte("jpg-bytes"), "image/jpeg")
+
+	for _, tc := range []struct {
+		key        string
+		wantMaxAge string
+	}{
+		{"user-1/story.mp4", "private, max-age=600"},
+		{"user-1/story.mp4.preview.jpg", "private, max-age=3600"},
+	} {
+		c, w := newStoragePathContext(http.MethodGet, "/storage/v1/object/stories/"+tc.key,
+			map[string]string{"bucket": "stories", "key": tc.key}, nil)
+		h.ServeObject(c)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d", tc.key, w.Code)
+		}
+		if cc := w.Header().Get("Cache-Control"); cc != tc.wantMaxAge {
+			t.Errorf("%s: Cache-Control = %q, want %q", tc.key, cc, tc.wantMaxAge)
+		}
+	}
+}
+
 func TestServeObject_RangeRequest_PartialContent(t *testing.T) {
 	h, f := setupStorageHandlerWithS3(t, nil)
 	f.put("content", "user-1/video.webm", []byte("0123456789"), "video/webm")

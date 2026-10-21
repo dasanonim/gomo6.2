@@ -368,3 +368,42 @@ func TestDataCache_SkipModeration(t *testing.T) {
 		t.Fatalf("moderation requests must not write cache keys, got %v", keys)
 	}
 }
+
+// TestDataCache_SkipStories verifies that every stories GET bypasses the
+// response cache. A deleted slide used to come back from a cached list: the
+// player refetched after delete and received the pre-delete snapshot for the
+// full TTL (up to two minutes), so the story "did not disappear".
+func TestDataCache_SkipStories(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	for _, path := range []string{
+		"/api/v1/stories/rail",
+		"/api/v1/stories/user/20000000-0000-0000-0000-0000000000bb?scope=live",
+		"/api/v1/stories/50000000-0000-0000-0000-0000000000ee/viewers",
+		"/api/v1/stories/close-friends",
+	} {
+		t.Run(path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest("GET", path, nil)
+
+			middleware := DataCacheMiddleware(rdb, DefaultDataCacheTTL)
+			middleware(c)
+			testDummyHandler(c)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", w.Code)
+			}
+			if xc := w.Header().Get("X-Cache"); xc != "" {
+				t.Errorf("stories must bypass data cache, got X-Cache=%q", xc)
+			}
+		})
+	}
+
+	if keys := mr.Keys(); len(keys) != 0 {
+		t.Errorf("no cache keys may exist for stories, got %v", keys)
+	}
+}

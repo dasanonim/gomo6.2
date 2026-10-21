@@ -31,6 +31,7 @@ import { LikeButton } from "@/components/LikeButton";
 import { GomoThreadCard } from "@/components/GomoThreadCard";
 import { Lightbox, type LightboxItem } from "@/components/Lightbox";
 import { ChannelChat } from "@/components/ChannelChat";
+import { BoardStoriesBar } from "@/components/stories/BoardStoriesBar";
 import { wsService } from "@/services/websocket";
 import { entityParam } from "@/utils/entityUrl";
 import {
@@ -1109,6 +1110,15 @@ const Board = () => {
             <div className="text-center">
               <p className="text-sm sm:text-base text-muted-foreground">{board.description}</p>
             </div>
+          )}
+
+          {board.is_gomosub && (
+            <BoardStoriesBar
+              boardId={board.id}
+              boardName={board.name}
+              avatarUrl={board.gomosub_avatar_url}
+              canPost={Boolean(isBoardOwner || boardPermissions.can_post_stories)}
+            />
           )}
 
           {!isGomoRoute && (

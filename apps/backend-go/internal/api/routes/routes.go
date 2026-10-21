@@ -37,6 +37,8 @@ import (
 	"github.com/gomo6/backend/internal/socialpreview"
 	stor "github.com/gomo6/backend/internal/storage"
 	storageHandlers "github.com/gomo6/backend/internal/storage/handlers"
+	"github.com/gomo6/backend/internal/stories"
+	"github.com/gomo6/backend/internal/storyaccess"
 	"github.com/gomo6/backend/internal/translations"
 	"github.com/gomo6/backend/internal/wall"
 	"github.com/gomo6/backend/internal/websocket"
@@ -292,6 +294,12 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 		storageHandler.StartOrphanCleanup()
 	}
 	messengerHandler.SetStorage(storageClient)
+	// Stories: 24h photo/video/text stories for users and GomoSubs.
+	storiesHandler := stories.NewHandler(db, wsHub)
+	if storageClient != nil {
+		storiesHandler.SetMediaDeleter(storageClient)
+	}
+	storiesHandler.StartMaintenance(context.Background(), 30*time.Minute)
 
 	awardsAdminHandler := handlers.NewAwardsAdminHandler(db, storageClient, notifService)
 
@@ -812,6 +820,37 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 					chatWrite.DELETE("/gomosubchat/channels/:id/messages/:msgId", channelChatHandler.DeleteMessage)
 				}
 
+				// -- Stories --
+				// Separate budget namespace: scrolling the rail and watching
+				// stories must not drain the chat/messenger limits. Env-tunable:
+				//   STORIES_RATE_LIMIT_READ  (default 300) — rail/profile/archive
+				//   STORIES_RATE_LIMIT_WRITE (default 120) — publish/view/react
+				storyReadLimiter := middleware.NewMessengerRateLimiterWithPrefix(redis, "stories_read",
+					ogEnvLimit("STORIES_RATE_LIMIT_READ", 300), time.Minute)
+				storyWriteLimiter := middleware.NewMessengerRateLimiterWithPrefix(redis, "stories_write",
+					ogEnvLimit("STORIES_RATE_LIMIT_WRITE", 120), time.Minute)
+				storyRead := protected.Group("")
+				storyRead.Use(middleware.MessengerRateLimitMiddleware(storyReadLimiter))
+				{
+					storyRead.GET("/stories/rail", storiesHandler.GetRail)
+					storyRead.GET("/stories/close-friends", storiesHandler.GetCloseFriends)
+					storyRead.GET("/stories/user/:userId", storiesHandler.GetUserStories)
+					storyRead.GET("/stories/board/:boardId", storiesHandler.GetBoardStories)
+					storyRead.GET("/stories/:id", storiesHandler.GetStory)
+					storyRead.GET("/stories/:id/viewers", storiesHandler.GetViewers)
+				}
+				storyWrite := protected.Group("")
+				storyWrite.Use(middleware.MessengerRateLimitMiddleware(storyWriteLimiter))
+				{
+					storyWrite.POST("/stories", storiesHandler.CreateStory)
+					storyWrite.PUT("/stories/close-friends", storiesHandler.PutCloseFriends)
+					storyWrite.PUT("/stories/:id", storiesHandler.UpdateStory)
+					storyWrite.DELETE("/stories/:id", storiesHandler.DeleteStory)
+					storyWrite.POST("/stories/:id/view", storiesHandler.RecordView)
+					storyWrite.PUT("/stories/:id/reaction", storiesHandler.SetReaction)
+					storyWrite.DELETE("/stories/:id/reaction", storiesHandler.DeleteReaction)
+				}
+
 				// Friends / subscriptions. A follow is one-directional and needs
 				// no approval; a mutual pair is a friendship.
 				protected.POST("/friends/subscribe", friendsHandler.Subscribe)
@@ -924,9 +963,45 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 			// inside the object handler. This preserves the normal c.Next() order.
 			storagePublic.GET("/object/:bucket/*key", func(c *gin.Context) {
 				bucket := c.Param("bucket")
-				if bucket == "uploads" || bucket == "wall" {
+				if bucket == "uploads" || bucket == "wall" || bucket == "stories" {
 					if !middleware.AuthenticateRequest(c, authService, db) {
 						return
+					}
+					if bucket == "stories" {
+						// Story bytes are as private as the story itself. The key is
+						// <authorID>/<random>.<ext>; resolve the story that references
+						// it and apply its audience rule (storyaccess.CanViewStory).
+						// Found=false means the object is not attached yet (the
+						// upload→preview window) or the key is guessed: only the
+						// uploader's own namespace may be read then.
+						key := strings.TrimPrefix(c.Param("key"), "/")
+						viewerID := ""
+						if claimsValue, ok := c.Get("claims"); ok {
+							if claims, ok2 := claimsValue.(*auth.Claims); ok2 && claims != nil {
+								viewerID = claims.UserID
+							}
+						}
+						uploaderID := key
+						if idx := strings.Index(uploaderID, "/"); idx > 0 {
+							uploaderID = uploaderID[:idx]
+						}
+						if viewerID == "" || uploaderID == "" {
+							c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+							return
+						}
+						found, allowed := storyaccess.StoryMediaAccess(db, viewerID, key)
+						if found {
+							if !allowed {
+								// Abort, not just return: the next handler in the
+								// chain would otherwise still stream the object
+								// after the 403.
+								c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+								return
+							}
+						} else if uploaderID != viewerID {
+							c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+							return
+						}
 					}
 					if bucket == "wall" {
 						// Wall media keys are <uploaderID>/<random>.<ext> — the prefix is
@@ -950,7 +1025,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 							}
 						}
 						if ownerID == "" || viewerID == "" {
-							c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+							c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 							return
 						}
 						// found is load-bearing: once an uploader-authored post references
@@ -965,7 +1040,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 							// would be a second, redundant query on every authorized
 							// wall image. Deny only when the referencing wall is hidden.
 							if !allowed {
-								c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+								c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 								return
 							}
 						} else {
@@ -978,7 +1053,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 								logsafe.Printf("[storage] wall visibility check failed for viewer=%s owner=%s: %v", viewerID, ownerID, err)
 							}
 							if !canViewWall {
-								c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+								c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 								return
 							}
 						}
