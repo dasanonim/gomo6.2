@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ProfileWall } from "@/components/ProfileWall";
 import { ProfileAlbumView } from "@/components/ProfileAlbumView";
+import { UserAvatar } from "@/components/UserAvatar";
 import {
   EASE_OUT_EXPO,
   morphOrigin,
@@ -42,6 +43,8 @@ export interface ProfileTabsProps {
   onTabChange: (tab: ProfileTab) => void;
   userId: string;
   profile: Profile;
+  /** The avatar shown in the header — the pinned strip repeats it at 24px. */
+  avatarUrl?: string | null;
   isOwnProfile: boolean;
   isEditing: boolean;
   /** Forum layout: the bar sits inside a surface panel — match its background
@@ -233,6 +236,7 @@ export function ProfileTabs({
   onTabChange,
   userId,
   profile,
+  avatarUrl = null,
   isOwnProfile,
   panel = false,
   contentPanel = panel,
@@ -488,17 +492,16 @@ export function ProfileTabs({
             visible there and would only add per-frame cost. */}
         <span className="profile-tabbar__bg" aria-hidden="true" />
         <div className="relative z-10">
-        {/* Pinned bar "clamp": once the bar sticks, a slim strip is pulled down
-            inside it on the over-damped `reveal` spring — the tabs below settle
-            with weight instead of snapping. The strip carries the @username
-            only: the avatar already lives in the page above, and a full
-            identity row would eat height for nothing. */}
+        {/* Pinned bar "clamp": once the bar sticks, a slim identity strip is
+            pulled down inside it on the over-damped `reveal` spring — the tabs
+            below settle with weight instead of snapping. Small avatar on the
+            left, the person's name on the right. */}
         <AnimatePresence initial={false}>
           {barStuck && !panel && (
             <motion.div
-              key="compact-username"
+              key="compact-identity"
               initial={reduceMotion ? false : { height: 0, opacity: 0 }}
-              animate={{ height: 36, opacity: 1 }}
+              animate={{ height: 40, opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               transition={{
                 ...springFor("reveal", reduceMotion),
@@ -507,9 +510,15 @@ export function ProfileTabs({
               style={morphOrigin({ y: 0 })}
               className="overflow-hidden border-b border-border/60"
             >
-              <div className="flex h-9 items-center px-2.5">
-                <span className="min-w-0 truncate text-[13px] font-medium leading-none text-muted-foreground">
-                  @{profile.username}
+              <div className="flex h-10 items-center gap-2 px-2.5">
+                <UserAvatar
+                  src={avatarUrl}
+                  userId={userId}
+                  alt=""
+                  className="h-6 w-6 shrink-0 text-[10px]"
+                />
+                <span className="min-w-0 truncate text-[13px] font-semibold leading-none">
+                  {profile.display_name?.trim() || profile.username}
                 </span>
               </div>
             </motion.div>

@@ -733,6 +733,7 @@ const Profile = () => {
       onTabChange={(tab) => { setActiveTab(tab); setWallCreateOpen(false); }}
       userId={resolvedUserId}
       profile={profile}
+      avatarUrl={avatarUrl}
       isOwnProfile={isOwnProfile}
       isEditing={editing.isEditing}
       panel={forumMode}
