@@ -11,6 +11,7 @@ import {
   useTogglePinnedThread,
 } from "@/hooks/queries/useProfilePinnedThreads";
 import { fetchThreadLikesBatch, type ThreadApiRow } from "@/utils/threadFeedItem";
+import { RecedeOnScroll } from "@/components/profile/RecedeOnScroll";
 
 interface ProfilePinnedThreadsProps {
   /** The profile whose pins are shown (owner's UUID). */
@@ -88,41 +89,45 @@ export const ProfilePinnedThreads = ({
 
   if (rows.length === 0) {
     return (
-      <p className="surface-panel rounded-xl border border-dashed border-border/60 px-4 py-3 text-sm text-muted-foreground">
-        {t("profile.pinnedThreadsEmpty")}
-      </p>
+      <RecedeOnScroll intensity={0.85}>
+        <p className="surface-panel rounded-xl border border-dashed border-border/60 px-4 py-3 text-sm text-muted-foreground">
+          {t("profile.pinnedThreadsEmpty")}
+        </p>
+      </RecedeOnScroll>
     );
   }
 
   return (
-    <section aria-label={t("profile.pinnedThreads")}>
-      <CompactThreadList
-        rows={rows as ThreadApiRow[]}
-        likes={likes}
-        currentUserId={currentUserId}
-        // The profile rows are a plain curated list: no last-poster column, no
-        // bookmark, and the same opaque panel surface as the page's other
-        // blocks (the section page keeps the translucent default).
-        hideLastPoster
-        hideBookmark
-        containerClassName="surface-panel rounded-xl border border-border/60 shadow-sm"
-        renderRowActions={
-          isOwner
-            ? (row) => (
-                <PostActionsMenu triggerTitle={t("profile.pinnedThreadMenu")}>
-                  <DropdownMenuItem
-                    onClick={() => handleUnpin(row.id)}
-                    className="cursor-pointer px-3 py-2 transition-colors hover:bg-primary/15 hover:text-primary focus:bg-primary/15 focus:text-primary"
-                    title={t("profile.unpinThreadFromProfile")}
-                  >
-                    <PinOff className="mr-3 h-4 w-4" />
-                    {t("profile.unpinThreadFromProfile")}
-                  </DropdownMenuItem>
-                </PostActionsMenu>
-              )
-            : undefined
-        }
-      />
-    </section>
+    <RecedeOnScroll intensity={0.85}>
+      <section aria-label={t("profile.pinnedThreads")}>
+        <CompactThreadList
+          rows={rows as ThreadApiRow[]}
+          likes={likes}
+          currentUserId={currentUserId}
+          // The profile rows are a plain curated list: no last-poster column, no
+          // bookmark, and the same opaque panel surface as the page's other
+          // blocks (the section page keeps the translucent default).
+          hideLastPoster
+          hideBookmark
+          containerClassName="surface-panel rounded-xl border border-border/60 shadow-sm"
+          renderRowActions={
+            isOwner
+              ? (row) => (
+                  <PostActionsMenu triggerTitle={t("profile.pinnedThreadMenu")}>
+                    <DropdownMenuItem
+                      onClick={() => handleUnpin(row.id)}
+                      className="cursor-pointer px-3 py-2 transition-colors hover:bg-primary/15 hover:text-primary focus:bg-primary/15 focus:text-primary"
+                      title={t("profile.unpinThreadFromProfile")}
+                    >
+                      <PinOff className="mr-3 h-4 w-4" />
+                      {t("profile.unpinThreadFromProfile")}
+                    </DropdownMenuItem>
+                  </PostActionsMenu>
+                )
+              : undefined
+          }
+        />
+      </section>
+    </RecedeOnScroll>
   );
 };

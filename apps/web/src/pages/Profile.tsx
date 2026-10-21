@@ -1002,7 +1002,9 @@ const Profile = () => {
 
               {/* «Закреплённые темы» — up to 3 curated threads, between the
                   identity panel and the tabs (issue #518). Hidden while
-                  editing, together with the tabs it precedes. */}
+                  editing, together with the tabs it precedes. The block itself
+                  applies RecedeOnScroll, so a profile with no pins renders no
+                  wrapper at all. */}
               <ProfilePinnedThreads
                 userId={resolvedUserId}
                 isOwner={isOwnProfile}
