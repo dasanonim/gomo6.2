@@ -290,6 +290,10 @@ export function ProfileTabs({
   // sticky offset, i.e. its computed `top` (which follows --app-header-pad as
   // the header hides/shows), so no extra geometry bookkeeping is needed.
   const [barStuck, setBarStuck] = useState(false);
+  // Hysteresis: once pinned, the bar must travel 12px back down before it
+  // counts as released, so a one-pixel wobble at the pin edge cannot re-fire
+  // the arrival spring on every scroll tick.
+  const stuckRef = useRef(false);
 
   // ── Pin spring ───────────────────────────────────────────────────────────
   // The bar arrives a few pixels high and springs into place the moment it
@@ -314,8 +318,16 @@ export function ProfileTabs({
       // in sync: cheaper than getComputedStyle (no style recalc) and identical.
       const pad =
         parseFloat(document.documentElement.style.getPropertyValue("--app-header-pad")) || 0;
-      const stuck = bar.getBoundingClientRect().top <= pad + 1;
-      setBarStuck((prev) => (prev === stuck ? prev : stuck));
+      // The bar is translated by the pin spring, so its own rect would feed the
+      // spring back into the "is it pinned?" test (and a 1px overshoot flipped
+      // the state on every scroll tick). Subtract the spring's current offset:
+      // what remains is the bar's real position, unaffected by the animation.
+      const top = bar.getBoundingClientRect().top - pinY.get();
+      const stuck = top <= (stuckRef.current ? pad + 12 : pad + 1);
+      if (stuck !== stuckRef.current) {
+        stuckRef.current = stuck;
+        setBarStuck(stuck);
+      }
     };
 
     // No rAF throttling on purpose: rAF is paused in a background/occluded tab,
@@ -339,7 +351,7 @@ export function ProfileTabs({
       document.removeEventListener("visibilitychange", update);
       ro.disconnect();
     };
-  }, []);
+  }, [pinY]);
 
   const snapToBar = () => {
     const bar = stickyBarRef.current;
