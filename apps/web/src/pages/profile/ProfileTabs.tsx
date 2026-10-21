@@ -1,14 +1,13 @@
-import { lazy, Suspense, useLayoutEffect, useRef, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useLayoutEffect, useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { AnimatePresence, motion, useMotionValueEvent, useReducedMotion, useScroll } from "motion/react";
+import { AnimatePresence, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useScroll, useSpring } from "motion/react";
 import { ChevronDown, Gift, Layers, LayoutGrid, MessageSquareText, Plus, Trophy, Users, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ProfileWall } from "@/components/ProfileWall";
 import { ProfileAlbumView } from "@/components/ProfileAlbumView";
-import { UserAvatar } from "@/components/UserAvatar";
 import {
   EASE_OUT_EXPO,
   morphOrigin,
@@ -20,7 +19,6 @@ import {
   travelDirection,
 } from "@/lib/motion";
 import { useProfileAlbums } from "./useProfileAlbums";
-import { releasePullPx } from "@/lib/scrollResistance";
 import { TrophyShowcase } from "@/components/TrophyShowcase";
 import type { GiftCatalogItem } from "@/components/GiftCard";
 import type { Trophy as TrophyData } from "@/utils/trophies";
@@ -44,8 +42,6 @@ export interface ProfileTabsProps {
   onTabChange: (tab: ProfileTab) => void;
   userId: string;
   profile: Profile;
-  /** The avatar shown in the header — the pinned strip repeats it at 24px. */
-  avatarUrl?: string | null;
   isOwnProfile: boolean;
   isEditing: boolean;
   /** Forum layout: the bar sits inside a surface panel — match its background
@@ -237,7 +233,6 @@ export function ProfileTabs({
   onTabChange,
   userId,
   profile,
-  avatarUrl = null,
   isOwnProfile,
   panel = false,
   contentPanel = panel,
@@ -296,51 +291,49 @@ export function ProfileTabs({
   // the header hides/shows), so no extra geometry bookkeeping is needed.
   const [barStuck, setBarStuck] = useState(false);
 
-  // The strip above the tabs is latched like a receding profile block: it opens
-  // the instant the bar pins, but does not fold back the moment the bar
-  // releases — the user has to pull it away. The pull shortens with speed, so a
-  // flick frees it almost at once while a slow drag has to travel further.
-  const [stripOpen, setStripOpen] = useState(false);
-  const stripPullRef = useRef(0);
-  const stripLastYRef = useRef<number | null>(null);
-  const stripLastTRef = useRef(0);
+  // ── Scroll tug ───────────────────────────────────────────────────────────
+  // A pinned bar is otherwise dead flat while the page moves under it. This
+  // gives it a physical reaction: scrolling down tucks it up by a few pixels,
+  // and the moment the gesture stops it springs back into place with a
+  // barely-there overshoot. The lift follows the scroll (a flick lifts more,
+  // a slow drag almost nothing), so it reads as weight, not as an effect.
+  // Transform only — sticky geometry and native scrolling are untouched.
+  const nudgeTarget = useMotionValue(0);
+  const nudge = useSpring(nudgeTarget, SPRING.eject);
+  const nudgeTimerRef = useRef<number | null>(null);
+  const lastScrollYRef = useRef<number | null>(null);
   const { scrollY } = useScroll();
 
-  useEffect(() => {
-    if (!barStuck) return;
-    setStripOpen(true);
-    stripPullRef.current = 0;
-  }, [barStuck]);
+  const settleNudge = useCallback(() => {
+    if (nudgeTimerRef.current !== null) {
+      window.clearTimeout(nudgeTimerRef.current);
+      nudgeTimerRef.current = null;
+    }
+    nudgeTarget.set(0);
+  }, [nudgeTarget]);
+
+  useEffect(() => () => {
+    if (nudgeTimerRef.current !== null) window.clearTimeout(nudgeTimerRef.current);
+  }, []);
 
   useMotionValueEvent(scrollY, "change", (y) => {
     if (reduceMotion) return;
-    const now = performance.now();
-    const prev = stripLastYRef.current;
-    stripLastYRef.current = y;
-    if (prev === null) {
-      stripLastTRef.current = now;
-      return;
-    }
-    const dt = Math.max(8, now - stripLastTRef.current);
-    stripLastTRef.current = now;
+    const prev = lastScrollYRef.current;
+    lastScrollYRef.current = y;
+    if (prev === null) return;
     const dy = y - prev;
 
-    if (barStuck || !stripOpen) {
-      stripPullRef.current = 0;
+    if (!barStuck) {
+      settleNudge();
       return;
     }
     if (dy > 0.5) {
-      // Scrolling back down: the pull is off, the bar will pin again shortly.
-      stripPullRef.current = 0;
+      nudgeTarget.set(Math.max(-6, nudgeTarget.get() - dy * 0.06));
+      if (nudgeTimerRef.current !== null) window.clearTimeout(nudgeTimerRef.current);
+      nudgeTimerRef.current = window.setTimeout(settleNudge, 90);
       return;
     }
-    if (dy > -0.5) return;
-
-    stripPullRef.current += Math.abs(dy);
-    if (stripPullRef.current >= releasePullPx(Math.abs(dy) / dt, 100, 24)) {
-      setStripOpen(false);
-      stripPullRef.current = 0;
-    }
+    if (dy < -0.5) settleNudge();
   });
 
   useEffect(() => {
@@ -524,10 +517,10 @@ export function ProfileTabs({
     <>
       {/* Sticky bar: pins under the app header and follows its hide/show slide
           (offset comes from --app-header-pad, kept in sync by AppLayout). */}
-      <div
+      <motion.div
         ref={stickyBarRef}
         className={`profile-tabbar sticky z-30 ${panel ? "profile-tabbar--panel overflow-hidden border border-border/60" : "border-b border-border"}${barStuck && !panel ? " profile-tabbar--stuck" : ""}`}
-        style={{ top: "var(--app-header-pad, 0px)" }}
+        style={{ top: "var(--app-header-pad, 0px)", y: nudge }}
       >
         {/* One background layer behind the content: an opaque strip while the
             bar travels with the page, frosted once it pins. It sits on the bar
@@ -539,40 +532,7 @@ export function ProfileTabs({
             the profile header (a flat block of colour), so a wipe would not be
             visible there and would only add per-frame cost. */}
         <span className="profile-tabbar__bg" aria-hidden="true" />
-        <div className="relative z-10">
-        {/* Pinned bar "clamp": once the bar sticks, a slim identity strip is
-            pulled down inside it on the over-damped `reveal` spring — the tabs
-            below settle with weight instead of snapping. Small avatar on the
-            left, the person's name on the right. */}
-        <AnimatePresence initial={false}>
-          {(reduceMotion ? barStuck : stripOpen) && !panel && (
-            <motion.div
-              key="compact-identity"
-              initial={reduceMotion ? false : { height: 0, opacity: 0 }}
-              animate={{ height: 40, opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{
-                ...springFor("reveal", reduceMotion),
-                opacity: { duration: reduceMotion ? 0 : 0.16, ease: EASE_OUT_EXPO },
-              }}
-              style={morphOrigin({ y: 0 })}
-              className="overflow-hidden border-b border-border/60"
-            >
-              <div className="flex h-10 items-center gap-2 px-2.5">
-                <UserAvatar
-                  src={avatarUrl}
-                  userId={userId}
-                  alt=""
-                  className="h-6 w-6 shrink-0 text-[10px]"
-                />
-                <span className="min-w-0 truncate text-[13px] font-semibold leading-none">
-                  {profile.display_name?.trim() || profile.username}
-                </span>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <div className="overflow-x-auto">
+        <div className="relative z-10 overflow-x-auto">
         <div className="flex gap-1 min-w-max px-1.5 py-1">
           {allTabVisible && (
             <TabButton
@@ -680,8 +640,7 @@ export function ProfileTabs({
         )}
         </AnimatePresence>
         </div>
-        </div>
-      </div>
+      </motion.div>
 
       {/* Create-album dialog — modal so it works on phones too (full-width
           sheet instead of the cramped inline input row). */}
