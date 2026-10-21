@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useLayoutEffect, useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { AnimatePresence, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useScroll, useSpring } from "motion/react";
+import { AnimatePresence, animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useScroll, useSpring, useTransform } from "motion/react";
 import { ChevronDown, Gift, Layers, LayoutGrid, MessageSquareText, Plus, Trophy, Users, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -299,10 +299,30 @@ export function ProfileTabs({
   // a slow drag almost nothing), so it reads as weight, not as an effect.
   // Transform only — sticky geometry and native scrolling are untouched.
   const nudgeTarget = useMotionValue(0);
-  const nudge = useSpring(nudgeTarget, SPRING.eject);
+  // No overshoot here on purpose: this is a 3px reaction, and a spring that
+  // overshoots by even a pixel reads as a glitch at this amplitude.
+  const nudge = useSpring(nudgeTarget, SPRING.reveal);
   const nudgeTimerRef = useRef<number | null>(null);
   const lastScrollYRef = useRef<number | null>(null);
   const { scrollY } = useScroll();
+
+  // ── Pin tuck ─────────────────────────────────────────────────────────────
+  // The instant the bar pins under the header it is already tucked underneath
+  // it, then ejects down into its resting place — the bar arrives with weight
+  // instead of simply appearing. `pinTuck` is a one-shot offset added to the
+  // scroll nudge; it returns to zero when the bar releases mid-pop.
+  const pinTuck = useMotionValue(0);
+  const barY = useTransform([nudge, pinTuck], (latest: number[]) => latest[0] + latest[1]);
+
+  useLayoutEffect(() => {
+    if (reduceMotion) {
+      pinTuck.set(0);
+      return;
+    }
+    if (barStuck) pinTuck.set(-28);
+    const controls = animate(pinTuck, 0, springFor(barStuck ? "eject" : "reveal", reduceMotion));
+    return () => controls.stop();
+  }, [barStuck, pinTuck, reduceMotion]);
 
   const settleNudge = useCallback(() => {
     if (nudgeTimerRef.current !== null) {
@@ -328,7 +348,7 @@ export function ProfileTabs({
       return;
     }
     if (dy > 0.5) {
-      nudgeTarget.set(Math.max(-6, nudgeTarget.get() - dy * 0.06));
+      nudgeTarget.set(Math.max(-3, nudgeTarget.get() - dy * 0.04));
       if (nudgeTimerRef.current !== null) window.clearTimeout(nudgeTimerRef.current);
       nudgeTimerRef.current = window.setTimeout(settleNudge, 90);
       return;
@@ -520,7 +540,7 @@ export function ProfileTabs({
       <motion.div
         ref={stickyBarRef}
         className={`profile-tabbar sticky z-30 ${panel ? "profile-tabbar--panel overflow-hidden border border-border/60" : "border-b border-border"}${barStuck && !panel ? " profile-tabbar--stuck" : ""}`}
-        style={{ top: "var(--app-header-pad, 0px)", y: nudge }}
+        style={{ top: "var(--app-header-pad, 0px)", y: barY }}
       >
         {/* One background layer behind the content: an opaque strip while the
             bar travels with the page, frosted once it pins. It sits on the bar
