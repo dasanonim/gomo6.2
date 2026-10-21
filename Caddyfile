@@ -30,7 +30,8 @@
 }
 
 # Storage architecture:
-# - Reads (GET/HEAD /storage/v1/object/*) → Caddy rewrites Host + path → Garage website port (direct)
+# - Reads (GET/HEAD /storage/v1/object/*) → Caddy rewrites Host + path → Garage website port (direct),
+#   except the private buckets (uploads, wall, stories) which go through the Go proxy
 # - Writes (POST /storage/v1/upload, DELETE /storage/v1/object/*) → Go backend → Garage S3 API
 # path_regexp extracts bucket name and rewrites Host to <bucket>.storage.garage.localhost
 # so Garage resolves the correct bucket in virtual-hosted style.
@@ -135,13 +136,15 @@
 				}
 			}
 		}
-		# Messenger uploads and profile-wall media are private and always go
-		# through the authenticated Go proxy, which enforces chat membership and
-		# wall visibility (canViewUserWall). Keep this handler before the generic
-		# public bucket proxy.
+		# Messenger uploads, profile-wall media and story media are private and
+		# always go through the authenticated Go proxy, which enforces chat
+		# membership, wall visibility (canViewUserWall) and the story audience
+		# (storyaccess). Keep this handler before the generic public bucket proxy:
+		# stories has Garage website access denied on purpose, so a direct
+		# garage:3902 read would answer 404 instead of authorizing the viewer.
 		@privateStorageGet {
 			method GET HEAD
-			path_regexp private_storage_read ^/storage/v1/object/(uploads|wall)/(.+)$
+			path_regexp private_storage_read ^/storage/v1/object/(uploads|wall|stories)/(.+)$
 		}
 		handle @privateStorageGet {
 			reverse_proxy backend:8080 {
@@ -156,6 +159,7 @@
 			method GET HEAD
 			not path /storage/v1/object/uploads/*
 			not path /storage/v1/object/wall/*
+			not path /storage/v1/object/stories/*
 			path_regexp storage_read ^/storage/v1/object/([^/]+)/(.+)$
 		}
 		handle @storageGet {
@@ -267,7 +271,7 @@
 		# website proxy below.
 		@privateStorageGet {
 			method GET HEAD
-			path_regexp private_storage_read ^/storage/v1/object/(uploads|wall)/(.+)$
+			path_regexp private_storage_read ^/storage/v1/object/(uploads|wall|stories)/(.+)$
 		}
 		handle @privateStorageGet {
 			reverse_proxy backend:8080 {
@@ -282,6 +286,7 @@
 			method GET HEAD
 			not path /storage/v1/object/uploads/*
 			not path /storage/v1/object/wall/*
+			not path /storage/v1/object/stories/*
 			path_regexp storage_read ^/storage/v1/object/([^/]+)/(.+)$
 		}
 		handle @storageGet {
