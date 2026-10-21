@@ -428,9 +428,11 @@ func (h *Handler) GetUserStories(c *gin.Context) {
 		  AND s.owner_type = 'user'
 		  AND s.user_id = $2::uuid
 		  AND ` + storyaccess.VisibleCondition("s", "$1")
-	if scope == "live" {
+	switch scope {
+	case "live":
 		query += " AND s.expires_at > NOW()"
-	} else if scope == "pinned" {
+	case "pinned":
+		// Highlights survive expiry: "keep in profile" is the whole point.
 		query += " AND s.is_pinned = true"
 	}
 	query += " ORDER BY s.created_at ASC"

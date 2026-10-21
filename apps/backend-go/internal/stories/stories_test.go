@@ -220,8 +220,6 @@ func TestNormalizeStory(t *testing.T) {
 }
 
 func floatPtr(f float64) *float64 { return &f }
-func boolPtr(b bool) *bool        { return &b }
-func strPtr(s string) *string     { return &s }
 
 // ─── Grouping ───────────────────────────────────────────────────────────────
 

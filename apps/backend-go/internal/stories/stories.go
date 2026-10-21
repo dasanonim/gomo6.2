@@ -196,7 +196,6 @@ var (
 	errMediaKey       = errors.New("invalid media key")
 	errVideoTooLong   = errors.New("video too long")
 	errStyleTooBig    = errors.New("text style too large")
-	errNotAuthor      = errors.New("not the author")
 )
 
 // trimText removes surrounding whitespace without allocating when nothing
