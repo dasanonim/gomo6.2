@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ChatIcon } from "@/components/ChatIcon";
 import { MobileMenu } from "@/components/MobileMenu";
+import { MobileBottomNav } from "@/components/MobileBottomNav";
 import { TopLoadingBar } from "@/components/TopLoadingBar";
 import { HeaderUsername } from "@/components/HeaderUsername";
 import { Footer } from "@/components/Footer";
@@ -1208,6 +1209,7 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
   const isSpecialPage = location.pathname.startsWith('/auth');
   const isMessengerPage = location.pathname.startsWith('/messages');
   const hideChrome = isSpecialPage || hideMessengerChrome;
+  const showBottomNavigation = !isSpecialPage && !hideMessengerChrome;
 
   // Measure the real header height (it grows with the mobile search row, wraps
   // on narrow screens, changes when fonts load...) so the content padding always
@@ -1554,11 +1556,13 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
       <motion.main
         id="main-content"
         tabIndex={-1}
-        className={`flex-1 min-h-0 outline-none${isMessengerPage ? " is-messenger-page" : ""}${hideMessengerChrome && !isMessengerPage ? " is-app-surface" : ""}${enterClass ? ` ${enterClass}` : ""}`}
+        className={`flex-1 min-h-0 outline-none${isMessengerPage ? " is-messenger-page" : ""}${showBottomNavigation ? " has-mobile-bottom-nav" : ""}${hideMessengerChrome && !isMessengerPage ? " is-app-surface" : ""}${enterClass ? ` ${enterClass}` : ""}`}
         style={{ paddingTop: hideChrome ? 0 : contentPad }}
       >
         {children}
       </motion.main>
+
+      {showBottomNavigation && <MobileBottomNav user={user} />}
 
       {!hideChrome && !isMessengerPage ? (
       <div className="mt-auto" data-app-layout-footer="true">
@@ -1570,7 +1574,7 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
       <DropsShop open={showDropsShop} onOpenChange={setShowDropsShop} />
 
       {/* Registration CTA for anonymous visitors (small, collapsible) */}
-      {!user && <GuestSignupBanner />}
+      {!user && <GuestSignupBanner mobileNavVisible={showBottomNavigation} />}
     </div>
   );
 };

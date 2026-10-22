@@ -14,7 +14,7 @@ const DISMISS_KEY = "guest-signup-banner-dismissed";
  * an account so they can keep enjoying (and participating in) the content.
  * Rendered only by AppLayout when there is no authenticated user.
  */
-export const GuestSignupBanner = () => {
+export const GuestSignupBanner = ({ mobileNavVisible = false }: { mobileNavVisible?: boolean } = {}) => {
   const navigate = useNavigate();
   const [dismissed, setDismissed] = useState(() => {
     try {
@@ -25,6 +25,7 @@ export const GuestSignupBanner = () => {
   });
   // While the cookie banner is up (bottom, z-70) this CTA floats above it;
   // once the visitor has made a cookie choice it settles to the bottom edge.
+  // AppLayout lifts it above the persistent mobile tabs when those are visible.
   const [cookiesDone, setCookiesDone] = useState(hasDecided);
 
   useEffect(() => {
@@ -40,7 +41,7 @@ export const GuestSignupBanner = () => {
   // to two lines, bottom-20 on larger screens), otherwise it rests on the
   // bottom edge.
   return (
-    <div className={`fixed left-1/2 -translate-x-1/2 z-[60] w-[min(94vw,560px)] transition-all duration-300 ${
+    <div className={`guest-signup-banner fixed left-1/2 -translate-x-1/2 z-[60] w-[min(94vw,560px)] transition-all duration-300 ${mobileNavVisible ? "has-mobile-nav" : ""} ${
       cookiesDone
         ? "bottom-[max(0.75rem,env(safe-area-inset-bottom,0px))] sm:bottom-[max(1rem,env(safe-area-inset-bottom,0px))]"
         : "bottom-24 sm:bottom-20"

@@ -91,7 +91,9 @@ vi.mock("motion/react", () => ({
     header: ({ children, ...props }: any) => <div data-testid="motion-header" {...props}>{children}</div>,
     main: ({ children, ...props }: any) => <main {...props}>{children}</main>,
     div: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+    span: ({ children, layoutId: _layoutId, transition: _transition, ...props }: any) => <span {...props}>{children}</span>,
   },
+  useReducedMotion: () => false,
   useScroll: () => ({ scrollY: { getPrevious: () => (globalThis as any).__scrollPrevious ?? 0 } }),
   useMotionValueEvent: (_mv: any, _ev: any, cb: any) => {
     // Only the scroll listener drives the header hide/show. The contentPad
