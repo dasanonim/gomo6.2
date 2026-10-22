@@ -20,7 +20,7 @@ import { storageUrl } from "@/utils/storage";
 import { CONTENT_TAGS, FORMAT_TAGS, ATMOSPHERE_TAGS, FLAG_TAGS } from "@/constants/tags";
 import { UserBadge } from "@/components/UserBadge";
 import { AgeVerification } from "@/components/AgeVerification";
-import { Filter, X, MessageCircle, ArrowUpRight, BookOpenText, UserPlus, UserCheck, Plus, Share2, ChevronLeft, ChevronRight, ChevronDown, Hash, Lock, MessageSquare, Settings } from "lucide-react";
+import { Filter, X, MessageCircle, ArrowUpRight, BookOpenText, UserPlus, UserCheck, Plus, Share2, ChevronLeft, ChevronRight, ChevronDown, Hash, Lock, MessageSquare, Settings, Users } from "lucide-react";
 import { useSessionTime } from "@/hooks/useSessionTime";
 import { useProfileInvalidation } from "@/hooks/useProfileInvalidation";
 import { getCurrentUserMeta } from "@/utils/currentUserMeta";
@@ -41,6 +41,8 @@ import {
   type BoardRow as Board,
   type ChannelRow as Channel,
 } from "@/routes/data/boardData";
+import { getDirectoryMemberCount } from "@/routes/data/gomosubData";
+import { formatCompactCount } from "@/utils/formatCount";
 
 // Mobile channel sheet grab zone: bottom-left corner of the screen.
 // Used both for the swipe-up-to-open and swipe-down-to-close.
@@ -125,6 +127,7 @@ const Board = () => {
   const [rulesConfirmed, setRulesConfirmed] = useState(false);
   const [checkingRules, setCheckingRules] = useState(false);
   const [isJoined, setIsJoined] = useState(false);
+  const [memberCount, setMemberCount] = useState<number | null>(null);
   const [privateAccessDenied, setPrivateAccessDenied] = useState(false);
   const [membershipLoading, setMembershipLoading] = useState(false);
   
@@ -463,6 +466,15 @@ const Board = () => {
 
         setBoard(boardData);
 
+        // Compact-header member count through the shared (warm) directory
+        // cache — one request total, works for guests too.
+        if (boardData.is_gomosub) {
+          setMemberCount(null);
+          getDirectoryMemberCount(boardData.id).then((count) => {
+            if (count != null) setMemberCount(count);
+          });
+        }
+
         // Load user's permissions for gomosub management
         if (boardData.is_gomosub && user?.id) {
           try {
@@ -643,8 +655,13 @@ const Board = () => {
     return result;
   }, [channels]);
 
-  const activeChannelSlug = useMemo(() => {
-    if (!activeChannelId) return null;
+  // gomosub header tags (from the board row's gomosub_tags array)
+  const gomosubTags = useMemo(() => {
+    const tags = board?.gomosub_tags;
+    return Array.isArray(tags) ? tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0) : [];
+  }, [board?.gomosub_tags]);
+
+  const activeChannelSlug = useMemo(() => {    if (!activeChannelId) return null;
     return channels.find((ch) => ch.id === activeChannelId)?.slug || null;
   }, [activeChannelId, channels]);
 
@@ -790,19 +807,20 @@ const Board = () => {
       <NavigationLink
         to={`/g/${slug}`}
         onClick={() => { setActiveChannelId(null); onSelect(); }}
-        className={`flex items-center gap-2 px-2 py-2 rounded-lg text-sm transition-colors ${
+        aria-current={!activeChannelId ? "page" : undefined}
+        className={`group flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm transition-colors ${
           !activeChannelId
             ? "bg-primary/10 text-primary font-medium"
             : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
         }`}
       >
-        <Hash className="w-4 h-4 shrink-0" />
+        <Hash className={`w-4 h-4 shrink-0 ${!activeChannelId ? "" : "text-muted-foreground/80 group-hover:text-foreground"}`} />
         <span className="truncate">{t("board.general")}</span>
       </NavigationLink>
       {channelCategories.map((group) => (
-        <div key={group.category || "__uncategorized"} className="mt-1.5">
+        <div key={group.category || "__uncategorized"} className="mt-2">
           {group.category && (
-            <div className="px-2 py-0.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider truncate">
+            <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/70 truncate">
               {group.category}
             </div>
           )}
@@ -811,7 +829,8 @@ const Board = () => {
               key={ch.id}
               to={`/g/${slug}/c/${ch.slug}`}
               onClick={onSelect}
-              className={`flex items-center gap-2 px-2 py-2 rounded-lg text-sm transition-colors ${
+              aria-current={activeChannelSlug === ch.slug ? "page" : undefined}
+              className={`group flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm transition-colors ${
                 activeChannelSlug === ch.slug
                   ? "bg-primary/10 text-primary font-medium"
                   : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
@@ -820,9 +839,9 @@ const Board = () => {
               {ch.is_private && ch.kind !== "text" ? (
                 <Lock className="w-4 h-4 shrink-0 text-amber-500" />
               ) : ch.kind === "text" ? (
-                <MessageSquare className="w-4 h-4 shrink-0 text-sky-400" />
+                <MessageSquare className={`w-4 h-4 shrink-0 ${activeChannelSlug === ch.slug ? "text-primary" : "text-sky-400"}`} />
               ) : (
-                <Hash className="w-4 h-4 shrink-0" />
+                <Hash className={`w-4 h-4 shrink-0 ${activeChannelSlug === ch.slug ? "" : "text-muted-foreground/80 group-hover:text-foreground"}`} />
               )}
               <span className="truncate">{ch.name}</span>
             </NavigationLink>
@@ -949,6 +968,7 @@ const Board = () => {
       }
       setIsJoined(false);
       toast.success(t("board.left"));
+      if (memberCount != null) setMemberCount(Math.max(0, memberCount - 1));
       // Raw write bypasses query-builder — drop memberships/boards GET cache.
       invalidateByPrefix('/api/v1/gomosub_memberships');
       invalidateByPrefix('/api/v1/boards');
@@ -1026,9 +1046,11 @@ const Board = () => {
             Discord-style channel bar above the chat carries name + actions) */}
         {!isTextChannel && (<div className="mb-3 sm:mb-4 space-y-3">
           {board.is_gomosub ? (
-            <Card className="overflow-hidden border-primary/20 bg-surface">
+            <Card className="overflow-hidden rounded-2xl border-border/70 bg-surface">
               <div className="relative">
-                <div className="h-40 sm:h-52">
+                {/* Cover band — compact backdrop; the identity lives in the
+                    avatar row below, not in a half-screen hero. */}
+                <div className="h-24 sm:h-32">
                   {board.cover_image_url ? (
                     <img
                       src={storageUrl("post-images", board.cover_image_url) || board.cover_image_url}
@@ -1036,74 +1058,100 @@ const Board = () => {
                       className="h-full w-full object-cover"
                     />
                   ) : (
-                    <div className="h-full w-full bg-gradient-to-br from-primary/15 to-muted" />
+                    <div className="h-full w-full bg-gradient-to-br from-primary/20 via-primary/10 to-muted" />
                   )}
                 </div>
-                <div className="absolute left-0 right-0 -bottom-10 sm:-bottom-12">
-                  <div className="flex items-end gap-3 px-4 sm:px-6 py-2">
-                    <div className="flex items-end gap-3 min-w-0">
-                      <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-lg border-2 border-background bg-muted overflow-hidden flex items-center justify-center text-2xl font-bold text-muted-foreground shrink-0">
-                        {board.gomosub_avatar_url ? (
-                          <img src={storageUrl("post-images", board.gomosub_avatar_url) || board.gomosub_avatar_url} alt={board.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <span>{(board.name?.[0] || "g").toUpperCase()}</span>
+
+                <div className="relative -mt-8 sm:-mt-10 px-4 sm:px-5 pb-4 sm:pb-5">
+                  <div className="flex items-end justify-between gap-3">
+                    <div className="h-16 w-16 sm:h-20 sm:w-20 shrink-0 overflow-hidden rounded-2xl border-[3px] border-background bg-muted shadow-md">
+                      {board.gomosub_avatar_url ? (
+                        <img
+                          src={storageUrl("post-images", board.gomosub_avatar_url) || board.gomosub_avatar_url}
+                          alt={board.name}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary/30 to-muted text-xl sm:text-2xl font-bold text-primary">
+                          {(board.name?.[0] || board.slug[0] || "g").toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                    {board.is_gomosub && (
+                      <div className="flex items-center gap-2 pb-0.5">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-9 w-9 p-0"
+                          onClick={() => {
+                            const url = `${window.location.origin}/g/${board.slug}`;
+                            navigator.clipboard.writeText(url).then(() => {
+                              toast.success(t("board.linkCopied"));
+                            }).catch(() => {
+                              toast.error(t("board.linkCopyError"));
+                            });
+                          }}
+                          title={t("board.share")}
+                        >
+                          <Share2 className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant={isJoined ? "secondary" : "default"}
+                          onClick={handleToggleJoin}
+                          className={`h-9 px-4 text-sm ${isJoined ? "bg-primary/12 text-primary hover:bg-primary/20 border border-primary/35" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
+                          disabled={membershipLoading || checkingRules}
+                        >
+                          {isJoined ? (
+                            <>
+                              <UserCheck className="w-4 h-4 mr-2" />
+                              {t("board.member")}
+                            </>
+                          ) : (
+                            <>
+                              <UserPlus className="w-4 h-4 mr-2" />
+                              {t("board.join")}
+                            </>
+                          )}
+                        </Button>
+                        {user && board.owner_id !== user.id && (
+                          <PostActionsMenu
+                            targetType="gomosub"
+                            targetId={board.id}
+                            reportLabel="Пожаловаться на саб"
+                            reportTargetLabel="на саб"
+                            triggerTitle="Действия"
+                          />
                         )}
                       </div>
-                      <div className="text-xl sm:text-2xl font-bold text-primary pb-1 truncate">g/{board.slug}</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="relative px-4 sm:px-6 pt-12 sm:pt-14 pb-4 sm:pb-5">
-                {board.is_gomosub && (
-                  <div className="absolute right-4 sm:right-6 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-9 w-9 p-0 sm:h-10 sm:w-10"
-                      onClick={() => {
-                        const url = `${window.location.origin}/g/${board.slug}`;
-                        navigator.clipboard.writeText(url).then(() => {
-                          toast.success(t("board.linkCopied"));
-                        }).catch(() => {
-                          toast.error(t("board.linkCopyError"));
-                        });
-                      }}
-                      title={t("board.share")}
-                    >
-                      <Share2 className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant={isJoined ? "secondary" : "default"}
-                      onClick={handleToggleJoin}
-                      className={`h-9 w-9 p-0 sm:h-10 sm:w-auto sm:px-4 sm:text-sm ${isJoined ? "bg-primary/12 text-primary hover:bg-primary/20 border border-primary/35" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
-                      disabled={membershipLoading || checkingRules}
-                    >
-                      {isJoined ? (
-                        <>
-                          <UserCheck className="w-4 h-4 sm:mr-2" />
-                          <span className="hidden sm:inline">{t("board.member")}</span>
-                        </>
-                      ) : (
-                        <>
-                          <UserPlus className="w-4 h-4 sm:mr-2" />
-                          <span className="hidden sm:inline">{t("board.join")}</span>
-                        </>
-                      )}
-                    </Button>
-                    {user && board.owner_id !== user.id && (
-                      <PostActionsMenu
-                        targetType="gomosub"
-                        targetId={board.id}
-                        reportLabel="Пожаловаться на саб"
-                        reportTargetLabel="на саб"
-                        triggerTitle="Действия"
-                      />
                     )}
                   </div>
-                )}
-                <p className="mt-2 text-sm sm:text-base text-muted-foreground sm:pr-44">{board.description}</p>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                    <h1 className="text-lg sm:text-xl font-bold tracking-tight">{board.name}</h1>
+                    <span className="text-sm font-semibold text-primary">g/{board.slug}</span>
+                    {memberCount != null && (
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Users className="h-3 w-3" />
+                        {formatCompactCount(memberCount)}
+                      </span>
+                    )}
+                    {board.visibility === "private" && (
+                      <Lock className="h-3.5 w-3.5 text-amber-500" />
+                    )}
+                  </div>
+                  {board.description && (
+                    <p className="mt-1 text-sm text-muted-foreground max-w-[720px]">{board.description}</p>
+                  )}
+                  {(gomosubTags.length > 0) && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {gomosubTags.slice(0, 6).map((tag) => (
+                        <span key={tag} className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </Card>
           ) : (
@@ -1457,7 +1505,7 @@ const Board = () => {
             className={`flex gap-0 ${isTextChannel ? "w-full" : "flex-1 min-h-0 -mx-2 sm:-mx-4 md:-mx-5"}`}
           >
             <aside className={`hidden md:block shrink-0 transition-all duration-300 z-20 sticky top-2 self-start ${sidebarCollapsed ? 'w-0' : 'w-[220px] sm:w-[240px]'}`}>
-              <div className={`mx-2 rounded-xl border border-border/40 bg-card/85 backdrop-blur-md shadow-lg transition-shadow hover:shadow-xl flex flex-col max-h-[calc(100dvh-1.5rem)] overflow-hidden ${sidebarCollapsed ? 'hidden' : ''}`}>
+              <div className={`mx-2 rounded-2xl border border-border/50 bg-surface/60 backdrop-blur-md shadow-sm flex flex-col max-h-[calc(100dvh-1.5rem)] overflow-hidden ${sidebarCollapsed ? 'hidden' : ''}`}>
                 {/* Sidebar header with collapse button */}
                 <div className="flex items-center justify-between px-3 pt-3 pb-2">
                   <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest select-none">{t("board.channels")}</h3>

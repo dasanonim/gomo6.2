@@ -46,6 +46,20 @@ export const loadGomoSubsDirectory = (): Promise<GomoSubDirectoryItem[]> =>
     staleTtlMs: GOMOSUBS_STALE_MS,
   });
 
+/**
+ * Member count for a single board, resolved through the shared directory
+ * cache (the catalog page usually warmed it already; guests included).
+ */
+export const getDirectoryMemberCount = async (boardId: string): Promise<number | null> => {
+  try {
+    const items = await loadGomoSubsDirectory();
+    const sub = items.find((s) => s.id === boardId);
+    return sub ? sub.member_count : null;
+  } catch {
+    return null;
+  }
+};
+
 export function registerGomoSubRouteData(): void {
   registerRouteData({
     id: "gomosubs",
