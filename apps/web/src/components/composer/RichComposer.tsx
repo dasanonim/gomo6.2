@@ -69,6 +69,10 @@ import {
   type MediaKind,
 } from "@/components/editor/media/mediaSchema";
 
+/** The sheet is flicked away rather than slid: closing from the X or Escape
+    should feel like the same downward swipe that dismisses it. */
+const DISMISS_VELOCITY = 1000;
+
 export interface RichComposerPayload {
   /** Final ProseMirror document (upload placeholders stripped, cover attached). */
   json: unknown;
@@ -319,7 +323,7 @@ export const RichComposer = ({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !lightbox && !escapeDisabled) {
         event.preventDefault();
-        close();
+        close(DISMISS_VELOCITY);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -709,7 +713,7 @@ export const RichComposer = ({
           />
           <button
             type="button"
-            onClick={() => close()}
+            onClick={() => close(DISMISS_VELOCITY)}
             aria-label="Закрыть"
             title="Закрыть"
             className={`${glassGhostButtonClass} active:scale-95`}
