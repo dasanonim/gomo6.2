@@ -59,6 +59,12 @@ export const SPRING = {
    */
   composer: { type: "spring", stiffness: 400, damping: 20, mass: 0.7 },
   /**
+   * The composer's exit. Same character as `composer`, deliberately a little
+   * slower and more damped so the panel is seen travelling down instead of
+   * being gone before the eye catches it.
+   */
+  composerClose: { type: "spring", stiffness: 320, damping: 26, mass: 0.9 },
+  /**
    * A measured dimension — `width`/`height` of a label, row or chip that opens
    * to its content. Deliberately over-damped: a spring overshoot on a measured
    * box is not bounce, it is the last glyph of the text sliding a fraction of a

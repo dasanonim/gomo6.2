@@ -234,7 +234,7 @@ export const RichComposer = ({
         ? window.innerHeight + 32
         : 900;
     const controls = animate(sheetY, target, {
-      ...springFor("composer", reduceMotion),
+      ...springFor("composerClose", reduceMotion),
       // A flick carries its speed into the exit instead of restarting from rest.
       velocity: releaseVelocityRef.current,
       onComplete: finishClose,
