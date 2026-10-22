@@ -609,50 +609,45 @@ export const RichComposer = ({
   const atLimit = mediaCount >= maxMedia;
 
   return createPortal(
-    <motion.div
-      initial={reduceMotion ? false : { opacity: 0 }}
-      animate={reduceMotion ? undefined : { opacity: closing ? 0 : 1 }}
-      transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE_OUT_EXPO }}
-      className={`fixed inset-0 z-[60] bg-black/45 md:backdrop-blur-lg ${
+    <div
+      className={`fixed inset-0 z-[60] ${
         fullscreen ? "" : "md:flex md:items-center md:justify-center"
       }`}
     >
+      {/* The dimming is its own layer: the panel must never fade with it. */}
+      <motion.div
+        aria-hidden="true"
+        className="absolute inset-0 bg-black/45 md:backdrop-blur-lg"
+        initial={reduceMotion ? false : { opacity: 0 }}
+        animate={reduceMotion ? undefined : { opacity: closing ? 0 : 1 }}
+        transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE_OUT_EXPO }}
+      />
       <motion.div
         ref={composerRootRef}
         role="dialog"
         aria-modal="true"
         data-testid={testId}
-        initial={reduceMotion ? false : isDesktop ? { opacity: 0, scale: 0.9 } : { opacity: 1 }}
+        initial={reduceMotion ? false : isDesktop ? { scale: 0.9 } : { scale: 1 }}
         animate={
           reduceMotion
             ? undefined
             : closing
-              ? isDesktop
-                ? { opacity: 0, scale: 0.96 }
-                : { opacity: 1 }
-              : isDesktop
-                ? { opacity: 1, scale: 1 }
-                : { opacity: 1 }
+              ? { scale: isDesktop ? 0.96 : 1 }
+              : { scale: 1 }
         }
-        transition={
-          reduceMotion
-            ? { duration: 0 }
-            : {
-                ...springFor("snappy", reduceMotion),
-                opacity: { duration: 0.22, ease: EASE_OUT_EXPO },
-              }
-        }
+        transition={springFor("snappy", reduceMotion)}
         drag={isDesktop ? false : "y"}
         dragControls={dragControls}
         dragListener={false}
-        dragConstraints={isDesktop ? undefined : { top: 0, bottom: 600 }}
-        dragElastic={{ top: 0.25, bottom: 0.9 }}
+        dragConstraints={isDesktop ? undefined : { top: 0, bottom: 0 }}
+        dragElastic={{ top: 0.22, bottom: 0.55 }}
         dragMomentum={false}
         onDragEnd={(_, info) => {
           if (isDesktop) return;
           // Down past the threshold (or a hard flick) closes with the gesture's
-          // own velocity; everything else springs back and bounces off the top.
-          if (info.offset.y > 120 || info.velocity.y > 700) {
+          // own velocity; everything else springs back — the sheet is tensioned
+          // from below, so a released pull always carries it up again.
+          if (info.offset.y > 200 || info.velocity.y > 700) {
             close(info.velocity.y);
             return;
           }
@@ -964,7 +959,7 @@ export const RichComposer = ({
           </div>
         </DialogContent>
       </Dialog>
-    </motion.div>,
+    </div>,
     document.body,
   );
 };
