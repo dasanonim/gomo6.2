@@ -907,6 +907,10 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 		// enforces private-profile privacy itself)
 		rpc.POST("/get_avatar_history", rpcHandler.GetAvatarHistory)
 
+		// GomoSub directory (public — drives the /g catalog; with a token the
+		// rows carry the viewer's joined flag)
+		rpc.GET("/gomosubs_directory", rpcHandler.GetGomoSubsDirectory)
+
 		// Wall-post views (public — guests scroll walls too; the handler
 		// dedupes per viewer and gates private walls itself)
 		rpc.POST("/record_wall_views", rpcHandler.RecordWallViews)

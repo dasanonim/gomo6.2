@@ -1,432 +1,336 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { invalidateByPrefix } from "@/integrations/api/queryCache";
 import { api } from "@/integrations/api/compat";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { safeDate } from "@/utils/safeDate";
-import { storageUrl } from "@/utils/storage";
-import { PrefetchLink } from "@/components/PrefetchLink";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ThreadCard } from "@/components/ThreadCard";
-import { Loader2, Plus, UserPlus, UserCheck, Flame, Compass } from "lucide-react";
+import { X, Search, Plus, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { NavigationLink } from "@/components/NavigationLink";
+import { storageUrl } from "@/utils/storage";
+import { pickPluralRu } from "@/utils/formatCount";
+import { GomoSubCard } from "@/components/gomosub/GomoSubCard";
+import { cn } from "@/lib/utils";
 import { useCachedQuery } from "@/hooks/useCachedQuery";
 import {
-  fetchPublicGomoSubs,
-  GOMOSUBS_LIST_KEY,
+  fetchGomoSubsDirectory,
+  GOMOSUBS_DIRECTORY_KEY,
   GOMOSUBS_STALE_MS,
   GOMOSUBS_TTL_MS,
-  type GomoSub,
+  type GomoSubDirectoryItem,
 } from "@/routes/data/gomosubData";
+
+type ViewTab = "all" | "mine";
+type SortKey = "popular" | "new" | "alpha";
+
+const SORTS: { key: SortKey; label: string }[] = [
+  { key: "popular", label: "Популярные" },
+  { key: "new", label: "Новые" },
+  { key: "alpha", label: "По алфавиту" },
+];
 
 const GomoSubs = () => {
   const navigate = useNavigate();
-  const [profile, setProfile] = useState<{ garma: number; username?: string | null; created_at?: string } | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [userId, setUserId] = useState<string | null>(null);
-  const [joinedSubIds, setJoinedSubIds] = useState<Set<string>>(new Set());
-  const [membersBySub, setMembersBySub] = useState<Record<string, number>>({});
-  const [togglingSubId, setTogglingSubId] = useState<string | null>(null);
-  const [myFeedThreads, setMyFeedThreads] = useState<any[]>([]);
-  const [feedLikesMap, setFeedLikesMap] = useState<Map<string, { count: number; isLiked: boolean }>>(new Map());
-  const [myFeedLoading, setMyFeedLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"all" | "my-feed">("all");
+  const [joinedBySub, setJoinedBySub] = useState<Record<string, boolean>>({});
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
-  // SWR: instant on a warm cache, background revalidation otherwise. The list
-  // is global and rarely changes; keeping it for 30 min stale means returning
-  // to /g is instant while a fresh copy lands.
-  const { data: subsData, error: subsError } = useCachedQuery<GomoSub[]>(
-    GOMOSUBS_LIST_KEY,
-    fetchPublicGomoSubs,
+  const q = (searchParams.get("q") ?? "").trim();
+  const inputQuery = searchParams.get("q") ?? "";
+  const tab = (searchParams.get("tab") as ViewTab | null) ?? "all";
+  const sort = (searchParams.get("sort") as SortKey | null) ?? "popular";
+
+  // SWR: instant on a warm cache (the route preloader warmed /g), background
+  // revalidation otherwise. Returning to the catalog is instant.
+  const { data: subsData, error: subsError } = useCachedQuery<GomoSubDirectoryItem[]>(
+    GOMOSUBS_DIRECTORY_KEY,
+    fetchGomoSubsDirectory,
     { ttlMs: GOMOSUBS_TTL_MS, staleTtlMs: GOMOSUBS_STALE_MS },
   );
   const subs = useMemo(() => subsData ?? [], [subsData]);
   const loading = subsData === undefined && !subsError;
 
-  const _canCreate = useMemo(() => {
-    const garmaOk = (profile?.garma ?? 0) >= 10;
-    const ageOk = profile?.created_at
-      ? Date.now() - safeDate(profile.created_at).getTime() >= 14 * 24 * 60 * 60 * 1000
-      : false;
-    return garmaOk && ageOk;
-  }, [profile?.garma, profile?.created_at]);
-  const joinedSubs = useMemo(() => subs.filter((sub) => joinedSubIds.has(sub.id)), [subs, joinedSubIds]);
-  const popularSubs = useMemo(
-    () => [...subs].sort((a, b) => (membersBySub[b.id] ?? 0) - (membersBySub[a.id] ?? 0)).slice(0, 8),
-    [subs, membersBySub]
-  );
-  const randomSubs = useMemo(() => [...subs].sort(() => Math.random() - 0.5).slice(0, 3), [subs]);
-
-  // Auth + own profile (once per mount).
   useEffect(() => {
     const load = async () => {
       const { data: { session } } = await api.auth.getSession();
       setUserId(session?.user?.id ?? null);
-
-      if (session?.user) {
-        const { data: profileData } = await api
-          .from("profiles")
-          .select("garma, username, created_at")
-          .eq("id", session.user.id)
-          .single();
-        if (profileData) {
-          setProfile({ garma: ((profileData as Record<string, unknown>).garma as number) ?? 0, username: (profileData as Record<string, unknown>).username as string | null, created_at: (profileData as Record<string, unknown>).created_at as string | undefined });
-        }
-      }
     };
-
     load();
   }, []);
 
-  // Member counts + the viewer's memberships; re-runs when the catalogue
-  // changes (including a background SWR revalidation).
+  // Local join/leave state, seeded from the directory rows (owner updates are
+  // optimistic; the directory cache itself refreshes after every toggle).
   useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      if (subs.length === 0) {
-        setMembersBySub({});
-        setJoinedSubIds(new Set());
-        return;
+    setJoinedBySub((prev) => {
+      const next: Record<string, boolean> = { ...prev };
+      for (const sub of subs) {
+        if (prev[sub.id] === undefined) next[sub.id] = sub.joined;
       }
+      return next;
+    });
+  }, [subs]);
 
-      const countResults = await Promise.all(
-        subs.map(async (sub) => {
-          const { count } = await api
-            .from("gomosub_memberships")
-            .select("*", { count: "exact", head: true })
-            .eq("board_id", sub.id);
-          return { boardId: sub.id, count: count ?? 0 };
-        })
-      );
-      if (cancelled) return;
+  const isJoined = useCallback((sub: GomoSubDirectoryItem) => joinedBySub[sub.id] ?? sub.joined, [joinedBySub]);
 
-      const nextCounts: Record<string, number> = {};
-      countResults.forEach((item) => {
-        nextCounts[item.boardId] = item.count;
-      });
-      setMembersBySub(nextCounts);
-
-      if (userId) {
-        const { data: memberships } = await api
-          .from("gomosub_memberships")
-          .select("board_id")
-          .eq("user_id", userId)
-          .in("board_id", subs.map((sub) => sub.id));
-        if (cancelled) return;
-        setJoinedSubIds(new Set((memberships ?? []).map((m: { board_id: string }) => m.board_id)));
-      } else {
-        setJoinedSubIds(new Set());
+  const setQueryState = useCallback(
+    (updates: { q?: string; tab?: ViewTab; sort?: SortKey }) => {
+      const next = new URLSearchParams(searchParams);
+      for (const [key, value] of Object.entries(updates)) {
+        const defaults = { tab: "all", sort: "popular", q: "" }[key] ?? "";
+        if (!value || value === defaults) next.delete(key);
+        else next.set(key, value);
       }
-    };
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
 
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [subs, userId]);
+  const handleSearchChange = (value: string) => {
+    setQueryState({ q: value });
+  };
 
-  useEffect(() => {
-    const loadMyFeed = async () => {
-      if (!userId) {
-        setMyFeedThreads([]);
-        return;
-      }
-
-      const joinedBoardIds = Array.from(joinedSubIds);
-      if (joinedBoardIds.length === 0) {
-        setMyFeedThreads([]);
-        return;
-      }
-
-      setMyFeedLoading(true);
-      const { data: threadsData, error } = await api
-        .from("threads")
-        .select(`
-          id,
-          title,
-          content,
-          image_url,
-          image_urls,
-          created_at,
-          updated_at,
-          user_id,
-          board_id,
-          tags,
-          post_count,
-          boards!inner (
-            slug,
-            name,
-            is_gomosub
-          )
-        `)
-        .in("board_id", joinedBoardIds)
-        .order("updated_at", { ascending: false })
-        .limit(40);
-
-      if (error || !threadsData) {
-        setMyFeedLoading(false);
-        setMyFeedThreads([]);
-        return;
-      }
-
-      const userIds = threadsData.map((thread: { user_id: string }) => thread.user_id).filter(Boolean);
-      const { data: profilesData } = await api
-        .from("profiles")
-        .select("id, username, is_anonymous, avatar_url")
-        .in("id", userIds);
-
-      const merged = threadsData.map((thread: { user_id: string; [key: string]: unknown }) => ({
-        ...thread,
-        profiles: profilesData?.find((profile: { id: string }) => profile.id === thread.user_id) || null
-      }));
-      setMyFeedThreads(merged);
-
-      // Batch fetch likes for all feed threads
-      if (merged.length > 0 && userId) {
-        const threadIds = merged.map((t: Record<string, unknown>) => String(t.id)).join(",");
-        try {
-          const likesResp = await fetch(`/api/rpc/get_thread_likes_batch?thread_ids=${threadIds}&user_uuid=${userId}`);
-          const likesResult = await likesResp.json();
-          if (likesResult.data && Array.isArray(likesResult.data)) {
-            const newMap = new Map<string, { count: number; isLiked: boolean }>();
-            for (const item of likesResult.data) {
-              newMap.set(item.thread_id, { count: item.count, isLiked: item.is_liked });
-            }
-            setFeedLikesMap(newMap);
-          }
-        } catch { /* ignore */ }
-      }
-
-      setMyFeedLoading(false);
-    };
-
-    loadMyFeed();
-  }, [userId, joinedSubIds]);
-
-  const toggleMembership = async (sub: GomoSub) => {
+  const toggleMembership = async (sub: GomoSubDirectoryItem) => {
     if (!userId) {
       toast.error("Войди в аккаунт, чтобы вступать в сабы");
       navigate("/auth");
       return;
     }
+    if (togglingId) return;
+    setTogglingId(sub.id);
+    const joined = isJoined(sub);
 
-    if (togglingSubId) return;
-    setTogglingSubId(sub.id);
+    const { error } = joined
+      ? await api
+          .from("gomosub_memberships")
+          .delete()
+          .eq("board_id", sub.id)
+          .eq("user_id", userId)
+      : await api.from("gomosub_memberships").insert({ board_id: sub.id, user_id: userId });
 
-    const joined = joinedSubIds.has(sub.id);
-    if (joined) {
-      const { error } = await api
-        .from("gomosub_memberships")
-        .delete()
-        .eq("board_id", sub.id)
-        .eq("user_id", userId);
-
-      setTogglingSubId(null);
-      if (error) {
-        toast.error("Не удалось выйти из саба");
-        return;
-      }
-      setJoinedSubIds((prev) => {
-        const next = new Set(prev);
-        next.delete(sub.id);
-        return next;
-      });
-      setMembersBySub((prev) => ({ ...prev, [sub.id]: Math.max(0, (prev[sub.id] ?? 0) - 1) }));
-      return;
-    }
-
-    const { error } = await api
-      .from("gomosub_memberships")
-      .insert({ board_id: sub.id, user_id: userId });
-
-    setTogglingSubId(null);
+    setTogglingId(null);
     if (error) {
-      toast.error("Не удалось вступить в саб");
+      toast.error(joined ? "Не удалось выйти из саба" : "Не удалось вступить в саб");
       return;
     }
-    setJoinedSubIds((prev) => {
-      const next = new Set(prev);
-      next.add(sub.id);
-      return next;
-    });
-    setMembersBySub((prev) => ({ ...prev, [sub.id]: (prev[sub.id] ?? 0) + 1 }));
+    setJoinedBySub((prev) => ({ ...prev, [sub.id]: !joined }));
+    toast.success(joined ? `Ты вышел из g/${sub.slug}` : `Добро пожаловать в g/${sub.slug}`);
+    invalidateByPrefix(GOMOSUBS_DIRECTORY_KEY);
   };
 
+  // ── Derived views ──
+  const normalized = (s: string) => s.toLowerCase();
+  const filtered = useMemo(() => {
+    let list = subs;
+    if (tab === "mine") list = list.filter((sub) => isJoined(sub));
+    if (q) {
+      const needle = normalized(q);
+      list = list.filter(
+        (sub) =>
+          normalized(sub.name).includes(needle) ||
+          normalized(sub.slug).includes(needle) ||
+          (sub.description ?? "").toLowerCase().includes(needle) ||
+          (sub.gomosub_tags ?? []).some((t) => t.toLowerCase().includes(needle)),
+      );
+    }
+    const sorted = [...list];
+    if (sort === "popular") sorted.sort((a, b) => b.member_count - a.member_count);
+    if (sort === "new") sorted.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+    if (sort === "alpha") sorted.sort((a, b) => a.name.localeCompare(b.name, "ru"));
+    return sorted;
+  }, [subs, tab, q, sort, isJoined]);
+
+  const mine = useMemo(() => subs.filter((sub) => isJoined(sub)), [subs, isJoined]);
+
+  const hasQuery = Boolean(q);
+
   return (
-    <div className="max-w-6xl mx-auto p-3 sm:p-6 space-y-5 sm:space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">G-сабы</h1>
+    <div className="max-w-6xl mx-auto w-full">
+      {/* ── Catalog header ── */}
+      <header className="flex flex-col gap-3 px-3 pt-2 sm:flex-row sm:items-end sm:justify-between sm:px-5">
+        <div className="min-w-0">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Сообщества</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {loading
+              ? "G-сабы для любых интересов"
+              : `${subs.length} ${pickPluralRu(subs.length, ["публичный саб", "публичных саба", "публичных сабов"])} — выбери свой`}
+          </p>
         </div>
-        <div className="flex gap-2 w-full sm:w-auto">
-          <Button
-            onClick={() => navigate("/g/create")}
-            //disabled={!canCreate}
-            size="sm"
-            className="w-full sm:w-auto rounded-full h-9 px-3 shadow-sm"
-            title="Создать g-саб"
-          >
-            <Plus className="w-4 h-4" />
-          </Button>
+        <Button onClick={() => navigate("/g/create")} size="sm" className="h-9 self-start rounded-full px-4 sm:self-auto">
+          <Plus className="mr-1.5 h-4 w-4" />
+          Создать саб
+        </Button>
+      </header>
+
+      {/* ── Search + segmented view ── */}
+      <div className="sticky top-[var(--app-header-pad,60px)] z-30 -mx-3 bg-background/85 px-3 py-2.5 backdrop-blur-md sm:-mx-5 sm:px-5">
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              ref={searchInputRef}
+              value={inputQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="Найти саб — название, slug или тег"
+              className="h-10 w-full rounded-full border border-border/70 bg-surface pl-10 pr-10 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50"
+              aria-label="Поиск сообществ"
+            />
+            {inputQuery && (
+              <button
+                onClick={() => {
+                  handleSearchChange("");
+                  searchInputRef.current?.focus();
+                }}
+                aria-label="Очистить поиск"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          {userId && (
+            <div className="shrink-0 rounded-full border border-border/70 bg-surface p-0.5">
+              {(["all", "mine"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setQueryState({ tab: t })}
+                  className={cn(
+                    "h-9 rounded-full px-3.5 text-sm transition-colors",
+                    tab === t
+                      ? "bg-primary font-medium text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {t === "all" ? "Все" : "Мои"}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+        {tab === "all" && (
+          <div className="mt-2 flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
+            {SORTS.map((s) => (
+              <button
+                key={s.key}
+                onClick={() => setQueryState({ sort: s.key })}
+                className={cn(
+                  "shrink-0 rounded-full border px-3 py-1 text-xs transition-colors",
+                  sort === s.key
+                    ? "border-primary/40 bg-primary/10 font-medium text-primary"
+                    : "border-border/60 bg-surface text-muted-foreground hover:border-border hover:text-foreground",
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "all" | "my-feed")} className="space-y-4">
-        <TabsList className="grid w-full sm:w-fit grid-cols-2">
-          <TabsTrigger value="all">Все g-сабы</TabsTrigger>
-          <TabsTrigger value="my-feed">Моя лента</TabsTrigger>
-        </TabsList>
+      {/* ── Joined rail ── */}
+      {mine.length > 0 && (
+        <section className="px-3 sm:px-5">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-muted-foreground">Мои сообщества</h2>
+            <button
+              onClick={() => setQueryState({ tab: "mine" })}
+              className="flex items-center gap-0.5 text-xs text-primary hover:underline"
+            >
+              Все
+              <ChevronRight className="h-3 w-3" />
+            </button>
+          </div>
+          <div className="mt-2 flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+            {mine.map((sub) => {
+              const avatar = sub.gomosub_avatar_url
+                ? storageUrl("post-images", sub.gomosub_avatar_url)
+                : null;
+              return (
+                <NavigationLink
+                  key={sub.id}
+                  to={`/g/${sub.slug}`}
+                  prefetchOnViewport
+                  className="group flex shrink-0 items-center gap-2 rounded-full border border-border/60 bg-surface py-1.5 pl-2 pr-3.5 transition-colors hover:border-primary/40"
+                >
+                  <span className="h-7 w-7 overflow-hidden rounded-full bg-muted">
+                    {avatar ? (
+                      <img src={avatar || undefined} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    ) : (
+                      <span className="flex h-full w-full items-center justify-center text-xs font-bold text-primary">
+                        {(sub.name?.[0] || sub.slug[0] || "g").toUpperCase()}
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-sm font-medium text-primary">g/{sub.slug}</span>
+                </NavigationLink>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
-        <TabsContent value="all" className="space-y-4">
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-6 h-6 animate-spin text-primary" />
-            </div>
-          ) : subs.length === 0 ? (
-            <Card>
-              <CardContent className="py-10 text-center space-y-2">
-                <p className="text-lg font-semibold">Пока нет пользовательских g-сабов</p>
-                <p className="text-sm text-muted-foreground">Создай первый на отдельной странице создания</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-6">
-              <section className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-semibold flex items-center gap-2">
-                    <Compass className="w-5 h-5 text-primary" />
-                    Капля рандома
-                  </h2>
+      {/* ── Catalog grid ── */}
+      <main className="mt-4 px-3 pb-10 sm:px-5">
+        {loading ? (
+          <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="overflow-hidden rounded-2xl border border-border/70 bg-surface">
+                <Skeleton className="h-24 w-full rounded-none sm:h-28" />
+                <div className="space-y-2.5 px-4 pb-4 pt-10">
+                  <Skeleton className="h-4 w-2/3" />
+                  <Skeleton className="h-3 w-1/3" />
+                  <Skeleton className="h-3 w-full" />
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {randomSubs.map((sub) => (
-                    <PrefetchLink key={sub.id} to={`/g/${sub.slug}`} className="group block">
-                      <Card className="overflow-hidden border-border/80 hover:border-primary/40 transition-colors">
-                        {sub.cover_image_url ? (
-                          <div
-                            className="h-28 w-full bg-cover bg-center"
-                            style={{ backgroundImage: `url(${storageUrl("post-images", sub.cover_image_url)})` }}
-                          />
-                        ) : (
-                          <div className="h-28 w-full bg-gradient-to-br from-primary/20 to-muted" />
-                        )}
-                        <CardContent className="pt-3">
-                          <div className="text-sm font-semibold text-primary">g/{sub.slug}</div>
-                          <div className="text-sm text-muted-foreground line-clamp-2">{sub.name}</div>
-                        </CardContent>
-                      </Card>
-                    </PrefetchLink>
-                  ))}
-                </div>
-              </section>
-
-              {userId && (
-                <section className="space-y-3">
-                  <h2 className="text-xl font-semibold">Подписки</h2>
-                  {joinedSubs.length === 0 ? (
-                    <Card><CardContent className="py-5 text-sm text-muted-foreground">Ты пока не подписан ни на один g-саб</CardContent></Card>
-                  ) : (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {joinedSubs.slice(0, 6).map((sub) => (
-                        <PrefetchLink key={sub.id} to={`/g/${sub.slug}`} className="block p-3 border border-border rounded-lg hover:bg-muted/40 transition-colors">
-                          <div className="font-medium text-primary">g/{sub.slug}</div>
-                          <div className="text-sm text-muted-foreground line-clamp-1">{sub.name}</div>
-                        </PrefetchLink>
-                      ))}
-                    </div>
-                  )}
-                </section>
+              </div>
+            ))}
+          </div>
+        ) : subsError ? (
+          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-8 text-center">
+            <p className="font-semibold">Не удалось загрузить каталог сабов</p>
+            <p className="mt-1 text-sm text-muted-foreground">Проверь соединение и обнови страницу</p>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border/70 bg-surface/50 p-10 text-center">
+            <p className="text-lg font-semibold">
+              {hasQuery ? "Ничего не нашлось" : tab === "mine" ? "Ты пока не в сабах" : "Пока нет публичных сабов"}
+            </p>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              {hasQuery
+                ? "Попробуй другой запрос или сбрось фильтры"
+                : tab === "mine"
+                  ? "Найди свой саб во вкладке «Все» и вступи"
+                  : "Создай первый — и он появится здесь"}
+            </p>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              {hasQuery && (
+                <Button variant="outline" size="sm" onClick={() => handleSearchChange("")}>
+                  Сбросить поиск
+                </Button>
               )}
-
-              <section className="space-y-3">
-                <h2 className="text-xl font-semibold flex items-center gap-2">
-                  <Flame className="w-5 h-5 text-primary" />
-                  Популярные
-                </h2>
-                <div className="grid gap-3 sm:gap-4 sm:grid-cols-2">
-                  {popularSubs.map((sub) => (
-                    <Card key={sub.id} className="overflow-hidden border-border/80">
-                      <CardContent className="space-y-3 pt-4">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <Badge variant="outline">g/{sub.slug}</Badge>
-                            <Badge variant="outline">участников: {membersBySub[sub.id] ?? 0}</Badge>
-                          </div>
-                          <div className="text-lg font-semibold">{sub.name}</div>
-                          <p className="text-sm text-muted-foreground line-clamp-2">{sub.description}</p>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <PrefetchLink to={`/g/${sub.slug}`}>
-                            <Button size="sm" variant="outline" className="w-full">Открыть</Button>
-                          </PrefetchLink>
-                          <Button
-                            size="sm"
-                            variant={joinedSubIds.has(sub.id) ? "secondary" : "default"}
-                            className="w-full"
-                            onClick={() => toggleMembership(sub)}
-                            disabled={togglingSubId === sub.id}
-                          >
-                            {joinedSubIds.has(sub.id) ? (
-                              <>
-                                <UserCheck className="w-4 h-4 mr-2" />
-                                Вы в сабе
-                              </>
-                            ) : (
-                              <>
-                                <UserPlus className="w-4 h-4 mr-2" />
-                                Вступить
-                              </>
-                            )}
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </section>
+              {tab === "all" && !hasQuery && (
+                <Button size="sm" onClick={() => navigate("/g/create")}>
+                  <Plus className="mr-1.5 h-4 w-4" />
+                  Создать саб
+                </Button>
+              )}
             </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="my-feed" className="space-y-4">
-          {!userId ? (
-            <Card>
-              <CardContent className="py-8 text-center space-y-2">
-                <p className="font-semibold">Войди, чтобы видеть персональную ленту</p>
-                <Button onClick={() => navigate("/auth")} className="mt-2">Войти</Button>
-              </CardContent>
-            </Card>
-          ) : myFeedLoading ? (
-            <div className="flex items-center justify-center py-10">
-              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+          </div>
+        ) : (
+          <div>
+            <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+              {filtered.map((sub) => (
+                <GomoSubCard
+                  key={sub.id}
+                  sub={{ ...sub, joined: isJoined(sub) }}
+                  isToggling={togglingId === sub.id}
+                  onToggleJoin={toggleMembership}
+                />
+              ))}
             </div>
-          ) : myFeedThreads.length === 0 ? (
-            <Card>
-              <CardContent className="py-8 text-center space-y-2">
-                <p className="font-semibold">Лента пока пустая</p>
-                <p className="text-sm text-muted-foreground">Вступи в g-сабы, и тут появятся их свежие записи</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-4">
-              {myFeedThreads.map((thread) => {
-                const likes = feedLikesMap.get(thread.id);
-                return (
-                  <ThreadCard
-                    key={String(thread.id)}
-                    thread={thread}
-                    currentUserId={userId}
-                    currentUsername={profile?.username || ""}
-                    initialLikesCount={likes?.count ?? 0}
-                    initialUserLiked={likes?.isLiked ?? false}
-                  />
-                );
-              })}
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
+          </div>
+        )}
+      </main>
     </div>
   );
 };
