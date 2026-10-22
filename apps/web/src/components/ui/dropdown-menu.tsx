@@ -3,6 +3,7 @@ import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronRight, Circle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { OverlayMotion } from "@/components/ui/overlay-motion";
 
 const DropdownMenu = DropdownMenuPrimitive.Root;
 
@@ -17,9 +18,11 @@ const DropdownMenuSub = DropdownMenuPrimitive.Sub;
 const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;
 
 // Shared panel chrome: themed surface, soft layered depth, larger radius that
-// matches the action buttons, and a zoom-in that grows from the trigger.
+// matches the action buttons. The panel grows out of the trigger through the
+// Radix transform-origin; entry physics lives in OverlayMotion, the short
+// close keyframe in index.css.
 const contentChrome =
-  "z-50 min-w-[11rem] overflow-hidden rounded-xl border border-border/60 surface-panel p-1.5 text-popover-foreground shadow-lg shadow-black/10 outline-none duration-150 origin-[var(--radix-dropdown-menu-content-transform-origin)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1";
+  "gomo-overlay-surface z-50 min-w-[11rem] overflow-hidden rounded-xl border border-border/60 surface-panel p-1.5 text-popover-foreground shadow-lg shadow-black/10 outline-none origin-[var(--radix-dropdown-menu-content-transform-origin)]";
 
 // Item base: comfortable hit area, rounded row, muted gap between icon and text.
 const itemBase =
@@ -50,22 +53,25 @@ DropdownMenuSubTrigger.displayName = DropdownMenuPrimitive.SubTrigger.displayNam
 const DropdownMenuSubContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
->(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.SubContent ref={ref} className={cn(contentChrome, className)} {...props} />
+>(({ className, children, ...props }, ref) => (
+  <DropdownMenuPrimitive.SubContent asChild {...props}>
+    <OverlayMotion ref={ref} className={cn(contentChrome, className)}>
+      {children}
+    </OverlayMotion>
+  </DropdownMenuPrimitive.SubContent>
 ));
 DropdownMenuSubContent.displayName = DropdownMenuPrimitive.SubContent.displayName;
 
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 6, ...props }, ref) => (
+>(({ className, children, sideOffset = 6, ...props }, ref) => (
   <DropdownMenuPrimitive.Portal>
-    <DropdownMenuPrimitive.Content
-      ref={ref}
-      sideOffset={sideOffset}
-      className={cn(contentChrome, className)}
-      {...props}
-    />
+    <DropdownMenuPrimitive.Content asChild sideOffset={sideOffset} {...props}>
+      <OverlayMotion ref={ref} className={cn(contentChrome, className)}>
+        {children}
+      </OverlayMotion>
+    </DropdownMenuPrimitive.Content>
   </DropdownMenuPrimitive.Portal>
 ));
 DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName;

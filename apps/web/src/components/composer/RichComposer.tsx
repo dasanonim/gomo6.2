@@ -13,6 +13,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { animate, motion, useDragControls, useMotionValue, useReducedMotion } from "motion/react";
+import { EASE_OUT_EXPO, springFor } from "@/lib/motion";
 import { apiClient } from "@/integrations/api/client";
 import { Popover, PopoverPanel, PopoverTrigger } from "@/components/ui/popover";
 import { InkBar, InkButton, glassGhostButtonClass } from "@/components/ui/ink-bar";
@@ -66,6 +68,10 @@ import {
   type MediaAttachment,
   type MediaKind,
 } from "@/components/editor/media/mediaSchema";
+
+/** The sheet is flicked away rather than slid: closing from the X or Escape
+    should feel like the same downward swipe that dismisses it. */
+const DISMISS_VELOCITY = 1000;
 
 export interface RichComposerPayload {
   /** Final ProseMirror document (upload placeholders stripped, cover attached). */
@@ -186,6 +192,55 @@ export const RichComposer = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [closing, setClosing] = useState(false);
+  const reduceMotion = useReducedMotion();
+  // The sheet comes up from the bottom on phones; on desktop it is a centred
+  // dialog that grows in. Decided once — resizing while composing is rare.
+  const [isDesktop] = useState(
+    () => typeof window !== "undefined" && window.matchMedia?.("(min-width: 768px)").matches,
+  );
+  const dragControls = useDragControls();
+  const closeFinishedRef = useRef(false);
+  const releaseVelocityRef = useRef(0);
+  // The sheet's actual position: entrance, drag and exit all move this one
+  // value, so a flick keeps its velocity into the closing spring.
+  const sheetY = useMotionValue(
+    isDesktop ? 28 : typeof window !== "undefined" ? window.innerHeight : 900,
+  );
+
+  useEffect(() => {
+    if (reduceMotion) {
+      sheetY.set(0);
+      return;
+    }
+    const controls = animate(sheetY, 0, springFor("composer", reduceMotion));
+    return () => controls.stop();
+  }, [reduceMotion, sheetY]);
+
+  const finishClose = useCallback(() => {
+    if (closeFinishedRef.current) return;
+    closeFinishedRef.current = true;
+    onClose();
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!closing) return;
+    if (reduceMotion) {
+      finishClose();
+      return;
+    }
+    const target = isDesktop
+      ? 16
+      : typeof window !== "undefined"
+        ? window.innerHeight + 32
+        : 900;
+    const controls = animate(sheetY, target, {
+      ...springFor("composerClose", reduceMotion),
+      // A flick carries its speed into the exit instead of restarting from rest.
+      velocity: releaseVelocityRef.current,
+      onComplete: finishClose,
+    });
+    return () => controls.stop();
+  }, [closing, finishClose, isDesktop, reduceMotion, sheetY]);
   const [isDragging, setIsDragging] = useState(false);
   const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number; startInEditMode: boolean } | null>(null);
   const [publishButtonStyle] = useState(getPublishButtonStyle);
@@ -247,21 +302,28 @@ export const RichComposer = ({
   );
   const canSubmit = (plainText.length > 0 || referencedIds.size > 0) && !uploading && !isSubmitting && !publishDisabled;
 
-  const close = useCallback(() => {
+  const close = useCallback((velocity = 0) => {
     if (closing) return;
+    releaseVelocityRef.current = velocity;
     setClosing(true);
     if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
       document.activeElement.blur();
     }
-    window.setTimeout(() => onClose(), 280);
-  }, [closing, onClose]);
+    if (reduceMotion) {
+      finishClose();
+      return;
+    }
+    // The exit spring reports back through onComplete; the timer is only a
+    // fallback for a missed frame.
+    window.setTimeout(finishClose, 1200);
+  }, [closing, finishClose, reduceMotion]);
 
   // Escape closes (unless a lightbox or another dialog owns Escape then).
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !lightbox && !escapeDisabled) {
         event.preventDefault();
-        close();
+        close(DISMISS_VELOCITY);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -552,16 +614,75 @@ export const RichComposer = ({
 
   return createPortal(
     <div
-      className={`fixed inset-0 z-[60] bg-background md:bg-black/50 md:backdrop-blur-[2px] transition-opacity duration-300 ${
-        closing ? "opacity-0" : "opacity-100"
-      } ${fullscreen ? "" : "md:flex md:items-center md:justify-center"}`}
+      className={`fixed inset-0 z-[60] ${
+        fullscreen ? "" : "md:flex md:items-center md:justify-center"
+      }`}
     >
-      <div
+      {/* The dimming is its own layer: the panel must never fade with it. */}
+      <motion.div
+        aria-hidden="true"
+        className="absolute inset-0 bg-black/45 md:backdrop-blur-lg"
+        initial={reduceMotion ? false : { opacity: 0 }}
+        animate={reduceMotion ? undefined : { opacity: closing ? 0 : 1 }}
+        transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE_OUT_EXPO }}
+      />
+      {/* Colour-matched pad under the sheet: when the spring overshoots the top
+          the sheet lifts off the bottom edge, and without this the page would
+          peek through the gap. It sits behind the sheet and is dropped as soon
+          as the exit starts (the sheet still covers its area at that moment). */}
+      {!closing && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-background md:hidden"
+        />
+      )}
+      <motion.div
         ref={composerRootRef}
         role="dialog"
         aria-modal="true"
         data-testid={testId}
-        style={size && !fullscreen ? { width: `${size.w}px`, height: `${size.h}px`, maxWidth: "none", maxHeight: "none" } : undefined}
+        initial={reduceMotion ? false : isDesktop ? { scale: 0.9 } : { scale: 1 }}
+        animate={
+          reduceMotion
+            ? undefined
+            : closing
+              ? { scale: isDesktop ? 0.96 : 1 }
+              : { scale: 1 }
+        }
+        transition={springFor("snappy", reduceMotion)}
+        drag={isDesktop ? false : "y"}
+        dragControls={dragControls}
+        dragListener={false}
+        dragConstraints={isDesktop ? undefined : { top: 0, bottom: 0 }}
+        dragElastic={{ top: 0.22, bottom: 0.7 }}
+        dragMomentum={false}
+        onDragEnd={(_, info) => {
+          if (isDesktop) return;
+          // Distance never closes the sheet: it can be pulled as low as the
+          // gesture allows, stopped there and released, and it will always
+          // spring back up. Only a decisive downward flick commits.
+          if (info.velocity.y > 650) {
+            close(info.velocity.y);
+            return;
+          }
+          if (reduceMotion) {
+            sheetY.set(0);
+            return;
+          }
+          animate(sheetY, 0, {
+            ...springFor("composer", reduceMotion),
+            velocity: info.velocity.y,
+          });
+        }}
+        style={{
+          y: sheetY,
+          originX: 1,
+          originY: 1,
+          willChange: "transform",
+          ...(size && !fullscreen
+            ? { width: `${size.w}px`, height: `${size.h}px`, maxWidth: "none", maxHeight: "none" }
+            : {}),
+        }}
         onDragOver={(event) => {
           if (Array.from(event.dataTransfer?.types || []).includes("Files")) {
             event.preventDefault();
@@ -570,11 +691,11 @@ export const RichComposer = ({
         }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleRootDrop}
-        className={`group/panel fixed inset-x-0 top-0 bottom-0 flex w-full flex-col overflow-hidden bg-background transition-transform duration-300 md:relative md:border md:border-border/60 md:bg-card md:shadow-2xl ${
+        className={`group/panel fixed inset-x-0 bottom-0 top-2 flex w-full flex-col overflow-hidden rounded-t-2xl border-t border-border/60 bg-background md:relative md:top-0 md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
           fullscreen
             ? "md:h-[100dvh] md:max-h-none md:max-w-none md:rounded-none"
             : "md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-2xl"
-        } ${closing ? "translate-y-full md:translate-y-0 md:opacity-0" : "translate-y-0 md:opacity-100"}`}
+        }`}
       >
         {isDragging && (
           <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center border-2 border-dashed border-primary/60 bg-background/60 backdrop-blur-[2px]">
@@ -586,11 +707,23 @@ export const RichComposer = ({
           </div>
         )}
 
-        {/* Header */}
-        <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-2 py-2">
+        {/* Header — doubles as the sheet's drag handle on phones. The grip is
+            decorative; the whole header (except its buttons) starts the drag. */}
+        <div
+          className="relative flex shrink-0 touch-none items-center gap-1 border-b border-border/60 px-2 py-2 pt-3 md:touch-auto md:pt-2"
+          onPointerDown={(event) => {
+            if (isDesktop) return;
+            if ((event.target as HTMLElement).closest("button")) return;
+            dragControls.start(event);
+          }}
+        >
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute left-1/2 top-1 h-1 w-10 -translate-x-1/2 rounded-full bg-foreground/20 md:hidden"
+          />
           <button
             type="button"
-            onClick={close}
+            onClick={() => close(DISMISS_VELOCITY)}
             aria-label="Закрыть"
             title="Закрыть"
             className={`${glassGhostButtonClass} active:scale-95`}
@@ -605,14 +738,16 @@ export const RichComposer = ({
             {headerMeta && <span className="ml-2 whitespace-nowrap text-[11px] text-muted-foreground/70">{headerMeta}</span>}
           </div>
           {headerRight}
-          <button
-            type="button"
-            title={fullscreen ? "Свернуть" : "На весь экран"}
-            onClick={() => setFullscreen((prev) => !prev)}
-            className={glassGhostButtonClass}
-          >
-            {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
-          </button>
+          {isDesktop && (
+            <button
+              type="button"
+              title={fullscreen ? "Свернуть" : "На весь экран"}
+              onClick={() => setFullscreen((prev) => !prev)}
+              className={glassGhostButtonClass}
+            >
+              {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
+            </button>
+          )}
         </div>
 
         {/* Extra fields (title, topic placement…) */}
@@ -765,7 +900,7 @@ export const RichComposer = ({
             <path d="M13 5 L5 13 M13 10 L10 13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         </div>
-      </div>
+      </motion.div>
 
       {lightbox && (
         <Lightbox

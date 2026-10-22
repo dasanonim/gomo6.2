@@ -404,5 +404,6 @@ npx tsc --noEmit -p apps/docs/tsconfig.json
 [MESSENGER_OUTBOX](docs/wiki/MESSENGER_OUTBOX.md) ·
 [REALTIME_WEBSOCKET_PATTERN](docs/wiki/REALTIME_WEBSOCKET_PATTERN.md) ·
 [PRESENCE_SYSTEM_DESIGN](docs/wiki/PRESENCE_SYSTEM_DESIGN.md) ·
-[THREAD_ATTACHMENTS_GUIDE](docs/wiki/THREAD_ATTACHMENTS_GUIDE.md).
+[THREAD_ATTACHMENTS_GUIDE](docs/wiki/THREAD_ATTACHMENTS_GUIDE.md) ·
+[MOTION_DESIGN](docs/wiki/MOTION_DESIGN.md) · [MOTION_TASTE](docs/wiki/MOTION_TASTE.md).
 Observability stack (VictoriaMetrics + Perses + Alertmanager): `observability/README.md`.

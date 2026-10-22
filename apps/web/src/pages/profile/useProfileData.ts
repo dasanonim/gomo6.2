@@ -33,7 +33,7 @@ export interface UseProfileDataResult {
   giftCount: number;
   giftCountLoaded: boolean;
   loadAvatarHistory: () => Promise<AvatarHistoryItem[]>;
-  openAvatarGallery: () => Promise<void>;
+  openAvatarGallery: (commit?: (update: () => void) => void) => Promise<void>;
   closeAvatarGallery: () => void;
   deleteAvatar: (avatarId: string) => Promise<void>;
   /** Bumps the gifts-tab count (called after a gift is sent). */
@@ -87,14 +87,22 @@ export function useProfileData({
 
   // Avatar history is only needed for the gallery — fetch it lazily on the
   // first click instead of on every profile visit.
-  const openAvatarGallery = useCallback(async () => {
+  //
+  // `commit` lets the page decide HOW the viewer appears. The history is fetched
+  // first (the gallery has nothing to morph into before that), and only then the
+  // state change is handed over — the profile page uses this to run the swap
+  // through the View Transitions API so the avatar physically grows into the
+  // full-screen photo. Without a runner the state simply updates.
+  const openAvatarGallery = useCallback(async (commit?: (update: () => void) => void) => {
     let history = avatarHistory;
     if (history.length === 0) {
       history = await loadAvatarHistory();
     }
     if (history.length > 0) {
       setAvatarGalleryIndex(0);
-      setShowAvatarGallery(true);
+      const update = () => setShowAvatarGallery(true);
+      if (commit) commit(update);
+      else update();
     }
   }, [avatarHistory, loadAvatarHistory]);
 

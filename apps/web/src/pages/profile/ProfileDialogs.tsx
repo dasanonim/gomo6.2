@@ -103,6 +103,9 @@ export interface AvatarGalleryDialogProps {
   canDelete: boolean;
   onClose: () => void;
   onDelete: (avatarId: string) => Promise<void>;
+  /** An avatar → photo morph is in flight — the viewer steps aside for the flying
+      clone (see components/profile/AvatarMorph). */
+  morph?: "open" | "close" | null;
 }
 
 /** Full-screen avatar history viewer — reuses the shared media Lightbox
@@ -114,6 +117,7 @@ export function AvatarGalleryDialog({
   canDelete,
   onClose,
   onDelete,
+  morph,
 }: AvatarGalleryDialogProps) {
   const { t } = useTranslation();
   const [index, setIndex] = useState(initialIndex);
@@ -177,6 +181,7 @@ export function AvatarGalleryDialog({
         items={items}
         initialIndex={index}
         bucket="post-images"
+        morph={morph}
         onClose={onClose}
         onDeleteItem={canDelete ? (i) => setConfirmIndex(i) : undefined}
         deleteLabel={t("profile.avatarDeleteAction")}

@@ -29,7 +29,18 @@ import { useStoriesStore } from "@/stores/storiesStore";
 import { hasUnreadCloseFriends } from "@/types/stories";
 import { UsernameDialog, AvatarGalleryDialog } from "./profile/ProfileDialogs";
 import type { Profile, ProfilePrivacyData } from "./profile/types";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import {
+  EASE_OUT_EXPO,
+  hoverLift,
+  morphOrigin,
+  morphTransition,
+  pressFeedback,
+  springFor,
+} from "@/lib/motion";
+import { AvatarMorph } from "@/components/profile/AvatarMorph";
+import { RecedeOnScroll } from "@/components/profile/RecedeOnScroll";
+import { toViewportRect, type ViewportRect } from "@/utils/domRect";
 import { ForumProfilePanel } from "./profile/ForumProfilePanel";
 import { DEFAULT_FORUM_SIDE, PROFILE_VIEW_MODE_EVENT, getProfileViewMode, type ForumSide } from "@/lib/profileViewMode";
 
@@ -54,6 +65,10 @@ const Profile = () => {
   const prefersReducedMotion = useReducedMotion();
 
   const [profile, setProfile] = useState<Profile | null>(null);
+  // A route parameter can resolve to nothing (deleted account, or an old public
+  // number that was reissued). Without this flag the page rendered an empty
+  // <main> forever — a link to a dead profile used to look like a broken site.
+  const [notFound, setNotFound] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ id: string } | null>(null);
   const [isModerator, setIsModerator] = useState(false);
   const [currentUserUsername, setCurrentUserUsername] = useState("");
@@ -110,6 +125,17 @@ const Profile = () => {
   const [forumSide, setForumSide] = useState<ForumSide | null>(null);
   const [panelVisible, setPanelVisible] = useState(false);
   const [forumLayout, setForumLayout] = useState(false);
+
+  // First paint vs. later transitions. `AnimatePresence initial={false}` would
+  // reach EVERY nested motion element through PresenceContext — not just its
+  // direct child — and silently suppress the entrance of the header, stats and
+  // cards until the subtree remounts (that is why the wall only started
+  // cascading after one visit to edit mode). So the presence wrapper stays
+  // neutral and the direct children opt out on their own first mount instead.
+  const didPaintRef = useRef(false);
+  useEffect(() => {
+    didPaintRef.current = true;
+  }, []);
 
   // Resolve the effective variant from the owner's stored choice.
   useEffect(() => {
@@ -168,6 +194,8 @@ const Profile = () => {
     const profileData = await warmProfilePageRow(localSessionUser?.id, userId ?? "");
 
     const data = profileData;
+
+    setNotFound(!data);
 
     // Paint the row the moment it is known — the route preloader usually has it
     // cached already, so this lands immediately after the swap. Privacy,
@@ -360,8 +388,99 @@ const Profile = () => {
     });
   };
 
-  const isPrivate = privateProfile && privacyChecked;
-  const isNonFriendOnPrivate = isPrivate && !isOwnProfile && isMutualFriend === false;
+  // ── Avatar → gallery: one image, one spring ──────────────────────────────
+  // The avatar grows into the full-screen photo and back as a single flying
+  // element (components/profile/AvatarMorph) instead of a View Transition: the
+  // browser can only cross-fade two snapshots, which dissolves a circle into a
+  // square rather than opening a window.
+  //
+  // `avatarOriginRef` is whichever avatar is on screen — the header circle or the
+  // forum panel's square cover.
+  const avatarOriginRef = useRef<HTMLElement | null>(null);
+  const setAvatarOrigin = useCallback((el: HTMLElement | null) => {
+    avatarOriginRef.current = el;
+  }, []);
+
+  // The photo URL the header already displays — the morph flies the same object
+  // the gallery opens on, so there is no swap of source mid-flight.
+  const avatarSrc = avatarUrl ? storageUrl("post-images", avatarUrl) ?? avatarUrl : null;
+
+  // `landed` is the handover step: the flight is over and the gallery's own photo
+  // and chrome may appear, while the clone is still exactly on top of them. It
+  // fades itself out a moment later, so nothing ever pops over the image.
+  const [avatarMorph, setAvatarMorph] = useState<{
+    direction: "open" | "close";
+    src: string;
+    from: ViewportRect;
+    to?: ViewportRect;
+    landed?: boolean;
+  } | null>(null);
+
+  const openAvatarGallery = () => {
+    if (avatarMorph) return;
+    const from = toViewportRect(avatarOriginRef.current?.getBoundingClientRect());
+    if (!from || !avatarSrc || prefersReducedMotion) {
+      void data.openAvatarGallery();
+      return;
+    }
+    // The kit photo has to be decoded before the gallery mounts: without an
+    // intrinsic size the <img> has no box, and the morph would have nothing to
+    // land on (it would fall back to the plain open).
+    const preload = new Image();
+    preload.src = avatarSrc;
+    const decoded = typeof preload.decode === "function" ? preload.decode().catch(() => undefined) : Promise.resolve();
+    void decoded.then(() => {
+      void data.openAvatarGallery();
+      setAvatarMorph({ direction: "open", src: avatarSrc, from });
+    });
+  };
+
+  const closeAvatarGallery = () => {
+    if (avatarMorph) return;
+    const from = toViewportRect(
+      document.querySelector<HTMLElement>(".msg-lightbox-slide[data-active] .msg-lightbox-media")?.getBoundingClientRect(),
+    );
+    const to = toViewportRect(avatarOriginRef.current?.getBoundingClientRect());
+    if (!from || !to || !avatarSrc || prefersReducedMotion) {
+      data.closeAvatarGallery();
+      return;
+    }
+    setAvatarMorph({ direction: "close", src: avatarSrc, from, to });
+  };
+
+  // What the viewer should be doing right now. Opening: step aside until the
+  // flight lands, then let the photo and chrome come in under the clone. Closing:
+  // keep fading out the whole time — dropping the class on landing would let the
+  // dark backdrop flash back for the ~140 ms the clone spends dissolving.
+  const galleryMorph: "open" | "close" | null = !avatarMorph
+    ? null
+    : avatarMorph.direction === "close"
+      ? "close"
+      : avatarMorph.landed
+        ? null
+        : "open";
+
+  // The flight landed: opening reveals the photo + chrome under the clone;
+  // closing has nothing to reveal (the viewer is already on its way out).
+  const landAvatarMorph = () => {
+    setAvatarMorph((current) => (current ? { ...current, landed: true } : current));
+  };
+
+  // The avatar's own furniture (the add-story badge) leaves for the flight and
+  // comes back the moment it lands — waiting for the last frame of the handover
+  // is what made it feel like it arrived late.
+  const avatarFurnitureHidden = !!avatarMorph && !avatarMorph.landed;
+
+  // The clone is gone. Closing: the photo is back on the avatar, so the viewer
+  // can go away for real.
+  const finishAvatarMorph = () => {
+    setAvatarMorph((current) => {
+      if (current?.direction === "close") data.closeAvatarGallery();
+      return null;
+    });
+  };
+
+  const isPrivate = privateProfile && privacyChecked;  const isNonFriendOnPrivate = isPrivate && !isOwnProfile && isMutualFriend === false;
   // A wall is hidden from the viewer when they are neither the owner nor a
   // mutual friend AND (the profile is private OR the owner hid the wall).
   const wallHiddenFromViewer = !isOwnProfile && isMutualFriend === false && (privateProfile || privateHideWall);
@@ -548,7 +667,9 @@ const Profile = () => {
       nicknameEmojiId={nicknameEmojiId}
       showOnlineStatus={showOnlineStatus}
       currentUser={currentUser}
-      onAvatarClick={data.openAvatarGallery}
+      onAvatarClick={openAvatarGallery}
+      avatarRef={setAvatarOrigin}
+      avatarMorphing={avatarFurnitureHidden}
       onAvatarUpload={editing.handleAvatarUpload}
       onNicknameEmojiSelect={editing.handleNicknameEmojiSelect}
       onNicknameEmojiRemove={editing.handleNicknameEmojiRemove}
@@ -599,8 +720,6 @@ const Profile = () => {
       trophies={data.trophies}
       trophiesLoaded={data.trophiesLoaded}
       giftCatalog={data.giftCatalog}
-      giftCount={data.giftCount}
-      giftCountLoaded={data.giftCountLoaded}
       onGiftSent={() => {
         data.incrementGiftCount();
         loadProfile();
@@ -609,12 +728,11 @@ const Profile = () => {
   );
 
   return (
-    <main
-      className={`mx-auto p-4 isolate overflow-x-clip transition-[max-width] ${
-        panelVisible
-          ? "duration-[400ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
-          : "duration-[260ms] ease-[cubic-bezier(0.4,0,0.2,1)]"
-      } ${panelVisible ? "max-w-5xl" : "max-w-2xl"}`}
+    <motion.main
+      initial={false}
+      animate={{ maxWidth: panelVisible ? 1024 : 672 }}
+      transition={springFor("soft", prefersReducedMotion)}
+      className="mx-auto p-4 isolate overflow-x-clip"
     >
         {/* Full-page profile background. In forum mode the owner's background
             is a soft, blurred backdrop behind the whole layout; otherwise the
@@ -640,6 +758,20 @@ const Profile = () => {
             )}
           </>
         ) : null)}
+        {!profile && notFound && (
+          <motion.div
+            initial={prefersReducedMotion ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={springFor("standard", prefersReducedMotion)}
+            className="mt-16 flex flex-col items-center gap-3 text-center"
+          >
+            <h1 className="text-xl font-bold">{t("profile.notFoundTitle")}</h1>
+            <p className="max-w-sm text-sm text-muted-foreground">{t("profile.notFoundHint")}</p>
+            <Button variant="secondary" className="mt-2" onClick={() => navigate("/")}>
+              {t("common.goHome")}
+            </Button>
+          </motion.div>
+        )}
         {profile && (
           <div className={transitionEnterClass(transitionStyle)}>
           {/* Two-column forum layout: when a side is active, the relocated
@@ -654,16 +786,15 @@ const Profile = () => {
                   initial={{ opacity: 0, width: 0 }}
                   animate={{ opacity: 1, width: 260 }}
                   exit={{ opacity: 0, width: 0 }}
-                  transition={
-                    prefersReducedMotion
-                      ? { duration: 0.15, ease: "easeOut" }
-                      : panelVisible
-                        // Expand — soft, decelerating tail.
-                        ? { duration: 0.4, ease: [0.22, 1, 0.36, 1] }
-                        // Collapse — shorter and with a livelier tail so the
-                        // panel does not crawl into place.
-                        : { duration: 0.24, ease: [0.4, 0, 0.2, 1] }
-                  }
+                  transition={{
+                    // Expand and collapse run on the same physics — a spring
+                    // that carries its velocity, so reopening mid-collapse
+                    // continues from the current width instead of restarting.
+                    // Collapse is the stiffer of the two: the panel is leaving,
+                    // there is nothing to wait for.
+                    ...springFor(panelVisible ? "soft" : "snappy", prefersReducedMotion),
+                    opacity: { duration: prefersReducedMotion ? 0 : 0.18 },
+                  }}
                   className={`hidden shrink-0 self-stretch overflow-clip lg:block ${
                     forumSide === "left" ? "order-1" : "order-2"
                   }`}
@@ -682,7 +813,8 @@ const Profile = () => {
                         avatarUrl={avatarUrl}
                         currentUser={currentUser}
                         canViewSubscriptions={canViewSection(privateHideFriends)}
-                        onAvatarClick={data.openAvatarGallery}
+                        onAvatarClick={openAvatarGallery}
+                        avatarRef={setAvatarOrigin}
                         onOpenMessages={() => navigate(`/messages?user=${resolvedUserId}`)}
                         onEditClick={editing.isEditing ? editing.handleSaveAndExit : editing.startEditing}
                       />
@@ -701,18 +833,18 @@ const Profile = () => {
           {/* Crossfade between the forum and social variants of the content, so
               the panel styling does not blink out the instant the mode flips.
               `wait` keeps one variant mounted at a time (no double wall). */}
-          <AnimatePresence mode="wait" initial={false}>
+          <AnimatePresence mode="wait">
           <motion.div
             key={forumMode ? "forum" : "social"}
-            initial={{ opacity: 0 }}
+            initial={didPaintRef.current ? { opacity: 0 } : false}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, transition: { duration: prefersReducedMotion ? 0 : 0.14, ease: "easeOut" } }}
+            exit={{ opacity: 0, transition: { duration: prefersReducedMotion ? 0 : 0.14, ease: EASE_OUT_EXPO } }}
             transition={{
               // Entering the social layout (forum → profile) is the tail of the
               // collapse — keep it quick; expanding back into the forum stays
-              // soft.
+              // soft. Opacity only, so a short expo curve, never a spatial ease.
               duration: prefersReducedMotion ? 0 : forumMode ? 0.2 : 0.12,
-              ease: forumMode ? "easeInOut" : "easeOut",
+              ease: EASE_OUT_EXPO,
             }}
             className={forumMode ? "space-y-3" : "space-y-6"}
           >
@@ -750,6 +882,7 @@ const Profile = () => {
             </>
           ) : (
           <>
+          <RecedeOnScroll>
           {cardVariantActive ? (
             <div className="relative overflow-hidden">
               <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url("${bgUrl}")` }} />
@@ -812,32 +945,53 @@ const Profile = () => {
           ) : (
             headerElement
           )}
+          </RecedeOnScroll>
 
+          <AnimatePresence mode="wait">
           {editing.isEditing ? (
-            <ProfileEditPanel
-              isOwnProfile={isOwnProfile}
-              profile={profile}
-              bio={editing.bio}
-              bioJson={editing.bioJson}
-              bioEditorResetKey={editing.bioEditorResetKey}
-              cropImage={editing.cropImage}
-              onBioChange={editing.onBioChange}
-              onCropCancel={() => editing.setCropImage(null)}
-              onCropComplete={editing.handleCropConfirm}
-              onThemeToggle={editing.handleThemeEnabledToggle}
-            />
+            <motion.div
+              key="edit"
+              initial={didPaintRef.current && !prefersReducedMotion ? { opacity: 0, scale: 0.94 } : false}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={morphTransition(prefersReducedMotion)}
+              style={morphOrigin({ y: 0 })}
+            >
+              <ProfileEditPanel
+                isOwnProfile={isOwnProfile}
+                profile={profile}
+                bio={editing.bio}
+                bioJson={editing.bioJson}
+                bioEditorResetKey={editing.bioEditorResetKey}
+                cropImage={editing.cropImage}
+                onBioChange={editing.onBioChange}
+                onCropCancel={() => editing.setCropImage(null)}
+                onCropComplete={editing.handleCropConfirm}
+                onThemeToggle={editing.handleThemeEnabledToggle}
+              />
+            </motion.div>
           ) : (
-            <div className="space-y-4">
+            <motion.div
+              key="view"
+              initial={didPaintRef.current && !prefersReducedMotion ? { opacity: 0, scale: 0.94 } : false}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={morphTransition(prefersReducedMotion)}
+              style={morphOrigin({ y: 0 })}
+              className="space-y-4"
+            >
               {/** stats visibility logic — moved to the ProfileStats component; the
                   "card" background variant renders it inside the card. */}
-              {cardVariantActive ? null : (
-                <ProfileStats profile={profile} show={statsSummaryAllowed} onOpenWall={() => setActiveTab('wall')} />
+              {!cardVariantActive && statsSummaryAllowed && (
+                <RecedeOnScroll intensity={0.85}>
+                  <ProfileStats profile={profile} show onOpenWall={() => setActiveTab('wall')} />
+                </RecedeOnScroll>
               )}
 
               {profile.bio && !isNonFriendOnPrivate && (
-                <div className="text-sm">
+                <RecedeOnScroll intensity={0.85} className="text-sm">
                   <ProcessedContent content={profile.bio} contentJson={(profile as { bio_json?: unknown }).bio_json} currentUserId={currentUser?.id || null} isAdmin={isModerator} currentUsername={currentUserUsername} currentUserColor={currentUserColor} postAuthorId={profile.id} postAuthorPublicId={profile.public_id} authorUsername={profile.username} />
-                </div>
+                </RecedeOnScroll>
               )}
 
               {/* Spotify Now Playing */}
@@ -847,7 +1001,9 @@ const Profile = () => {
 
               {/* «Закреплённые темы» — up to 3 curated threads, between the
                   identity panel and the tabs (issue #518). Hidden while
-                  editing, together with the tabs it precedes. */}
+                  editing, together with the tabs it precedes. The block itself
+                  applies RecedeOnScroll, so a profile with no pins renders no
+                  wrapper at all. */}
               <ProfilePinnedThreads
                 userId={resolvedUserId}
                 isOwner={isOwnProfile}
@@ -859,8 +1015,9 @@ const Profile = () => {
                   (it explains that the wall is hidden) while the rest follow the
                   per-section hide toggles. */}
               {profileTabsElement}
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
           </>
           )}
           </motion.div>
@@ -876,8 +1033,21 @@ const Profile = () => {
             avatars={data.avatarHistory}
             initialIndex={data.avatarGalleryIndex}
             canDelete={isOwnProfile}
-            onClose={data.closeAvatarGallery}
+            morph={galleryMorph}
+            onClose={closeAvatarGallery}
             onDelete={data.deleteAvatar}
+          />
+        )}
+
+        {/* The flying avatar — mounted only while a morph runs, above everything. */}
+        {avatarMorph && (
+          <AvatarMorph
+            src={avatarMorph.src}
+            direction={avatarMorph.direction}
+            from={avatarMorph.from}
+            to={avatarMorph.to}
+            onLanded={landAvatarMorph}
+            onDone={finishAvatarMorph}
           />
         )}
 
@@ -899,23 +1069,36 @@ const Profile = () => {
             content column (which shifts when the forum panel is open); on
             narrow screens it falls back to a normal corner FAB. */}
         {canPostOnWall && (
-          <Button
-            variant="default"
-            size="icon"
-            onClick={handleWallCreateClick}
-            className="fixed z-40 h-12 w-12 rounded-2xl shadow-lg"
+          <motion.div
+            className="fixed z-40"
             style={{
               // `right` is the distance from the viewport's right edge, so a
               // LARGER constant moves the button further right.
               right: fabRight,
               bottom: "calc(1.5rem + env(safe-area-inset-bottom))",
             }}
-            title={wallCreateOpen ? "Скрыть форму" : "Написать на стене"}
+            {...hoverLift(prefersReducedMotion, 1.04)}
+            {...pressFeedback(prefersReducedMotion, 0.9)}
+            transition={springFor("snappy", prefersReducedMotion)}
           >
-            <Plus className={`h-5 w-5 transition-transform duration-300 ease-out ${wallCreateOpen ? "rotate-45" : "rotate-0"}`} />
-          </Button>
+            <Button
+              variant="default"
+              size="icon"
+              onClick={handleWallCreateClick}
+              className="h-12 w-12 rounded-2xl shadow-lg"
+              title={wallCreateOpen ? "Скрыть форму" : "Написать на стене"}
+            >
+              <motion.span
+                className="inline-flex"
+                animate={{ rotate: wallCreateOpen ? 45 : 0 }}
+                transition={springFor("snappy", prefersReducedMotion)}
+              >
+                <Plus className="h-5 w-5" />
+              </motion.span>
+            </Button>
+          </motion.div>
         )}
-      </main>
+      </motion.main>
   );
 };
 

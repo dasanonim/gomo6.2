@@ -702,6 +702,8 @@ const en: LocaleResources = {
   },
   profile: {
     threadsLoadError: "Failed to load posts",
+    notFoundTitle: "Profile not found",
+    notFoundHint: "The account may have been deleted or the link is out of date.",
     saveError: "Failed to save profile",
     updated: "Profile updated",
     updateError: "Failed to update profile",

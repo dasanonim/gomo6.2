@@ -11,6 +11,7 @@ import { VideoEditorHost } from "@/components/VideoEditorHost";
 import { StoryComposer } from "@/components/stories/StoryComposer";
 import { StoryViewer } from "@/components/stories/StoryViewer";
 import { ThemeSync } from "@/components/ThemeSync";
+import { MotionConfig } from "motion/react";
 import { applyTheme, getStoredPrefs, syncSharedAppearanceCookies, watchSystemMode } from "@/theme";
 import { applyCustomFont, getStoredCustomFont } from "@/lib/customFont";
 import { runTransition, setTransitionDirection, isFeedRoute } from "@/lib/viewTransitions";
@@ -217,6 +218,12 @@ const App = () => {
 
   return (
     <AppErrorBoundary>
+      {/* One motion contract for the whole app: when the OS asks for reduced
+          motion, framer drops every transform/layout animation and keeps the
+          opacity ones. Components may still check `useReducedMotion()` for
+          their own choreography, but a component that forgets can no longer
+          animate against the user's wishes. */}
+      <MotionConfig reducedMotion="user">
       <QueryClientProvider client={queryClient}>
         <ProfileCacheProvider>
           <LikesCacheProvider>
@@ -237,6 +244,7 @@ const App = () => {
           </LikesCacheProvider>
         </ProfileCacheProvider>
       </QueryClientProvider>
+      </MotionConfig>
     </AppErrorBoundary>
   );
 };

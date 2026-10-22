@@ -1,4 +1,5 @@
-import { useState, useEffect, memo } from "react";
+import { useState, useEffect, useRef, memo } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { Heart } from "lucide-react";
 import { api } from "@/integrations/api/compat";
 import {
@@ -11,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { MentionLink } from "./MentionLink";
 import { UserBadge } from "./UserBadge";
 import { useLikesCache } from "@/contexts/LikesCacheContext";
+import { springFor } from "@/lib/motion";
 
 interface LikeButtonProps {
   postId: string;
@@ -27,6 +29,12 @@ export const LikeButton = memo(({ postId, currentUserId, postAuthorId, onLikeCha
   const [recentLikers, setRecentLikers] = useState<{ username: string; display_name?: string | null; nickname_emoji_id?: string | null; id: string; public_id?: number | null; avatar_url?: string | null; is_anonymous?: boolean }[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [tooltipOpen, setTooltipOpen] = useState(false);
+  const reduceMotion = useReducedMotion();
+  // Suppress the counter pop on first paint: only a real like/unlike earns it.
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+  }, []);
 
   // Load initial like status and count
   useEffect(() => {
@@ -173,13 +181,29 @@ export const LikeButton = memo(({ postId, currentUserId, postAuthorId, onLikeCha
                 : 'text-muted-foreground hover:text-red-500'
             }`}
           >
-            <Heart
-              className={`h-4 w-4 ${
-                isLiked ? 'fill-red-500' : 'fill-transparent'
-              } transition-colors ${isOwnPost ? 'opacity-50' : ''}`}
-            />
+            <motion.span
+              key={isLiked ? "liked" : "rest"}
+              initial={isLiked && !reduceMotion ? { scale: 0.55 } : false}
+              animate={{ scale: 1 }}
+              transition={springFor("bouncy", reduceMotion)}
+              className="inline-flex"
+            >
+              <Heart
+                className={`h-4 w-4 ${
+                  isLiked ? 'fill-red-500' : 'fill-transparent'
+                } transition-colors ${isOwnPost ? 'opacity-50' : ''}`}
+              />
+            </motion.span>
             {likesCount > 0 && (
-              <span className="text-sm font-medium">{likesCount}</span>
+              <motion.span
+                key={`count-${likesCount}`}
+                initial={mountedRef.current && !reduceMotion ? { scale: 1.35, opacity: 0.4 } : false}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={springFor("bouncy", reduceMotion)}
+                className="text-sm font-medium"
+              >
+                {likesCount}
+              </motion.span>
             )}
           </Button>
         </TooltipTrigger>

@@ -57,6 +57,12 @@ export type LightboxProps = {
   autoHideControls?: boolean;
   /** Idle delay before the chrome fades, in milliseconds. */
   controlsHideDelay?: number;
+  /** An avatar morph is in flight (components/profile/AvatarMorph). "open" hides
+      the photo and the chrome so the flying image is the only thing on screen;
+      "close" additionally fades the whole viewer out, so the page comes back
+      instead of the backdrop staying dark until it is torn away. The photo keeps
+      its layout (opacity only) — the morph measures its box to know where to land. */
+  morph?: "open" | "close" | null;
 };
 
 function zoomAround(prevZoom: number, prevPan: Pan, newZoom: number, anchorX: number, anchorY: number): { zoom: number; pan: Pan } {
@@ -246,7 +252,35 @@ function LightboxThumbnail({ item, bucket, index, active, onSelect }: { item: Li
 
 // ─── Unified Lightbox ────────────────────────────────────────────────────────
 
-export function Lightbox({ items, initialIndex = 0, onClose, onEditImage, startInEditMode = false, bucket = "content", onDeleteItem, deleteLabel = "Удалить", autoHideControls = true, controlsHideDelay = 3000 }: LightboxProps) {
+export function Lightbox({ items, initialIndex = 0, onClose, onEditImage, startInEditMode = false, bucket = "content", onDeleteItem, deleteLabel = "Удалить", autoHideControls = true, controlsHideDelay = 3000, morph = null }: LightboxProps) {
+  // A morph is a one-way door for the entrance animation: once the photo has
+  // flown in, the slide must never play its own fade/scale again. Dropping
+  // `is-morphing` at the end of the flight used to restart it, which is exactly
+  // the flash you saw as the handover happened.
+  const [morphSeen, setMorphSeen] = useState(false);
+  useEffect(() => {
+    if (morph) setMorphSeen(true);
+  }, [morph]);
+
+  // The chrome (top bar, thumbnails, arrows) arrives WITH the flight, not after
+  // it: it is mounted hidden for exactly one frame, then the class is dropped and
+  // its opacity transition carries it in while the photo is still growing.
+  const [chromeIn, setChromeIn] = useState(false);
+  useEffect(() => {
+    if (!morph) return;
+    // Two frames, not one: the hidden state has to be PAINTED before the class
+    // is dropped, otherwise the browser sees no change and skips the transition
+    // (the chrome would pop in instead of fading).
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => setChromeIn(true));
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [morph]);
+
   const [localItems, setLocalItems] = useState<LightboxItem[]>(items);
   const [selectedIndex, setSelectedIndex] = useState(initialIndex);
   const [isEditing, setIsEditing] = useState(false);
@@ -405,7 +439,7 @@ export function Lightbox({ items, initialIndex = 0, onClose, onEditImage, startI
 
   return createPortal(
     <div
-      className={`msg-lightbox${autoHideControls ? " is-autohide" : ""}${chromeHidden ? " is-idle" : ""}`}
+      className={`msg-lightbox${autoHideControls ? " is-autohide" : ""}${chromeHidden ? " is-idle" : ""}${morph ? " is-morphing" : ""}${morphSeen ? " is-morphed" : ""}${morph === "close" ? " is-morph-out" : ""}${morph && !chromeIn ? " is-chrome-hidden" : ""}`}
       role="dialog"
       aria-modal="true"
       aria-label="Просмотр медиа"

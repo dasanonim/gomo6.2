@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { animate, useMotionValue } from "framer-motion";
+import { animate, useMotionValue } from "motion/react";
+import { SPRING } from "@/lib/motion";
 
 // ─── Swipe-right-to-go-back (mobile chat → conversation list) ──────────────
 // The chat panel follows the finger horizontally, revealing the conversation
@@ -12,7 +13,7 @@ import { animate, useMotionValue } from "framer-motion";
 // Once committed, every touchmove is preventDefault'ed (the browser cannot
 // steal the gesture as a scroll).
 // On release: past 32% of the viewport width or a fast flick glides the panel
-// fully off and calls onBack; anything less springs back. framer-motion drives
+// fully off and calls onBack; anything less springs back. Motion drives
 // both the snap-back and the exit-off animation — the same overlay-drag
 // technique as WallPost.
 
@@ -119,7 +120,7 @@ export function useSwipeBackToClose(options: { enabled: boolean; onBack: () => v
           });
         } else {
           // Snap back with a spring (the WallPost overlay feel).
-          animate(x, 0, { type: "spring", stiffness: 300, damping: 30 });
+          animate(x, 0, SPRING.sheet);
         }
       }
     };

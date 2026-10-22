@@ -9,8 +9,6 @@ import { useTransitionStyle } from "@/hooks/useTransitionStyle";
 
 interface ProfileThreadsTabProps {
   userId: string;
-  /** The owner's total thread count, for the heading (the list itself is paged). */
-  totalCount?: number;
   currentUser: { id: string } | null;
   currentUsername: string;
   currentUserColor: string;
@@ -64,7 +62,6 @@ const normalizeThread = (raw: Record<string, unknown>): ThreadRow =>
  */
 export const ProfileThreadsTab = ({
   userId,
-  totalCount,
   currentUser,
   currentUsername,
   currentUserColor,
@@ -186,14 +183,8 @@ export const ProfileThreadsTab = ({
 
   if (!loaded) return null;
 
-  const count = totalCount ?? threads.length;
-
   return (
     <div className={transitionEnterClass(transitionStyle)}>
-      <h2 className="text-xl font-bold mb-4">
-        {t("profile.threads")} ({count})
-      </h2>
-
       {threads.length === 0 ? (
         <p className="text-muted-foreground">{t("profile.noThreads")}</p>
       ) : (

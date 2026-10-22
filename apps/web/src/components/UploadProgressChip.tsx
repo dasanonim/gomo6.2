@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { motion } from "motion/react";
 import { Check, FileAudio2, FileText, FileVideo2, Image as ImageIcon, Loader2, X } from "lucide-react";
 import type { AttachmentUploadPhase } from "@/utils/mediaUpload";
 

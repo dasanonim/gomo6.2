@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { motion, animate } from "framer-motion";
+import { motion, animate } from "motion/react";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { useMessengerStore, selectSelectedConversation } from "@/stores/messengerStore";
 import { messengerWs } from "@/services/messengerWebSocket";
@@ -12,6 +12,7 @@ import { MessengerErrorBoundary } from "./ErrorBoundary";
 import { ConversationList } from "./ConversationList";
 import { ChatView } from "./ChatView";
 import type { GomoRichEditorHandle } from "@/components/GomoRichEditor";
+import { SPRING } from "@/lib/motion";
 import "./messenger.css";
 
 const SIDEBAR_DEFAULT_WIDTH = 320;
@@ -264,7 +265,7 @@ export const MessengerView = () => {
       // Never fight a settled or mid-exit panel (a small guard against an
       // already-0 x re-opening after a quick select-chat → back cycle).
       if (swipeBack.x.get() > 8) {
-        animate(swipeBack.x, 0, { type: "spring", stiffness: 260, damping: 30, mass: 0.9 });
+        animate(swipeBack.x, 0, SPRING.sheet);
       }
     } else {
       animate(swipeBack.x, window.innerWidth, { duration: 0.22, ease: [0.32, 0.72, 0, 1] });

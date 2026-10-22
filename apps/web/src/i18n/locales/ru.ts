@@ -728,6 +728,8 @@ const ru: LocaleResources = {
   },
   profile: {
     threadsLoadError: "Ошибка загрузки записей",
+    notFoundTitle: "Профиль не найден",
+    notFoundHint: "Возможно, аккаунт удалён или ссылка устарела.",
     saveError: "Ошибка сохранения профиля",
     updated: "Профиль обновлен",
     updateError: "Ошибка обновления профиля",

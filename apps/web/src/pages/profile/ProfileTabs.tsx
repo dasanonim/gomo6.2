@@ -1,16 +1,23 @@
-import { lazy, Suspense, useLayoutEffect, useRef, useEffect, useState } from "react";
+import { lazy, Suspense, useLayoutEffect, useRef, useEffect, useState, type PointerEvent as ReactPointerEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
+import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
 import { ChevronDown, Gift, Layers, LayoutGrid, MessageSquareText, Plus, Trophy, Users, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ProfileWall } from "@/components/ProfileWall";
 import { ProfileAlbumView } from "@/components/ProfileAlbumView";
-import { useFriendsStore } from "@/stores/friendsStore";
-import { transitionEnterClass } from "@/lib/viewTransitions";
-import { useTransitionStyle } from "@/hooks/useTransitionStyle";
+import {
+  EASE_OUT_EXPO,
+  morphOrigin,
+  morphTransition,
+  pressFeedback,
+  SPATIAL_OFFSET,
+  springFor,
+  SPRING,
+  travelDirection,
+} from "@/lib/motion";
 import { useProfileAlbums } from "./useProfileAlbums";
 import { TrophyShowcase } from "@/components/TrophyShowcase";
 import type { GiftCatalogItem } from "@/components/GiftCard";
@@ -26,6 +33,9 @@ const ProfileThreadsTab = lazy(() => import("./ProfileThreadsTab").then((m) => (
 const ProfileAllTab = lazy(() => import("./ProfileAllTab").then((m) => ({ default: m.ProfileAllTab })));
 
 export type ProfileTab = "all" | "wall" | "achievements" | "threads" | "gifts" | "subscribers";
+
+/** Rendered left-to-right order of the tabs — the axis content travels along. */
+const TAB_ORDER: ProfileTab[] = ["all", "wall", "achievements", "threads", "gifts", "subscribers"];
 
 export interface ProfileTabsProps {
   activeTab: ProfileTab;
@@ -64,8 +74,6 @@ export interface ProfileTabsProps {
   trophiesLoaded: boolean;
   // Gifts
   giftCatalog: GiftCatalogItem[];
-  giftCount: number;
-  giftCountLoaded: boolean;
   onGiftSent: () => void;
 }
 
@@ -73,38 +81,44 @@ interface TabDef {
   key: ProfileTab;
   icon: LucideIcon;
   label: string;
-  count?: string;
 }
 
 /** Animated tab button: every tab is an icon; the active one expands to show
  * icon + label. The active strip (shared layoutId) slides between tabs along
  * the bottom edge and the label width animates open — delayed so the text
  * unfolds after the strip lands — then collapses when switching away. */
-const TabButton = ({ tab, active, onClick }: { tab: TabDef; active: boolean; onClick: () => void }) => {
+const TabButton = ({ tab, active, onClick, hideIndicator = false }: { tab: TabDef; active: boolean; onClick: () => void; hideIndicator?: boolean }) => {
   const Icon = tab.icon;
+  const reduceMotion = useReducedMotion();
   return (
     <motion.button
+      data-tab-key={tab.key}
       onClick={onClick}
-      className={`relative flex items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-2 text-xs sm:text-sm font-medium transition-colors ${
+      {...pressFeedback(reduceMotion)}
+      transition={springFor("snappy", reduceMotion)}
+      className={`relative flex touch-pan-y items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-2 text-xs sm:text-sm font-medium transition-colors ${
         active ? "text-primary" : "text-muted-foreground hover:text-foreground"
       }`}
     >
-      {active && (
+      {active && !hideIndicator && (
         <motion.span
           layoutId="profile-tabs-indicator"
           className="absolute bottom-0 left-2 right-2 h-[2.5px] rounded-full bg-gradient-to-r from-primary to-accent"
-          transition={{ type: "spring", stiffness: 450, damping: 36 }}
+          transition={SPRING.snappy}
         />
       )}
       <Icon className="relative z-10 h-4 w-4 shrink-0" />
       <motion.span
         initial={false}
         animate={{ width: active ? "auto" : 0, opacity: active ? 1 : 0 }}
-        transition={{ duration: 0.22, ease: "easeOut", delay: active ? 0.16 : 0 }}
+        transition={{
+          ...springFor("reveal", reduceMotion),
+          opacity: { duration: reduceMotion ? 0 : 0.16, ease: EASE_OUT_EXPO },
+        }}
+        style={morphOrigin({ x: 0 })}
         className="relative z-10 overflow-hidden whitespace-nowrap"
       >
         {tab.label}
-        {tab.count}
       </motion.span>
     </motion.button>
   );
@@ -124,6 +138,7 @@ const WallTabButton = ({
   chevronOpen,
   onChevronClick,
   chevronTitle,
+  hideIndicator = false,
 }: {
   active: boolean;
   label: string;
@@ -132,86 +147,132 @@ const WallTabButton = ({
   chevronOpen: boolean;
   onChevronClick: () => void;
   chevronTitle: string;
+  hideIndicator?: boolean;
 }) => {
   const Icon = LayoutGrid;
+  const reduceMotion = useReducedMotion();
   return (
     <div
-      className={`relative flex items-center rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+      data-tab-key="wall"
+      className={`relative flex touch-pan-y items-center rounded-lg text-xs sm:text-sm font-medium transition-colors ${
         active ? "text-primary" : "text-muted-foreground hover:text-foreground"
       }`}
     >
-      <button
+      <motion.button
         onClick={onTabClick}
+        {...pressFeedback(reduceMotion)}
+        transition={springFor("snappy", reduceMotion)}
         className="flex items-center gap-1.5 py-2 pl-2.5 sm:pl-3 pr-1"
       >
         <Icon className="relative z-10 h-4 w-4 shrink-0" />
         <motion.span
           initial={false}
           animate={{ width: active ? "auto" : 0, opacity: active ? 1 : 0 }}
-          transition={{ duration: 0.22, ease: "easeOut", delay: active ? 0.16 : 0 }}
+          transition={{
+            ...springFor("reveal", reduceMotion),
+            opacity: { duration: reduceMotion ? 0 : 0.16, ease: EASE_OUT_EXPO },
+          }}
+          style={morphOrigin({ x: 0 })}
           className="relative z-10 overflow-hidden whitespace-nowrap"
         >
           {label}
         </motion.span>
-      </button>
+      </motion.button>
       <motion.span
         initial={false}
         animate={{ width: active && showChevron ? "auto" : 0, opacity: active && showChevron ? 1 : 0 }}
-        transition={{ duration: 0.18, ease: "easeOut" }}
+        transition={{
+          ...springFor("reveal", reduceMotion),
+          opacity: { duration: reduceMotion ? 0 : 0.16, ease: EASE_OUT_EXPO },
+        }}
         className="relative z-10 overflow-hidden"
       >
         <button
+          data-no-scrub
           onClick={onChevronClick}
           className={`flex items-center py-2 pr-2.5 pl-0.5 transition-colors ${
             chevronOpen ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           }`}
           title={chevronTitle}
         >
-          <ChevronDown
-            className={`h-4 w-4 transition-transform duration-200 ${chevronOpen ? "rotate-180" : ""}`}
-          />
+          <motion.span
+            className="inline-flex"
+            animate={{ rotate: chevronOpen ? 180 : 0 }}
+            transition={springFor("snappy", reduceMotion)}
+          >
+            <ChevronDown className="h-4 w-4" />
+          </motion.span>
         </button>
       </motion.span>
-      {active && (
+      {active && !hideIndicator && (
         <motion.span
           layoutId="profile-tabs-indicator"
           className="absolute bottom-0 left-2 right-2 h-[2.5px] rounded-full bg-gradient-to-r from-primary to-accent"
-          transition={{ type: "spring", stiffness: 450, damping: 36 }}
+          transition={SPRING.snappy}
         />
       )}
     </div>
   );
 };
 
-// Subscribers tab button with count (people who follow this user). The tab
-// itself hosts both lists behind an in-panel toggle.
-const SubscribersTabButton = ({ activeTab, onClick, userId }: { activeTab: string; onClick: () => void; userId: string }) => {
-  const { profileSubscribers, profileSubscribersFor, fetchProfileSubscribers } = useFriendsStore();
+// Subscribers tab button (people who follow this user). The list itself loads
+// lazily inside the tab — the bar deliberately carries no counter: it would pop
+// in only after the tab has been opened once and then stay stale until reload.
+const SubscribersTabButton = ({ activeTab, onClick, hideIndicator = false }: { activeTab: string; onClick: () => void; hideIndicator?: boolean }) => {
   const { t } = useTranslation();
-  const [count, setCount] = useState(0);
-  const [loaded, setLoaded] = useState(false);
-
-  // The list is only needed when the tab is opened — don't fetch it (with every
-  // avatar) on every profile visit just for a count.
-  useEffect(() => {
-    if (activeTab !== 'subscribers' || loaded) return;
-    setLoaded(true);
-    fetchProfileSubscribers(userId);
-  }, [activeTab, loaded, fetchProfileSubscribers, userId]);
-
-  useEffect(() => {
-    // Guard against showing another profile's count while it loads.
-    setCount(profileSubscribersFor === userId ? profileSubscribers.length : 0);
-  }, [profileSubscribers, profileSubscribersFor, userId]);
-
   return (
     <TabButton
-      tab={{ key: "subscribers", icon: Users, label: t("profile.subscribers"), count: ` (${count})` }}
+      tab={{ key: "subscribers", icon: Users, label: t("profile.subscribers") }}
       active={activeTab === 'subscribers'}
       onClick={onClick}
+      hideIndicator={hideIndicator}
     />
   );
 };
+
+/**
+ * The scrubbing underline. It mounts on pointer-down at the grabbed tab's
+ * underline rect, then every frame retargets to the active tab's centre. The
+ * springs make it pull out from under the finger and overshoot slightly when
+ * the active tab changes; the 2.5px line is the same element the `layoutId`
+ * indicator would be, so the hand-over on release is invisible.
+ */
+function ScrubIndicator({
+  rowRef,
+  tabKey,
+  initial,
+}: {
+  rowRef: { current: HTMLDivElement | null };
+  tabKey: ProfileTab;
+  initial: { x: number; w: number };
+}) {
+  const x = useSpring(initial.x, SPRING.snappy);
+  const width = useSpring(initial.w, SPRING.snappy);
+
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const btn = rowRef.current?.querySelector<HTMLElement>(`[data-tab-key="${tabKey}"]`);
+      if (btn) {
+        // Follow the label as it expands/collapses: the underline always ends
+        // up under the active tab, never under the finger.
+        x.set(btn.offsetLeft + 8);
+        width.set(btn.offsetWidth - 16);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [rowRef, tabKey, x, width]);
+
+  return (
+    <motion.span
+      aria-hidden="true"
+      className="pointer-events-none absolute bottom-1 left-0 z-20 h-[2.5px] rounded-full bg-gradient-to-r from-primary to-accent"
+      style={{ x, width }}
+    />
+  );
+}
 
 /** Profile tabs bar + active tab body. Visibility follows the owner's privacy
  * settings; for non-friends on a private profile the wall tab always stays
@@ -245,12 +306,81 @@ export function ProfileTabs({
   trophies,
   trophiesLoaded,
   giftCatalog,
-  giftCount,
-  giftCountLoaded,
   onGiftSent,
 }: ProfileTabsProps) {
   const { t } = useTranslation();
-  const transitionStyle = useTransitionStyle();
+  const reduceMotion = useReducedMotion();
+
+  // ── Tab scrubbing ────────────────────────────────────────────────────────
+  // Grab the active tab and drag: the underline is pulled from under the
+  // finger to the nearest tab centre, springs across when the pointer crosses a
+  // midpoint, and the tab it lands on opens mid-gesture. Pointer capture keeps
+  // the drag alive across tab switches.
+  const scrubRowRef = useRef<HTMLDivElement | null>(null);
+  const scrubActiveRef = useRef(false);
+  const scrubKeyRef = useRef<ProfileTab | null>(null);
+  const scrubMovedRef = useRef(false);
+  const scrubStartXRef = useRef(0);
+  const scrubInitialRef = useRef<{ x: number; w: number } | null>(null);
+  const [scrubKey, setScrubKey] = useState<ProfileTab | null>(null);
+
+  const startScrub = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("[data-no-scrub]")) return;
+    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-tab-key]");
+    if (!target) return;
+    const key = target.dataset.tabKey as ProfileTab | undefined;
+    if (!key || key !== activeTab) return;
+    scrubInitialRef.current = {
+      x: target.offsetLeft + 8,
+      w: Math.max(0, target.offsetWidth - 16),
+    };
+    scrubStartXRef.current = event.clientX;
+    scrubActiveRef.current = true;
+    scrubMovedRef.current = false;
+    scrubKeyRef.current = key;
+    setScrubKey(key);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const moveScrub = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!scrubActiveRef.current) return;
+    if (Math.abs(event.clientX - scrubStartXRef.current) > 4) scrubMovedRef.current = true;
+    const row = event.currentTarget;
+    const pointerX = event.clientX - row.getBoundingClientRect().left;
+    let bestKey: ProfileTab | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const el of Array.from(row.querySelectorAll<HTMLElement>("[data-tab-key]"))) {
+      const key = el.dataset.tabKey as ProfileTab | undefined;
+      if (!key) continue;
+      const distance = Math.abs(pointerX - (el.offsetLeft + el.offsetWidth / 2));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestKey = key;
+      }
+    }
+    if (bestKey && bestKey !== scrubKeyRef.current) {
+      scrubKeyRef.current = bestKey;
+      setScrubKey(bestKey);
+      // Switch content without the tab-click scroll snap: the drag keeps going
+      // and the page must not jump under the finger.
+      onTabChange(bestKey);
+    }
+  };
+
+  const endScrub = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!scrubActiveRef.current) return;
+    scrubActiveRef.current = false;
+    scrubKeyRef.current = null;
+    setScrubKey(null);
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  };
+
+  const handleScrubClickCapture = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!scrubMovedRef.current) return;
+    scrubMovedRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
 
   // Warm the lazy tab-body chunks as soon as the profile mounts, so opening a
   // tab swaps its data in fully instead of popping the card/panel in a beat
@@ -282,17 +412,79 @@ export function ProfileTabs({
   // the header hides/shows), so no extra geometry bookkeeping is needed.
   const [barStuck, setBarStuck] = useState(false);
 
+  // ── Delayed pin ──────────────────────────────────────────────────────────
+  // The bar is always sticky, but a negative offset cancels that while it is
+  // still arriving: it keeps scrolling under the header exactly like the rest
+  // of the page until ~65% of it is swallowed. At that point the offset springs
+  // back to zero and the bar pops out into its pinned place. Once pinned there
+  // is no per-scroll work at all — CSS sticky holds it, so it cannot jitter
+  // against the scroll.
+  const pinY = useMotionValue(0);
+  const pinAnimRef = useRef<ReturnType<typeof animate> | null>(null);
+  const pinnedRef = useRef(false);
+  const bodyMarginRef = useRef(0);
+
+  useEffect(() => () => pinAnimRef.current?.stop(), []);
+
   useEffect(() => {
     const bar = stickyBarRef.current;
     if (!bar) return;
+    const bodyEl = tabBodyWrapRef.current;
+    if (bodyEl) bodyMarginRef.current = parseFloat(getComputedStyle(bodyEl).marginTop) || 0;
 
     const update = () => {
       // Read the offset straight from the inline custom property AppLayout keeps
       // in sync: cheaper than getComputedStyle (no style recalc) and identical.
       const pad =
         parseFloat(document.documentElement.style.getPropertyValue("--app-header-pad")) || 0;
-      const stuck = bar.getBoundingClientRect().top <= pad + 1;
-      setBarStuck((prev) => (prev === stuck ? prev : stuck));
+      const rect = bar.getBoundingClientRect();
+      const h = rect.height;
+      // The bar is sticky and translated, so its own rect cannot tell where the
+      // flow put it. The non-sticky body wrapper directly follows the bar's
+      // layout box, so (body top − its margin − bar height) is the honest
+      // position the page has scrolled to.
+      const body = tabBodyWrapRef.current;
+      const flowTop = body
+        ? body.getBoundingClientRect().top - bodyMarginRef.current - h
+        : rect.top - pinY.get();
+
+      if (reduceMotion) {
+        if (!pinnedRef.current && flowTop <= pad + 1) {
+          pinnedRef.current = true;
+          setBarStuck(true);
+          pinY.set(0);
+        } else if (pinnedRef.current && flowTop > pad + 8) {
+          pinnedRef.current = false;
+          setBarStuck(false);
+        }
+        return;
+      }
+
+      if (!pinnedRef.current) {
+        if (flowTop <= pad - h * 0.65) {
+          // ~65% of the bar is gone under the header: let go and pop out.
+          pinnedRef.current = true;
+          setBarStuck(true);
+          pinAnimRef.current?.stop();
+          pinY.set(-h * 0.65);
+          pinAnimRef.current = animate(pinY, 0, springFor("eject", reduceMotion));
+          return;
+        }
+        // Still arriving: cancel the CSS sticky so the bar keeps scrolling
+        // under the header with the page. Zero once it is below the header.
+        pinY.set(Math.max(-h * 0.65, Math.min(0, flowTop - pad)));
+        return;
+      }
+
+      // Pinned: CSS sticky holds it with zero per-scroll work. Release once the
+      // flow has carried the bar back below the header — at that point its
+      // offset is already zero, so nothing moves.
+      if (flowTop >= pad + 8) {
+        pinnedRef.current = false;
+        setBarStuck(false);
+        pinAnimRef.current?.stop();
+        pinY.set(0);
+      }
     };
 
     // No rAF throttling on purpose: rAF is paused in a background/occluded tab,
@@ -309,14 +501,20 @@ export function ProfileTabs({
     // a scroll event, which would otherwise leave the state stale.
     const ro = new ResizeObserver(update);
     ro.observe(document.body);
+    // The app header slides away on scroll and writes --app-header-pad frame by
+    // frame; while the bar is pinned it must follow that edge even when no
+    // scroll events arrive.
+    const mo = new MutationObserver(update);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
 
     return () => {
       window.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
       document.removeEventListener("visibilitychange", update);
       ro.disconnect();
+      mo.disconnect();
     };
-  }, []);
+  }, [pinY, reduceMotion]);
 
   const snapToBar = () => {
     const bar = stickyBarRef.current;
@@ -423,14 +621,50 @@ export function ProfileTabs({
 
   const selectedAlbum = selectedAlbumId ? albums.find((a) => a.id === selectedAlbumId) || null : null;
 
+  // ── Directed content swap ────────────────────────────────────────────────
+  // The tabs are an ordered row, so switching one has a spatial direction: the
+  // new body arrives from the side the bar travelled towards. The offset is
+  // deliberately small (14px) — enough to read as «this came from there»
+  // without the content sliding across the screen. The body is keyed by tab +
+  // album, so a swap mounts a fresh motion element and its `initial` runs.
+  const bodyKey = `${activeTab}:${selectedAlbumId ?? "all"}`;
+  // The previous position is kept in a ref and updated AFTER the render that
+  // mounts the new body, so that render still knows which way it travelled.
+  const previousPositionRef = useRef(activeTab);
+  const bodyDirection = travelDirection(TAB_ORDER.indexOf(previousPositionRef.current), TAB_ORDER.indexOf(activeTab));
+  // The first paint comes from the page-level enter animation; don't stack a
+  // second one on top of it.
+  const hasPaintedRef = useRef(false);
+
+  useEffect(() => {
+    hasPaintedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    previousPositionRef.current = activeTab;
+  }, [activeTab]);
+
+  const bodyEnter = (() => {
+    // First paint comes from the page-level enter; a swap is a dimensional
+    // morph: the new body unfolds from the tab bar (origin at the top edge),
+    // travelling a hint in the direction the bar moved.
+    if (!hasPaintedRef.current || reduceMotion) {
+      return { initial: false as const, animate: { opacity: 1, x: 0, scale: 1 } };
+    }
+    return {
+      initial: { opacity: 0, x: bodyDirection * SPATIAL_OFFSET.tab, scale: 0.97 },
+      animate: { opacity: 1, x: 0, scale: 1 },
+    };
+  })();
+
   return (
     <>
       {/* Sticky bar: pins under the app header and follows its hide/show slide
           (offset comes from --app-header-pad, kept in sync by AppLayout). */}
-      <div
+      <motion.div
         ref={stickyBarRef}
         className={`profile-tabbar sticky z-30 ${panel ? "profile-tabbar--panel overflow-hidden border border-border/60" : "border-b border-border"}${barStuck && !panel ? " profile-tabbar--stuck" : ""}`}
-        style={{ top: "var(--app-header-pad, 0px)" }}
+        style={{ top: "var(--app-header-pad, 0px)", y: pinY }}
       >
         {/* One background layer behind the content: an opaque strip while the
             bar travels with the page, frosted once it pins. It sits on the bar
@@ -443,12 +677,21 @@ export function ProfileTabs({
             visible there and would only add per-frame cost. */}
         <span className="profile-tabbar__bg" aria-hidden="true" />
         <div className="relative z-10 overflow-x-auto">
-        <div className="flex gap-1 min-w-max px-1.5 py-1">
+        <div
+          ref={scrubRowRef}
+          className="relative flex gap-1 min-w-max px-1.5 py-1"
+          onPointerDown={startScrub}
+          onPointerMove={moveScrub}
+          onPointerUp={endScrub}
+          onPointerCancel={endScrub}
+          onClickCapture={handleScrubClickCapture}
+        >
           {allTabVisible && (
             <TabButton
               tab={{ key: "all", icon: Layers, label: t("profile.allContent") }}
               active={activeTab === 'all'}
               onClick={() => switchTab('all')}
+              hideIndicator={!!scrubKey}
             />
           )}
           {wallTabVisible && (
@@ -460,6 +703,7 @@ export function ProfileTabs({
               chevronOpen={albumsOpen || selectedAlbumId !== null}
               onChevronClick={toggleAlbumsRow}
               chevronTitle={t("profile.albums")}
+              hideIndicator={!!scrubKey}
             />
           )}
           {canViewAchievements && (
@@ -468,10 +712,10 @@ export function ProfileTabs({
                 key: "achievements",
                 icon: Trophy,
                 label: t("profile.achievements"),
-                count: trophiesLoaded ? ` (${trophies.length})` : undefined,
               }}
               active={activeTab === 'achievements'}
               onClick={() => switchTab('achievements')}
+              hideIndicator={!!scrubKey}
             />
           )}
           {showThreadsTab && canViewThreads && (
@@ -479,6 +723,7 @@ export function ProfileTabs({
               tab={{ key: "threads", icon: MessageSquareText, label: t("profile.threads") }}
               active={activeTab === 'threads'}
               onClick={() => switchTab('threads')}
+              hideIndicator={!!scrubKey}
             />
           )}
           {canViewGifts && (
@@ -487,24 +732,42 @@ export function ProfileTabs({
                 key: "gifts",
                 icon: Gift,
                 label: t("profile.gifts"),
-                count: giftCountLoaded ? ` (${giftCount})` : undefined,
               }}
               active={activeTab === 'gifts'}
               onClick={() => switchTab('gifts')}
+              hideIndicator={!!scrubKey}
             />
           )}
           {canViewSubscriptions && (
             <SubscribersTabButton
               activeTab={activeTab}
               onClick={() => switchTab('subscribers')}
-              userId={userId}
+              hideIndicator={!!scrubKey}
+            />
+          )}
+          {scrubKey && scrubInitialRef.current && (
+            <ScrubIndicator
+              rowRef={scrubRowRef}
+              tabKey={scrubKey}
+              initial={scrubInitialRef.current}
             />
           )}
         </div>
 
         {/* Album row: «Все» + album chips + create. Drops below the tab
-            buttons inside the sticky bar when opened. */}
+            buttons inside the sticky bar when opened — the row unfolds from
+            the bar itself (height + blur morph), not by popping into place. */}
+        <AnimatePresence initial={false}>
         {showAlbumsRow && (
+          <motion.div
+            key="albums-row"
+            initial={reduceMotion ? false : { height: 0, opacity: 0, filter: "blur(6px)" }}
+            animate={{ height: "auto", opacity: 1, filter: "blur(0px)" }}
+            exit={{ height: 0, opacity: 0, filter: "blur(4px)" }}
+            transition={morphTransition(reduceMotion, springFor("reveal", reduceMotion))}
+            style={morphOrigin({ y: 0 })}
+            className="overflow-hidden"
+          >
           <div className="flex flex-wrap items-center gap-0.5 border-t border-border/60 px-1 pb-1.5 pt-0.5">
             <button
               onClick={() => {
@@ -538,9 +801,11 @@ export function ProfileTabs({
               </button>
             )}
           </div>
+          </motion.div>
         )}
+        </AnimatePresence>
         </div>
-      </div>
+      </motion.div>
 
       {/* Create-album dialog — modal so it works on phones too (full-width
           sheet instead of the cramped inline input row). */}
@@ -600,6 +865,13 @@ export function ProfileTabs({
         ref={tabBodyWrapRef}
         className={`min-h-[100dvh]${contentPanel ? " surface-panel mt-3 rounded-xl border border-border/60 p-3 shadow-sm" : ""}`}
       >
+        <motion.div
+          key={bodyKey}
+          initial={bodyEnter.initial}
+          animate={bodyEnter.animate}
+          transition={morphTransition(reduceMotion)}
+          style={morphOrigin({ y: 0 })}
+        >
         {activeTab === 'all' && allTabVisible && (
           <Suspense fallback={null}>
             <ProfileAllTab
@@ -649,7 +921,7 @@ export function ProfileTabs({
       )}
 
       {activeTab === 'achievements' && canViewAchievements && trophiesLoaded && (
-        <div className={transitionEnterClass(transitionStyle)}>
+        <div>
           {trophies.length === 0 ? (
             <p className="text-muted-foreground">{t("profile.noAchievements")}</p>
           ) : (
@@ -683,7 +955,6 @@ export function ProfileTabs({
           <ProfileThreadsTab
             key={userId}
             userId={userId}
-            totalCount={profile.thread_count}
             currentUser={currentUser}
             currentUsername={currentUsername}
             currentUserColor={currentUserColor}
@@ -712,6 +983,7 @@ export function ProfileTabs({
           </Suspense>
         </div>
       )}
+        </motion.div>
       </div>
     </>
   );
