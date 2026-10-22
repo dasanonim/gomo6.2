@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { AnimatePresence, motion, useReducedMotion, type Variants } from "motion/react";
+import { motion, useReducedMotion, type Variants } from "motion/react";
 import { api } from "@/integrations/api/compat";
 import { Lightbox, type LightboxItem } from "@/components/Lightbox";
 import { Lock } from "lucide-react";
@@ -657,27 +657,15 @@ export const ProfileWall = ({
   return (
     <>
       <div className="space-y-4">
-        <AnimatePresence>
-          {canPost && !standalone && !focusedPostId && showCreateForm && currentUserId && (
-            <motion.div
-              key="wall-composer"
-              initial={reduceMotion ? false : { opacity: 0, scale: 0.86, y: 28, filter: "blur(6px)" }}
-              animate={{ opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
-              exit={{ opacity: 0, scale: 0.9, y: 16, filter: "blur(4px)" }}
-              transition={morphTransition(reduceMotion)}
-              style={morphOrigin({ x: 1, y: 1 })}
-              className="fixed right-4 bottom-[5.5rem] z-40 w-[min(26rem,calc(100vw-2rem))] sm:right-6"
-            >
-              <WallComposer
-                profileUserId={profileUserId}
-                currentUserId={currentUserId}
-                onPostCreated={handlePostCreatedWithTimestamp}
-                onBeforeCreate={handleBeforeCreate}
-                onCancel={() => setShowCreateForm(false)}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {canPost && !standalone && !focusedPostId && showCreateForm && currentUserId && (
+          <WallComposer
+            profileUserId={profileUserId}
+            currentUserId={currentUserId}
+            onPostCreated={handlePostCreatedWithTimestamp}
+            onBeforeCreate={handleBeforeCreate}
+            onCancel={() => setShowCreateForm(false)}
+          />
+        )}
 
         {posts.length === 0 ? (
           <div className="border border-dashed border-border/70 bg-muted/20 py-12 text-center">

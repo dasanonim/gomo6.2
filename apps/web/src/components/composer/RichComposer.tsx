@@ -13,6 +13,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { motion, useReducedMotion } from "motion/react";
+import { EASE_OUT_EXPO, springFor } from "@/lib/motion";
 import { apiClient } from "@/integrations/api/client";
 import { Popover, PopoverPanel, PopoverTrigger } from "@/components/ui/popover";
 import { InkBar, InkButton, glassGhostButtonClass } from "@/components/ui/ink-bar";
@@ -186,6 +188,12 @@ export const RichComposer = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [closing, setClosing] = useState(false);
+  const reduceMotion = useReducedMotion();
+  // The sheet comes up from the bottom on phones; on desktop it is a centred
+  // dialog that grows in. Decided once — resizing while composing is rare.
+  const [isDesktop] = useState(
+    () => typeof window !== "undefined" && window.matchMedia?.("(min-width: 768px)").matches,
+  );
   const [isDragging, setIsDragging] = useState(false);
   const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number; startInEditMode: boolean } | null>(null);
   const [publishButtonStyle] = useState(getPublishButtonStyle);
@@ -253,7 +261,7 @@ export const RichComposer = ({
     if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
       document.activeElement.blur();
     }
-    window.setTimeout(() => onClose(), 280);
+    window.setTimeout(() => onClose(), 320);
   }, [closing, onClose]);
 
   // Escape closes (unless a lightbox or another dialog owns Escape then).
@@ -551,17 +559,45 @@ export const RichComposer = ({
   const atLimit = mediaCount >= maxMedia;
 
   return createPortal(
-    <div
-      className={`fixed inset-0 z-[60] bg-background md:bg-black/50 md:backdrop-blur-[2px] transition-opacity duration-300 ${
-        closing ? "opacity-0" : "opacity-100"
-      } ${fullscreen ? "" : "md:flex md:items-center md:justify-center"}`}
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0 }}
+      animate={reduceMotion ? undefined : { opacity: closing ? 0 : 1 }}
+      transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE_OUT_EXPO }}
+      className={`fixed inset-0 z-[60] bg-background md:bg-black/45 md:backdrop-blur-lg ${
+        fullscreen ? "" : "md:flex md:items-center md:justify-center"
+      }`}
     >
-      <div
+      <motion.div
         ref={composerRootRef}
         role="dialog"
         aria-modal="true"
         data-testid={testId}
-        style={size && !fullscreen ? { width: `${size.w}px`, height: `${size.h}px`, maxWidth: "none", maxHeight: "none" } : undefined}
+        initial={
+          reduceMotion
+            ? false
+            : isDesktop
+              ? { opacity: 0, scale: 0.9, y: 28 }
+              : { y: "100%" }
+        }
+        animate={
+          reduceMotion
+            ? undefined
+            : closing
+              ? isDesktop
+                ? { opacity: 0, scale: 0.96, y: 12 }
+                : { y: "100%" }
+              : isDesktop
+                ? { opacity: 1, scale: 1, y: 0 }
+                : { y: 0 }
+        }
+        transition={springFor("snappy", reduceMotion)}
+        style={{
+          originX: 1,
+          originY: 1,
+          ...(size && !fullscreen
+            ? { width: `${size.w}px`, height: `${size.h}px`, maxWidth: "none", maxHeight: "none" }
+            : {}),
+        }}
         onDragOver={(event) => {
           if (Array.from(event.dataTransfer?.types || []).includes("Files")) {
             event.preventDefault();
@@ -570,11 +606,11 @@ export const RichComposer = ({
         }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleRootDrop}
-        className={`group/panel fixed inset-x-0 top-0 bottom-0 flex w-full flex-col overflow-hidden bg-background transition-transform duration-300 md:relative md:border md:border-border/60 md:bg-card md:shadow-2xl ${
+        className={`group/panel fixed inset-x-0 top-0 bottom-0 flex w-full flex-col overflow-hidden bg-background md:relative md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
           fullscreen
             ? "md:h-[100dvh] md:max-h-none md:max-w-none md:rounded-none"
             : "md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-2xl"
-        } ${closing ? "translate-y-full md:translate-y-0 md:opacity-0" : "translate-y-0 md:opacity-100"}`}
+        }`}
       >
         {isDragging && (
           <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center border-2 border-dashed border-primary/60 bg-background/60 backdrop-blur-[2px]">
@@ -765,7 +801,7 @@ export const RichComposer = ({
             <path d="M13 5 L5 13 M13 10 L10 13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         </div>
-      </div>
+      </motion.div>
 
       {lightbox && (
         <Lightbox
@@ -838,7 +874,7 @@ export const RichComposer = ({
           </div>
         </DialogContent>
       </Dialog>
-    </div>,
+    </motion.div>,
     document.body,
   );
 };
