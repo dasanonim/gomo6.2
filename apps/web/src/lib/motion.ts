@@ -52,6 +52,13 @@ export const SPRING = {
    */
   eject: { type: "spring", stiffness: 500, damping: 28, mass: 1 },
   /**
+   * The composer sheet — the pop character with its power turned down ~1.5×:
+   * less stiffness and a more damped rebound, so a full-height surface moves
+   * softly instead of snapping. Kept separate from `pop` so badges and icons
+   * keep their snap.
+   */
+  composer: { type: "spring", stiffness: 400, damping: 20, mass: 0.7 },
+  /**
    * A measured dimension — `width`/`height` of a label, row or chip that opens
    * to its content. Deliberately over-damped: a spring overshoot on a measured
    * box is not bounce, it is the last glyph of the text sliding a fraction of a

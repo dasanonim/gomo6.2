@@ -212,7 +212,7 @@ export const RichComposer = ({
       sheetY.set(0);
       return;
     }
-    const controls = animate(sheetY, 0, springFor("pop", reduceMotion));
+    const controls = animate(sheetY, 0, springFor("composer", reduceMotion));
     return () => controls.stop();
   }, [reduceMotion, sheetY]);
 
@@ -234,7 +234,7 @@ export const RichComposer = ({
         ? window.innerHeight + 32
         : 900;
     const controls = animate(sheetY, target, {
-      ...springFor("snappy", reduceMotion),
+      ...springFor("composer", reduceMotion),
       // A flick carries its speed into the exit instead of restarting from rest.
       velocity: releaseVelocityRef.current,
       onComplete: finishClose,
@@ -660,7 +660,7 @@ export const RichComposer = ({
             return;
           }
           animate(sheetY, 0, {
-            ...springFor("pop", reduceMotion),
+            ...springFor("composer", reduceMotion),
             velocity: info.velocity.y,
           });
         }}
