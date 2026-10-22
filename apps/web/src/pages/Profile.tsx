@@ -85,6 +85,10 @@ const Profile = () => {
   // The create-post form is opened from a floating button that stays on screen
   // on every profile tab; this state drives the form inside ProfileWall.
   const [wallCreateOpen, setWallCreateOpen] = useState(false);
+  // Swipe-up gesture on the floating write button: it opens the wall composer
+  // before the click fires, so the click that follows must be swallowed.
+  const fabSwipeRef = useRef<{ x: number; y: number; active: boolean } | null>(null);
+  const fabSwipedRef = useRef(false);
   const [allowWallPostsFromOthers, setAllowWallPostsFromOthers] = useState(true);
   const [activeTab, setActiveTab] = useState<ProfileTab>('achievements');
   const [showThreadsTab, setShowThreadsTab] = useState(true);
@@ -628,6 +632,30 @@ const Profile = () => {
     }
   };
 
+  // A swipe up from the button opens the composer — with a little sideways
+  // slack, so a slightly left-leaning flick still counts. The gesture is
+  // swallowed once it fires: the trailing click must not toggle it closed.
+  const handleFabPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (wallCreateOpen) return;
+    fabSwipeRef.current = { x: event.clientX, y: event.clientY, active: true };
+    fabSwipedRef.current = false;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+  const handleFabPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const start = fabSwipeRef.current;
+    if (!start?.active) return;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (dy < -40 && Math.abs(dx) <= Math.abs(dy) * 0.85) {
+      start.active = false;
+      fabSwipedRef.current = true;
+      handleWallCreateClick();
+    }
+  };
+  const handleFabPointerEnd = () => {
+    if (fabSwipeRef.current) fabSwipeRef.current.active = false;
+  };
+
   // ── Derived profile-background values ────────────────────────────────────
   // The owner uploads one image (background_url storage key); every viewer
   // picks how it is displayed (Settings → Внешний вид → «Отображение фонов»).
@@ -1076,7 +1104,12 @@ const Profile = () => {
               // LARGER constant moves the button further right.
               right: fabRight,
               bottom: "calc(1.5rem + env(safe-area-inset-bottom))",
+              touchAction: "none",
             }}
+            onPointerDown={handleFabPointerDown}
+            onPointerMove={handleFabPointerMove}
+            onPointerUp={handleFabPointerEnd}
+            onPointerCancel={handleFabPointerEnd}
             {...hoverLift(prefersReducedMotion, 1.04)}
             {...pressFeedback(prefersReducedMotion, 0.9)}
             transition={springFor("snappy", prefersReducedMotion)}
@@ -1084,7 +1117,13 @@ const Profile = () => {
             <Button
               variant="default"
               size="icon"
-              onClick={handleWallCreateClick}
+              onClick={() => {
+                if (fabSwipedRef.current) {
+                  fabSwipedRef.current = false;
+                  return;
+                }
+                handleWallCreateClick();
+              }}
               className="h-12 w-12 rounded-2xl shadow-lg"
               title={wallCreateOpen ? "Скрыть форму" : "Написать на стене"}
             >

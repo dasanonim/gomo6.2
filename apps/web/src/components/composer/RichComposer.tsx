@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { motion, useReducedMotion } from "motion/react";
+import { motion, useDragControls, useReducedMotion } from "motion/react";
 import { EASE_OUT_EXPO, springFor } from "@/lib/motion";
 import { apiClient } from "@/integrations/api/client";
 import { Popover, PopoverPanel, PopoverTrigger } from "@/components/ui/popover";
@@ -194,6 +194,14 @@ export const RichComposer = ({
   const [isDesktop] = useState(
     () => typeof window !== "undefined" && window.matchMedia?.("(min-width: 768px)").matches,
   );
+  const dragControls = useDragControls();
+  const closeFinishedRef = useRef(false);
+
+  const finishClose = useCallback(() => {
+    if (closeFinishedRef.current) return;
+    closeFinishedRef.current = true;
+    onClose();
+  }, [onClose]);
   const [isDragging, setIsDragging] = useState(false);
   const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number; startInEditMode: boolean } | null>(null);
   const [publishButtonStyle] = useState(getPublishButtonStyle);
@@ -261,8 +269,14 @@ export const RichComposer = ({
     if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
       document.activeElement.blur();
     }
-    window.setTimeout(() => onClose(), 320);
-  }, [closing, onClose]);
+    if (reduceMotion) {
+      finishClose();
+      return;
+    }
+    // The exit spring reports back through onAnimationComplete; the timer is
+    // only a fallback for a missed frame.
+    window.setTimeout(finishClose, 700);
+  }, [closing, finishClose, reduceMotion]);
 
   // Escape closes (unless a lightbox or another dialog owns Escape then).
   useEffect(() => {
@@ -563,7 +577,7 @@ export const RichComposer = ({
       initial={reduceMotion ? false : { opacity: 0 }}
       animate={reduceMotion ? undefined : { opacity: closing ? 0 : 1 }}
       transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE_OUT_EXPO }}
-      className={`fixed inset-0 z-[60] bg-background md:bg-black/45 md:backdrop-blur-lg ${
+      className={`fixed inset-0 z-[60] bg-black/45 md:backdrop-blur-lg ${
         fullscreen ? "" : "md:flex md:items-center md:justify-center"
       }`}
     >
@@ -591,6 +605,18 @@ export const RichComposer = ({
                 : { y: 0 }
         }
         transition={springFor("snappy", reduceMotion)}
+        drag={isDesktop ? false : "y"}
+        dragControls={dragControls}
+        dragListener={false}
+        dragConstraints={{ top: 0, bottom: 0 }}
+        dragElastic={{ top: 0.08, bottom: 0.7 }}
+        dragSnapToOrigin={!closing}
+        onDragEnd={(_, info) => {
+          if (!isDesktop && (info.offset.y > 120 || info.velocity.y > 800)) close();
+        }}
+        onAnimationComplete={() => {
+          if (closing) finishClose();
+        }}
         style={{
           originX: 1,
           originY: 1,
@@ -606,7 +632,7 @@ export const RichComposer = ({
         }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleRootDrop}
-        className={`group/panel fixed inset-x-0 top-0 bottom-0 flex w-full flex-col overflow-hidden bg-background md:relative md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
+        className={`group/panel fixed inset-x-0 bottom-0 top-2 flex w-full flex-col overflow-hidden rounded-t-2xl border-t border-border/60 bg-background md:relative md:top-0 md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
           fullscreen
             ? "md:h-[100dvh] md:max-h-none md:max-w-none md:rounded-none"
             : "md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-2xl"
@@ -622,8 +648,20 @@ export const RichComposer = ({
           </div>
         )}
 
-        {/* Header */}
-        <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-2 py-2">
+        {/* Header — doubles as the sheet's drag handle on phones. The grip is
+            decorative; the whole header (except its buttons) starts the drag. */}
+        <div
+          className="relative flex shrink-0 touch-none items-center gap-1 border-b border-border/60 px-2 py-2 pt-3 md:touch-auto md:pt-2"
+          onPointerDown={(event) => {
+            if (isDesktop) return;
+            if ((event.target as HTMLElement).closest("button")) return;
+            dragControls.start(event);
+          }}
+        >
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute left-1/2 top-1 h-1 w-10 -translate-x-1/2 rounded-full bg-foreground/20 md:hidden"
+          />
           <button
             type="button"
             onClick={close}
@@ -641,14 +679,16 @@ export const RichComposer = ({
             {headerMeta && <span className="ml-2 whitespace-nowrap text-[11px] text-muted-foreground/70">{headerMeta}</span>}
           </div>
           {headerRight}
-          <button
-            type="button"
-            title={fullscreen ? "Свернуть" : "На весь экран"}
-            onClick={() => setFullscreen((prev) => !prev)}
-            className={glassGhostButtonClass}
-          >
-            {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
-          </button>
+          {isDesktop && (
+            <button
+              type="button"
+              title={fullscreen ? "Свернуть" : "На весь экран"}
+              onClick={() => setFullscreen((prev) => !prev)}
+              className={glassGhostButtonClass}
+            >
+              {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
+            </button>
+          )}
         </div>
 
         {/* Extra fields (title, topic placement…) */}
