@@ -640,15 +640,14 @@ export const RichComposer = ({
         dragControls={dragControls}
         dragListener={false}
         dragConstraints={isDesktop ? undefined : { top: 0, bottom: 0 }}
-        dragElastic={{ top: 0.22, bottom: 0.55 }}
+        dragElastic={{ top: 0.22, bottom: 0.7 }}
         dragMomentum={false}
         onDragEnd={(_, info) => {
           if (isDesktop) return;
-          // Only a near-full deliberate pull (90% of the height) or a real
-          // downward flick closes. Releasing anywhere above that — including
-          // halfway — is carried back up by the spring, even with zero inertia.
-          const height = composerRootRef.current?.clientHeight ?? 600;
-          if (info.offset.y > height * 0.9 || info.velocity.y > 650) {
+          // Distance never closes the sheet: it can be pulled as low as the
+          // gesture allows, stopped there and released, and it will always
+          // spring back up. Only a decisive downward flick commits.
+          if (info.velocity.y > 650) {
             close(info.velocity.y);
             return;
           }
