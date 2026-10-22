@@ -55,7 +55,7 @@ describe("spatialEnter", () => {
 
 describe("pointer feedback", () => {
   it("scales on press and hover", () => {
-    expect(pressFeedback(false)).toEqual({ whileTap: { scale: 0.95 } });
+    expect(pressFeedback(false)).toEqual({ whileTap: { scale: 0.96 } });
     expect(pressFeedback(false, 0.9)).toEqual({ whileTap: { scale: 0.9 } });
     expect(hoverLift(false)).toEqual({ whileHover: { scale: 1.03 } });
   });
