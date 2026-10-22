@@ -4411,8 +4411,11 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
     display: inline-flex;
   }
 
+  /* AppLayout measures the real header (including the PWA status-bar inset) and
+     publishes it as --app-header-height. Hardcoding 70px here broke on phones
+     with a notch/Dynamic Island, where the search bar slid under the header. */
   .sidebar-top {
-      margin-top: 70px;
+      margin-top: var(--app-header-height, 70px);
   }
 }
 
@@ -4422,7 +4425,7 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   .sidebar-top {
     height: 40px;
     margin: 10px 10px 8px;
-    margin-top: 60px;
+    margin-top: var(--app-header-height, 60px);
     gap: 0;
   }
 
