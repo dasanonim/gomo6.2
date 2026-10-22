@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { motion, useDragControls, useReducedMotion } from "motion/react";
+import { animate, motion, useDragControls, useMotionValue, useReducedMotion } from "motion/react";
 import { EASE_OUT_EXPO, springFor } from "@/lib/motion";
 import { apiClient } from "@/integrations/api/client";
 import { Popover, PopoverPanel, PopoverTrigger } from "@/components/ui/popover";
@@ -196,12 +196,47 @@ export const RichComposer = ({
   );
   const dragControls = useDragControls();
   const closeFinishedRef = useRef(false);
+  const releaseVelocityRef = useRef(0);
+  // The sheet's actual position: entrance, drag and exit all move this one
+  // value, so a flick keeps its velocity into the closing spring.
+  const sheetY = useMotionValue(
+    isDesktop ? 28 : typeof window !== "undefined" ? window.innerHeight : 900,
+  );
+
+  useEffect(() => {
+    if (reduceMotion) {
+      sheetY.set(0);
+      return;
+    }
+    const controls = animate(sheetY, 0, springFor("snappy", reduceMotion));
+    return () => controls.stop();
+  }, [reduceMotion, sheetY]);
 
   const finishClose = useCallback(() => {
     if (closeFinishedRef.current) return;
     closeFinishedRef.current = true;
     onClose();
   }, [onClose]);
+
+  useEffect(() => {
+    if (!closing) return;
+    if (reduceMotion) {
+      finishClose();
+      return;
+    }
+    const target = isDesktop
+      ? 16
+      : typeof window !== "undefined"
+        ? window.innerHeight + 32
+        : 900;
+    const controls = animate(sheetY, target, {
+      ...springFor("snappy", reduceMotion),
+      // A flick carries its speed into the exit instead of restarting from rest.
+      velocity: releaseVelocityRef.current,
+      onComplete: finishClose,
+    });
+    return () => controls.stop();
+  }, [closing, finishClose, isDesktop, reduceMotion, sheetY]);
   const [isDragging, setIsDragging] = useState(false);
   const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number; startInEditMode: boolean } | null>(null);
   const [publishButtonStyle] = useState(getPublishButtonStyle);
@@ -263,8 +298,9 @@ export const RichComposer = ({
   );
   const canSubmit = (plainText.length > 0 || referencedIds.size > 0) && !uploading && !isSubmitting && !publishDisabled;
 
-  const close = useCallback(() => {
+  const close = useCallback((velocity = 0) => {
     if (closing) return;
+    releaseVelocityRef.current = velocity;
     setClosing(true);
     if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
       document.activeElement.blur();
@@ -273,9 +309,9 @@ export const RichComposer = ({
       finishClose();
       return;
     }
-    // The exit spring reports back through onAnimationComplete; the timer is
-    // only a fallback for a missed frame.
-    window.setTimeout(finishClose, 700);
+    // The exit spring reports back through onComplete; the timer is only a
+    // fallback for a missed frame.
+    window.setTimeout(finishClose, 1200);
   }, [closing, finishClose, reduceMotion]);
 
   // Escape closes (unless a lightbox or another dialog owns Escape then).
@@ -586,40 +622,54 @@ export const RichComposer = ({
         role="dialog"
         aria-modal="true"
         data-testid={testId}
-        initial={
-          reduceMotion
-            ? false
-            : isDesktop
-              ? { opacity: 0, scale: 0.9, y: 28 }
-              : { y: "100%" }
-        }
+        initial={reduceMotion ? false : isDesktop ? { opacity: 0, scale: 0.9 } : { opacity: 1 }}
         animate={
           reduceMotion
             ? undefined
             : closing
               ? isDesktop
-                ? { opacity: 0, scale: 0.96, y: 12 }
-                : { y: "100%" }
+                ? { opacity: 0, scale: 0.96 }
+                : { opacity: 1 }
               : isDesktop
-                ? { opacity: 1, scale: 1, y: 0 }
-                : { y: 0 }
+                ? { opacity: 1, scale: 1 }
+                : { opacity: 1 }
         }
-        transition={springFor("snappy", reduceMotion)}
+        transition={
+          reduceMotion
+            ? { duration: 0 }
+            : {
+                ...springFor("snappy", reduceMotion),
+                opacity: { duration: 0.22, ease: EASE_OUT_EXPO },
+              }
+        }
         drag={isDesktop ? false : "y"}
         dragControls={dragControls}
         dragListener={false}
-        dragConstraints={{ top: 0, bottom: 0 }}
-        dragElastic={{ top: 0.08, bottom: 0.7 }}
-        dragSnapToOrigin={!closing}
+        dragConstraints={isDesktop ? undefined : { top: 0, bottom: 600 }}
+        dragElastic={{ top: 0.25, bottom: 0.9 }}
+        dragMomentum={false}
         onDragEnd={(_, info) => {
-          if (!isDesktop && (info.offset.y > 120 || info.velocity.y > 800)) close();
-        }}
-        onAnimationComplete={() => {
-          if (closing) finishClose();
+          if (isDesktop) return;
+          // Down past the threshold (or a hard flick) closes with the gesture's
+          // own velocity; everything else springs back and bounces off the top.
+          if (info.offset.y > 120 || info.velocity.y > 700) {
+            close(info.velocity.y);
+            return;
+          }
+          if (reduceMotion) {
+            sheetY.set(0);
+            return;
+          }
+          animate(sheetY, 0, {
+            ...springFor("pop", reduceMotion),
+            velocity: info.velocity.y,
+          });
         }}
         style={{
+          y: sheetY,
           originX: 1,
           originY: 1,
+          willChange: "transform",
           ...(size && !fullscreen
             ? { width: `${size.w}px`, height: `${size.h}px`, maxWidth: "none", maxHeight: "none" }
             : {}),
@@ -664,7 +714,7 @@ export const RichComposer = ({
           />
           <button
             type="button"
-            onClick={close}
+            onClick={() => close()}
             aria-label="Закрыть"
             title="Закрыть"
             className={`${glassGhostButtonClass} active:scale-95`}
