@@ -626,6 +626,16 @@ export const RichComposer = ({
         animate={reduceMotion ? undefined : { opacity: closing ? 0 : 1 }}
         transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE_OUT_EXPO }}
       />
+      {/* Colour-matched pad under the sheet: when the spring overshoots the top
+          the sheet lifts off the bottom edge, and without this the page would
+          peek through the gap. It sits behind the sheet and is dropped as soon
+          as the exit starts (the sheet still covers its area at that moment). */}
+      {!closing && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-background md:hidden"
+        />
+      )}
       <motion.div
         ref={composerRootRef}
         role="dialog"
