@@ -208,7 +208,7 @@ export const RichComposer = ({
       sheetY.set(0);
       return;
     }
-    const controls = animate(sheetY, 0, springFor("snappy", reduceMotion));
+    const controls = animate(sheetY, 0, springFor("pop", reduceMotion));
     return () => controls.stop();
   }, [reduceMotion, sheetY]);
 
