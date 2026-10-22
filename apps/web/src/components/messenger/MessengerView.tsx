@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { motion, animate } from "motion/react";
+import { motion, animate, useReducedMotion, useTransform } from "motion/react";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { useMessengerStore, selectSelectedConversation } from "@/stores/messengerStore";
 import { messengerWs } from "@/services/messengerWebSocket";
@@ -8,6 +8,7 @@ import { eventManager } from "@/services/eventManager";
 import { useMessengerPresence } from "@/hooks/useMessengerPresence";
 import { useMobileKeyboard } from "@/hooks/useMobileKeyboard";
 import { useSwipeBackToClose } from "@/hooks/useSwipeBackToClose";
+import { getChatUnderlayFrame } from "./core/chatDepth";
 import { MessengerErrorBoundary } from "./ErrorBoundary";
 import { ConversationList } from "./ConversationList";
 import { ChatView } from "./ChatView";
@@ -59,6 +60,7 @@ export const MessengerView = () => {
 
   // Mobile
   const [isMobile, setIsMobile] = useState(false);
+  const prefersReducedMotion = useReducedMotion();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(getInitialSidebarWidth);
   const sidebarWidthRef = useRef(sidebarWidth);
@@ -229,7 +231,7 @@ export const MessengerView = () => {
     messengerWs.sendTyping(selectedConversationId, isTyping);
   }, [selectedConversationId]);
 
-  const handleBack = useCallback(() => {
+  const finishBack = useCallback(() => {
     setSidebarOpen(true);
     selectConversation(null);
     setSearchParams({}, { replace: true });
@@ -245,8 +247,38 @@ export const MessengerView = () => {
   const kb = useMobileKeyboard();
   const swipeBack = useSwipeBackToClose({
     enabled: isMobile && !kb.isOpen,
-    onBack: handleBack,
+    onBack: finishBack,
   });
+
+  // Keep the conversation mounted while the panel leaves. Clearing the store
+  // on pointer-down used to unmount MessageList in the middle of the close
+  // animation; the swipe hook already waited until its exit finished, but the
+  // header button and Escape did not.
+  const requestBack = useCallback(() => {
+    const mobileNow = window.matchMedia("(max-width: 980px)").matches;
+    const width = window.innerWidth;
+    if (!mobileNow || swipeBack.x.get() >= width - 1) {
+      finishBack();
+      return;
+    }
+
+    animate(swipeBack.x, width, {
+      ...SPRING.sheet,
+      velocity: 1000,
+      onComplete: finishBack,
+    });
+  }, [finishBack, swipeBack.x]);
+
+  // The conversation list is the live underlay of the mobile chat push. Derive
+  // both parallax and dim from the exact same MotionValue as the chat panel and
+  // swipe-back gesture: no second timeline, and reversing the finger reverses
+  // the depth in the same frame.
+  const sidebarParallaxX = useTransform(swipeBack.x, (panelX) =>
+    getChatUnderlayFrame(panelX, window.innerWidth, isMobile && !prefersReducedMotion).x,
+  );
+  const sidebarDim = useTransform(swipeBack.x, (panelX) =>
+    getChatUnderlayFrame(panelX, window.innerWidth, isMobile && !prefersReducedMotion).dim,
+  );
 
   // The chat panel's mobile slide: open → spring in; close → glide off.
   // The CSS transition was removed (per-frame transform transitions would lag
@@ -268,7 +300,11 @@ export const MessengerView = () => {
         animate(swipeBack.x, 0, SPRING.sheet);
       }
     } else {
-      animate(swipeBack.x, window.innerWidth, { duration: 0.22, ease: [0.32, 0.72, 0, 1] });
+      // The direct close path normally reaches here already at its endpoint;
+      // this is a fallback for external selection changes.
+      if (swipeBack.x.get() < window.innerWidth - 1) {
+        animate(swipeBack.x, window.innerWidth, SPRING.sheet);
+      }
     }
   }, [showMobileChat, swipeBack.x]);
 
@@ -300,7 +336,15 @@ export const MessengerView = () => {
           className={`messenger-shell ${showMobileChat ? "mobile-chat-open" : ""}`}
           style={!isMobile ? { gridTemplateColumns: `${sidebarWidth}px minmax(0, 1fr)` } : undefined}
         >
-          <aside className={`sidebar-panel ${sidebarOpen ? "is-open" : ""}${sidebarCollapsed ? " is-collapsed" : ""}`}>
+          <motion.aside
+            className={`sidebar-panel ${sidebarOpen ? "is-open" : ""}${sidebarCollapsed ? " is-collapsed" : ""}`}
+            style={{ x: sidebarParallaxX }}
+          >
+            <motion.div
+              className="sidebar-depth-scrim"
+              aria-hidden="true"
+              style={{ opacity: sidebarDim }}
+            />
             <ConversationList
               onStartChat={handleStartChat}
               onSelectConversation={handleSelectConversation}
@@ -323,7 +367,7 @@ export const MessengerView = () => {
               />
               /* eslint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */
             )}
-          </aside>
+          </motion.aside>
 
           <motion.section
             ref={swipeBack.panelRef}
@@ -335,7 +379,7 @@ export const MessengerView = () => {
             style={{ x: swipeBack.x }}
           >
             <ChatView
-              onBack={handleBack}
+              onBack={requestBack}
               composerRef={composerRef}
               typingUsername={typingUsername}
               onTyping={handleTyping}

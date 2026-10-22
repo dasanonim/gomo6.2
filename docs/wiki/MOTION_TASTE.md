@@ -31,14 +31,20 @@ feel like "a web page with CSS transitions", it is wrong.
   transform origin. Backdrop is its own layer.
 - **Tactile reactions.** Action buttons press on a spring; the icon snaps when
   state flips on; counters bump only when the value actually changes.
-- **Stats.** Numbers roll on the over-damped `reveal` spring, staggered 50ms;
-  ActiEye draws its rim once. (Skipped under reduced motion and in tests.)
+- **Stats.** Numbers are printed at their final value — no rolling, no count-up,
+  no arrival of digits. Only the stat blocks themselves enter on the cascade.
+  (Skipped under reduced motion and in tests.)
 - **Glass.** Overlays and the pinned bar use the themed glass, never an opaque
   flash.
 
 ## 2. Explicitly rejected (do not bring back)
 
 - `ease-in-out` / `linear` for spatial movement; duration-based slides.
+- **Count-up / rolling numbers in the stats row.** A counter that ticks 0 → 47
+  reads as "loading", not as motion — the value is data, not an event. It was
+  removed from `ProfileStats`; do not bring back a `CountUp` there. Numbers
+  change instantly (the only animated number left is the like counter's bump,
+  which fires on a real like, not on paint).
 - **Fade-outs on large panels.** The composer panel must leave by motion only.
   (The backdrop may fade; the panel may not.)
 - An **independent fast backdrop fade** that brightens the page while a panel is

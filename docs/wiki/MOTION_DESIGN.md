@@ -1,208 +1,350 @@
-# Motion design (язык движения gomo6)
+# Дизайн-лист языка движения gomo6 (Telegram iOS Motion Design Guide)
 
-**Status:** design sheet + P1/P8 implemented (`feat/animations`).
-Reference: Telegram iOS concept video (75 s, 1080×1080@60) — the "profile" reel.
-Owner taste notes (what was signed off / rejected, with locked parameters):
-[MOTION_TASTE.md](MOTION_TASTE.md). Read it before changing any animation.
-This file is the direction, not a spec of what exists.
+**Статус:** Каноническое руководство по анимациям и физике интерфейса `gomo6`.  
+**Эталонный референс:** Концепт-рилс дизайнеров Telegram iOS (`1080×1080 @ 60fps`, 75.95 с — сценарий «Чаты → Профиль → Фото → Темы и Подарки»).  
+**Связанные документы:**
+- [MOTION_TASTE.md](MOTION_TASTE.md) — утверждённые владельцем параметры, принятые и отвергнутые решения (не менять без прямого запроса).
+- [MESSENGER_CHAT_SCROLL.md](MESSENGER_CHAT_SCROLL.md) — устройство скролла в чатах без виртуализации и без записи `scrollTop` на скролле.
+- Код ядра движения: [`apps/web/src/lib/motion.ts`](../../apps/web/src/lib/motion.ts) и архитектурный тест-страж [`apps/web/src/lib/motion.contract.test.ts`](../../apps/web/src/lib/motion.contract.test.ts).
 
-Purpose: keep motion **one language**, sourced from a real reference instead of
-per-screen improvisation. Anything that animates in this app should be
-traceable to a rule below, or it does not ship.
-
----
-
-## 1. What the reference actually does
-
-Timestamps are from the reel, at 60 fps.
-
-| # | Transition | Frames | What moves |
-|---|-----------|--------|------------|
-| 1 | Chat list → chat | `0.9–1.4s` | Classic push: incoming screen slides in from the right over a dimmed, slightly receding list. The list keeps its horizontal position and only dims — no cross-fade. |
-| 2 | Chat → profile | `3.1–3.7s` | **Container transform.** The 28 px avatar in the chat nav bar lifts out and becomes the 64 px avatar of the profile; the profile itself is a *card* that grows from that avatar's rect, not a page push. The chat stays visible underneath, dimmed, and slides back ~15%. |
-| 3 | Profile → chat | `71.0–72.0s` | Exact reverse: the card slides right and shrinks back into the nav-bar avatar, the chat slides in from the left. Nothing cross-fades — the same card is followed all the way. |
-| 4 | Profile → avatar photo | `7.4–8.1s` | The round avatar grows into a **full-screen rounded rectangle** (~0.7 s). Page content fades out under it; the back chevron and `Edit` stay pinned and do not move. Photo pixels scale, they do not fade. |
-| 5 | Photo → profile | `9.6–10.2s` | Reverse, same geometry, into the same circle. |
-| 6 | Theme change | `12.0–12.6s` | A colour **flood from the avatar downward**: the background washes in from the top edge, text and controls re-tint behind it, the avatar ring picks up the accent. Not a cross-fade of two screenshots. |
-| 7 | Gift bubbles | `13–70s` (idle loop) | Translucent, softly glowing orbs with stickers around/over the avatar. Idle animation is *slow* (a 6–8 s drift + shimmer), and the big centre orb settles in with a small overshoot, then keeps breathing. |
-| 8 | Gesture continuity | throughout | Everything can be grabbed mid-flight. Drag back during the profile open and the same card follows the finger, then settles on release with the finger's velocity. No restart, no jump. |
-
-### Why it reads as "божественно" — the seven rules
-
-1. **Continuity.** Nothing appears from nothing. Every surface is the *same
-   object* you touched, at a different scale: avatar → card → photo. The eye
-   never has to re-find the thing it was looking at.
-2. **Depth, not replacement.** The outgoing screen does not disappear, it
-   *recedes* (dim + slight scale-down) under the incoming one. On the web the
-   cheapest honest version of this is View Transitions with a `::view-transition-old`
-   that scales to 0.96 and dims while the new one rises.
-3. **Physics.** Overshoot is small but velocity is inherited. Duration-only
-   curves cannot do rule 8 (interrupts) — that is why everything here is a
-   spring.
-4. **The moving object is the only bright one.** Everything else loses contrast
-   while the transition runs. This is what makes the motion readable on a busy
-   profile.
-5. **Animated corners and shadow.** A card that grows gets a mask radius that
-   animates with it and a shadow that deepens as it lifts. Without that it looks
-   like a resize, not an object.
-6. **Stagger with a price.** Children arrive 20–40 ms apart, and only the touched
-   element moves fast; the rest follows. Nothing animates "everything at once".
-7. **Restraint.** 90 % of frames are static. Motion is spent on meaning
-   (open / close / send / confirm / arrive), never on decoration. A profile that
-   animates constantly is a toy — the reel is impressive *because* it is calm
-   between the three big moves.
+Цель этого документа — сделать так, чтобы **любой разработчик**, прочитавший его, понимал, *почему* анимации Telegram iOS ощущаются живыми, осязаемыми и «божественно плавными», и умел воспроизводить это качество в `gomo6` с помощью уже готовых примитивов проекта.
 
 ---
 
-## 2. What we already have
+## 1. Семь фундаментальных законов движения Telegram iOS
 
-| Primitive | Where | State |
-|---|---|---|
-| Spring presets `snappy / standard / soft / sheet / pop` + reduced-motion collapse | `apps/web/src/lib/motion.ts` | done |
-| View Transitions runner (`runTransition`, `startViewTransition`, single-flight queue, direction flag) | `apps/web/src/lib/viewTransitions.ts` | done — used only for route swaps |
-| Shared-element names | `sectionTransitionName()` | done — used for один раздел title |
-| CSS keyframes `gomo-vt-*` / `gomo-view-*` | `apps/web/src/index.css` | done |
-| Tab pill with `layoutId` spring | `pages/profile/ProfileTabs.tsx` | done |
-| Directed tab-body entrance | `pages/profile/ProfileTabs.tsx` | done (this branch) |
-| Spring forum panel + container | `pages/Profile.tsx` | done (this branch) |
-| `MotionConfig` / app-level defaults | — | **missing**: no global reduced-motion wiring, every component repeats it |
+Когда интерфейс кажется «веб-страницей с CSS-переходами», нарушен один из семи законов ниже. В `gomo6` любое движение обязано подчиняться им:
 
-## 3. Gap on the profile page
+### 1. Непрерывность объекта (Object Continuity / Container Transform)
+Ничто не возникает из пустоты и не исчезает в никуда. Каждая поверхность — это **тот же самый объект**, к которому вы только что прикоснулись, но в другом масштабе:
+- 28 px аватар в шапке чата $\rightarrow$ 80 px аватар в карточке профиля $\rightarrow$ полноширинная фотография.
+- Кнопка действия или троеточие $\rightarrow$ выпадающее меню, растущее ровно из точки вызова (`originX`, `originY`).
+Глаз пользователя никогда не должен заново искать на экране объект, по которому он только что кликнул.
 
-- The profile has **no shared element with its origin**. Opening `/profile/:id`
-  from the messenger, the feed or a wall post is a plain route swap
-  (`fade`/`rise`/`slide` depending on the viewer's setting). The avatar you
-  clicked has nothing to do with the avatar that appears.
-- **Avatar gallery** (`AvatarGalleryDialog`) opens as a modal box; the avatar
-  does not grow into it. This is rule 1 violated on the one screen where it is
-  most obvious.
-- **Edit mode** swaps `ProfileHeader` for `ProfileEditPanel` by unmounting —
-  a hard cut in the middle of the page the user is looking at.
-- **Stats** (`ProfileStats`) appear with their final numbers; no arrival.
-- **One background variant fits all**: `card` / `banner` / `page` / `page_dim`
-  have no motion at all, so the profile's most personal surface is static.
-- The **wall** (`ProfileWall`) mounts as one block: posts do not arrive, they
-  are just suddenly there.
-- `prefers-reduced-motion` is honoured per component by hand; a component that
-  forgets is a bug we cannot test for.
+### 2. Пространственная глубина вместо замены (Depth, not Replacement)
+Уходящий экран не исчезает и не растворяется через `opacity` (cross-fade). Он **отступает вглубь** под входящий экран: слегка темнеет и сдвигается на ~15% (или сжимается до `scale: 0.96`), оставаясь видимым фоном, пока новая поверхность въезжает или вырастает поверх него.
 
----
+### 3. Истинная физика пружин и сохранение импульса (Spring Physics & Velocity Inheritance)
+Анимации по времени (`duration` + `cubic-bezier`) мертвы для пространственного движения, потому что у кривой времени нет производной скорости ($\dot{x}$) в состоянии покоя и при перехвате.
+В Telegram и в `gomo6` любое перемещение в пространстве — это **пружина (`stiffness`, `damping`, `mass`)**:
+- Пружина хранит текущую скорость объекта.
+- Если пользователь перехватывает анимацию на полпути или отпускает шторку рывком, скорость пальца (`velocity`) передаётся прямо в пружину: движение продолжается из текущей точки без рывка, паузы или перезапуска.
 
-## 4. Proposals — pick from this list
+### 4. Изоляция контраста (The Moving Object is the Only Bright One)
+Пока идёт переход, **движущийся объект — единственный яркий и резкий на экране**. Всё остальное временно теряет контраст: фон уходит под полупрозрачный диммер, уходящие панели сбрасывают прозрачность до `0.4`, а всплывающие поверхности входят из короткого расфокуса (`blur(6px) → blur(0px)`). Именно это делает быстрые переходы читаемыми на насыщенных экранах.
 
-Sizes: **S** ≤ half a day, **M** 1–2 days, **L** ≥ 3 days.
+### 5. Живая геометрия углов и высоты (Animated Corners & Elevation)
+Когда круглая аватарка или компактная плашка раскрывается в карточку или полноэкранное фото, вместе с размером обязательно анимируется радиус скругления (`border-radius`) и глубина тени. Без синхронного раскрытия углов морф выглядит как грубое масштабирование картинки, а не как превращение физического объекта.
 
-### P1. Avatar → gallery, shared-element morph (S/M)
-`AvatarGalleryDialog` stops fading in: the avatar's rect is captured, the dialog
-runs a `startViewTransition` with `view-transition-name: profile-avatar` moving
-from the header avatar to the gallery image; the backdrop dims, the header does
-not move. Closing reverses into the exact same circle. **Rule 1+4.** Cheapest
-real "Telegram" moment on the page.
+### 6. Раздельная хореография свойств (Property Decomposition)
+В одном переходе разные CSS-свойства **никогда не едут по одной и той же кривой**:
+- **Геометрия (`x`, `y`, `scale`)** — едет на основной пружине (`SPRING.flight`, `SPRING.standard`, `SPRING.composer`).
+- **Форма (`border-radius`, `clip-path`)** — едет на быстрой критически демпфированной пружине без малейшего отскока (`SPRING.shape`), потому что «перелёт» радиуса выглядит как графический баг маски.
+- **Свет и оптика (`opacity`, `filter: blur`)** — у света нет массы и инерции, поэтому они идут коротким экспоненциальным твином (`EASE_OUT_EXPO = [0.16, 1, 0.3, 1]` за `140–220 мс`).
 
-**Done — as a flying element, not a View Transition** (`components/profile/AvatarMorph.tsx`
-+ `toViewportRect` in `utils/domRect.ts`, wired in `pages/Profile.tsx`; `Lightbox`
-takes an opt-in `hideActiveMedia`). Measured in the browser:
-- **radius** `50% → 0` in ~170 ms (crisp ease-out, front-loaded: 3 % by 130 ms);
-- **size** 80 px → 512 px on the `soft` spring, ~490 ms.
-
-So the shape settles long before the window finishes opening — by the time the
-photo is shown the image has been square for ~250 ms, and the last thing the eye
-registers is the box expanding, not a shape changing. Closing is symmetric
-(50 % by 170 ms, avatar at ~300 ms). The same element is on screen the whole way,
-so there is no dissolve and nothing to hand over at the end except the real photo
-in the identical box.
-
-Notes:
-- the tap opens the **story viewer** when the profile has live stories, so the
-  gallery (and this morph) is reachable only on profiles without stories;
-- the photo is `decode()`d before the gallery mounts — an `<img>` without an
-  intrinsic size has no box, and the morph would have nothing to land on;
-- geometry is scale-based (the element is laid out at its end size, the start is
-  a translate + scale) — animating `width`/`height` would reflow every frame.
-
-**Dead end, do not repeat:** doing this with View Transitions
-(`view-transition-name` on the avatar + animated `border-radius`/`overflow: clip`
-on the group) cross-fades acceptably but cannot MASK-morph: with the group clipped,
-Chrome paints the whole incoming page clipped to a wrong box — the dark viewer
-shows up as a smaller rectangle with the profile visible around and below it.
-Tried: disabling the root cross-fade, disabling the lightbox `backdrop-filter`,
-freezing the animation at 6 s — the clipped incoming snapshot persists, so it is
-the snapshot, not our CSS. **View Transitions can only cross-fade two snapshots
-for this pair.**
-
-### P2. Profile opens from its origin (M/L)
-`/profile/:id` opened from a wall post / message / feed card morphs that card's
-avatar into the profile header instead of a route swap. Needs an origin handoff
-(`view-transition-name` injected on the source avatar + matching name on the
-target), plus a fallback for direct URL entry. **Rule 1+2+3.** This is the video's
-hero transition (frames 2/3) and the hardest piece; it also touches routing, so
-it wants its own branch.
-
-### P3. Edit mode as a layout morph (M)
-Entering edit no longer unmounts the header: the identity block stays mounted and
-the fields *become* inputs (`layout` animation on the container, height/opacity
-spring); leaving collapses back. Stats and tabs slide out instead of blinking.
-**Rule 1+6.**
-
-### P4. Stats arrival + counters (S)
-Counters roll from 0 to value on first paint (spring, ~700 ms, `tabular-nums` so
-nothing jitters), each stat 40 ms after the previous. Garma ring draws itself.
-**Rule 6.**
-
-### P5. Wall posts arrive in a stagger (S/M)
-The first page of `ProfileWall` enters as a short cascade (40 ms apart, 10 px
-rise, `standard` spring) on the *first* load only — not on every re-render, not
-on pagination. **Rule 6.**
-
-### P6. Avatar → full-screen photo (M)
-The reel's frame 4/5: tap the avatar → it grows into a full-width rounded
-rectangle over the page, back/Edit stay pinned; tap/scroll back to shrink into
-the circle. Overlaps with the existing gallery dialog — one of them has to absorb
-the other, so decide the direction before building.
-
-### P7. Profile background that moves (M)
-Owner's background gets a slow, GPU-cheap life: a 12–20 s parallax drift on the
-`page`/`page_dim` variants and a breathing blur on the `card` variant, plus
-fade-in on load instead of a hard pop. Disabled under `perf-lite` and reduced
-motion. **Rule 7** (it must stay slow — this is ambience, not an effect).
-
-### P8. Global `MotionConfig` + guard test (S)
-Wrap the app in `MotionConfig reducedMotion="user"` so no component can forget,
-and add a test that fails when a `duration:` transition appears on a transform
-property in `pages/` or `components/`. **Enabler for everything above**, and it
-is what stops the language from rotting.
-
-**Done.** `MotionConfig reducedMotion="user"` at the app root; the guard
-(`lib/motion.contract.test.ts`) forbids inline `stiffness`/`damping` and raw
-`type: "spring"` outside `lib/motion.ts`; the nine pre-existing inline springs
-(ink bar, friend button, panel toggle, swipe-back ×3, tab pill ×2) were migrated
-to presets. The guard checks *provenance*, not duration: a `duration` on a fade is
-legitimate, so the rule is "physics comes from the presets file".
+### 7. Сдержанность и каскад с ценой (Restraint & Priced Stagger)
+- **90% кадров статичны.** Анимация тратится только на смысл (открытие, закрытие, возврат, подтверждение действия, появление новых данных), никогда — на пустое украшательство.
+- **Ничто не движется «всё разом».** Дочерние блоки входят каскадом с шагом `25–50 мс` (`STAGGER`), причём быстрее всего реагирует элемент, к которому прикоснулись, а остальные догоняют.
 
 ---
 
-## 5. Non-goals (deliberately not doing)
+## 2. Покадровый разбор эталонного видео Telegram iOS (`60 fps`)
 
-- **No confetti / gift rain on profiles.** The reel's bubbles are Telegram's
-  paid-gift product, not motion design; porting them means inventing a feature
-  we do not have. We have gifts and drops — if we ever animate them, it is one
-  orb that arrives with the gift event, not a permanent ornament.
-- **No scroll-linked parallax in the wall or the messenger.** The messenger
-  scroll is a hand-tuned system (`MESSENGER_CHAT_SCROLL.md`); scroll-linked
-  transforms there are how you reintroduce the iOS stutter.
-- **No blur/backdrop-filter animation** — it is the most expensive thing a
-  browser can animate and it drops frames on mobile. Blur may be *set*, never
-  *tweened*.
-- **No `width`/`height`/`top` animation** in lists; geometry on `transform` only.
-- **No duration-based easing for transforms.** Opacity may keep a tween; every
-  position/scale/rotation is a spring.
+Ниже — точная карта того, что происходит в референсном ролике дизайнеров Telegram, и какие технические приёмы создают этот эффект.
 
-## 6. How we verify a transition
+| Сцена | Таймкод | Переход | Хореография по кадрам (что именно движется) |
+|---|---|---|---|
+| **1. Push в чат** | `00:00.9 – 00:01.4` | Список чатов $\rightarrow$ Чат | Классический iOS push: экран чата въезжает справа (`x: 100% → 0`). Список чатов под ним **не кросс-фейдится**: он сдвигается влево на ~18% (параллакс глубины) и накрывается тёмной вуалью. |
+| **2. Морф в профиль** | `00:03.1 – 00:03.7` | Шапка чата $\rightarrow$ Профиль | **Container Transform.** Пользователь нажимает на 28 px аватар в правом верхнем углу чата. Профиль *не* въезжает справа как отдельная страница — сама карточка профиля **вырастает из прямоугольника этого аватара** (`origin: top-right`). Аватар внутри карточки летит по диагонали из угла шапки в центр профиля (28 px $\rightarrow$ 80 px), пока белая карточка раскрывает свои скруглённые углы до границ экрана, а зелёный чат под ней темнеет и отступает влево на ~15%. |
+| **3. Перехват жестом на лету** | `00:04.0 – 00:06.6` | Профиль $\leftrightarrow$ Чат (Peek & Cancel) | Ещё до того, как глаз привык к профилю, палец тянет экран вправо. Карточка профиля 1:1 за пальцем **сжимается обратно в кружок аватара** в шапке чата, одновременно скругляя углы, а чат под ней выезжает обратно и светлеет. При повторном нажатии морф мгновенно разворачивается обратно без перезапуска анимации. |
+| **4. Раскрытие аватара в фото-хедер** | `00:07.2 – 00:08.1` | Круглый аватар $\rightarrow$ Полноширинное фото | Круглый 80 px аватар в центре шапки профиля раскрывается в **крупный прямоугольный портрет на всю ширину экрана** (~0.65 с):<br>• Сами пиксели фото масштабируются, а не растворяются.<br>• Кнопки `<` (Назад) и `Edit` остаются прибитыми к верхним углам и лишь меняют подложку на полупрозрачное стекло поверх фото.<br>• Имя «Alicia Brown», статус «last seen just now» и строка музыки **едут вниз вместе с нижней кромкой фото** и ложатся поверх мягкого градиента в нижней части портрета.<br>• Четыре кнопки действий (`call / mute / search / more`) упруго сдвигаются вниз под фотографию. |
+| **5. Свайп-возврат прямо из раскрытого фото** | `00:08.6 – 00:11.5` | Раскрытое фото $\rightarrow$ Peek в чат $\rightarrow$ Сворачивание в круг | Даже с раскрытым на пол-экрана фото свайп вправо сжимает **всю карточку профиля целиком (вместе с большим портретом)** обратно к кружку аватара в чате (`00:08.6–00:09.6`), затем возвращает её, а на `00:10.8–00:11.4` большой портрет сворачивается обратно в 80 px кружок по центру шапки, поднимая за собой имя и кнопки действий. |
+| **6. Цветовая волна темы** | `00:12.0 – 00:13.5` | Светлый профиль $\rightarrow$ Акцентная тема | Цвет **разливается волной сверху вниз от аватара**: сначала мягкий лавандовый градиент, затем насыщенный фиолетовый. Текст перекрашивается в белый, кнопки действий становятся полупрозрачными стеклянными капсулами в тон фона, вокруг аватара загорается градиентное кольцо и проявляется полупрозрачный паттерн иконок. Никакого кросс-фейда двух скриншотов. |
+| **7. Парящие подарки и физика перетягивания** | `00:14.0 – 00:70.0` | Орбитальные стикеры / Drag & Drop / Смена палитры | Вокруг аватара парят полупрозрачные светящиеся орбы с подарками:<br>• **Idle-цикл:** очень медленный дрейф по эллиптическим орбитам (период 6–8 с) с лёгким покачиванием и дыханием свечения.<br>• **Прямая манипуляция:** пользователь хватает подарок пальцем (из шторки снизу или с орбиты), подарок увеличивается под пальцем (`scale ~1.2`), а при отпускании в центре **влетает на пружине с небольшим перелётом (overshoot)**, вытесняя прежний подарок на боковую орбиту.<br>• **Реакция среды:** каждый новый центральный подарок (лягушка $\rightarrow$ розовый камень $\rightarrow$ кубок $\rightarrow$ шлем $\rightarrow$ цветок $\rightarrow$ сердце) запускает радиальную волну перекраски всего профиля (фиолетовый $\rightarrow$ изумрудный $\rightarrow$ золотой $\rightarrow$ тёмный графит $\rightarrow$ рубиновый $\rightarrow$ синий). |
+| **8. Обратный каскад закрытия** | `00:71.0 – 00:73.5` | Профиль $\rightarrow$ Чат $\rightarrow$ Список чатов | Точная инверсия сцен 2 и 1: карточка профиля улетает вправо-вверх и схлопывается в 28 px аватар шапки чата, а следом сам чат свайпом уходит вправо, возвращая список чатов. |
 
-- 60 fps with DevTools Performance while the transition runs (no long tasks,
-  no layout thrash).
-- Grabbable: start the gesture, reverse mid-flight — it must follow, not restart.
-- `prefers-reduced-motion: reduce` → instant, same end state, nothing lost.
-- `perf-lite` tier → no View Transition, no ambient loops.
-- Keyboard/screen-reader unaffected: focus lands on the same element before and
-  after.
+---
+
+## 3. Физический словарь gomo6 (`apps/web/src/lib/motion.ts`)
+
+В `gomo6` **запрещено** писать сырые числа пружин (`stiffness`, `damping`, `type: "spring"`) внутри компонентов и страниц — за этим следит автоматический контрактный тест [`apps/web/src/lib/motion.contract.test.ts`](../../apps/web/src/lib/motion.contract.test.ts).
+
+Вся физика живёт в [`apps/web/src/lib/motion.ts`](../../apps/web/src/lib/motion.ts) и именуется **по смыслу (intent)**, чтобы одинаковые по роли элементы во всём приложении двигались идентично.
+
+### Математическая шпаргалка по пружинам
+
+Поведение гармонического осциллятора определяется тремя параметрами: жёсткостью $k$ (`stiffness`), затуханием $c$ (`damping`) и массой $m$ (`mass`). Характер движения зависит от **коэффициента демпфирования** $\zeta$:
+
+$$\zeta = \frac{c}{2\sqrt{k \cdot m}}$$
+
+- $\zeta < 1$ (**недодемпфированная / under-damped**) — пружина пролетает целевую точку (overshoot) и упруго возвращается. Чем меньше $\zeta$, тем сильнее отскок.
+- $\zeta \approx 1$ (**критически демпфированная / critically damped**) — максимально быстрый приход в цель **без единого пикселя перелёта**.
+- $\zeta > 1$ (**передемпфированная / over-damped**) — плавное, вязкое дотекание в цель без отскока.
+
+### Каталог пресетов `SPRING`
+
+| Пресет в `SPRING` | `stiffness` ($k$) | `damping` ($c$) | `mass` ($m$) | $\zeta$ | Поведение и где применять |
+|---|---:|---:|---:|---:|---|
+| **`snappy`** (`SPRING_SNAPPY`) | `500` | `32` | `0.8` | `0.80` | **Мгновенный тактильный отклик.** Нажатия кнопок (`pressFeedback`, `scale: 0.96`), ховеры (`hoverLift`), переключатели, индикатор активной вкладки, скользящее пятно `InkBar`, поворот шевронов. |
+| **`standard`** (`SPRING_SMOOTH`) | `380` | `30` | `1.0` | `0.77` | **Базовая рабочая пружина.** Вход/выход карточек, модальных окон, поповеров, дропдаунов (`OverlayMotion`, `morphTransition`), переключение тела вкладок. |
+| **`soft`** | `260` | `30` | `1.0` | `0.93` | **Крупные архитектурные поверхности.** Перестроение макета страницы (раскрытие двухколоночного форумного режима профиля `672px → 1024px`, боковая колонка). Движется мягко и солидно, почти без отскока. |
+| **`sheet`** | `300` | `32` | `0.9` | `0.98` | **Экраны-оверлеи от края.** Выезд полноэкранного поста стены (`WallPost`), возврат чата при отмене свайпа назад (`useSwipeBackToClose`). |
+| **`pop` / `bouncy`** (`SPRING_BOUNCY`) | `600` | `20` | `0.7` | `0.49` | **Только микро-акценты!** Сердечко лайка, счётчик при инкременте, смена иконки подписки/дружбы (`FriendButton`), бейджи. Сильный упругий отскок (~17%). **Никогда не применять к крупным панелям.** |
+| **`eject`** | `500` | `28` | `1.0` | `0.63` | **Срыв с защёлки (Latch release).** Выстреливание сжатых при скролле блоков шапки профиля (`RecedeOnScroll`) и выпрыгивание прилипающего таб-бара (`ProfileTabs`). Даёт ~8% перелёта от хода, что на диапазоне масштаба `0.24` составляет ровно **1–1.5% pop** — ощущается физически, но не выглядит дешёвым баунсом. |
+| **`composer`** | `400` | `20` | `0.7` | `0.60` | **Открытие и возврат шторки композера (`RichComposer`).** Характер `pop`, ослабленный в ~1.5 раза для полноэкранной мобильной шторки: живой верхний упругий финиш при открытии и возврате после оттягивания. |
+| **`composerClose`** | `320` | `26` | `0.9` | `0.76` | **Уход шторки композера вниз.** Чуть мягче и спокойнее `composer`, чтобы глаз успевал проводить уходящую панель, а не терял её за один кадр. |
+| **`reveal`** | `500` | `44` | `0.8` | `1.10` | **Измеренные размеры контейнера (`width: "auto"`, `height: "auto"`)** — подпись активной вкладки, строка альбомов, раскрытие блока по контенту. Намеренно передемпфирована ($\zeta > 1$, **0% overshoot**): перелёт на ширине текста заставляет последнюю букву дёргаться вперёд-назад. |
+| **`shape`** | `855` | `50` | `0.8` | `0.96` | **Геометрия формы (`border-radius`, `clip-path`).** Очень быстрая и критически демпфированная: форма обязана сходиться без отскока одновременно с полётом контейнера. |
+| **`flight`** | `530` | `43` | `1.0` | `0.93` | **Полёт общего элемента (Shared-Element Flight).** Перелёт объекта между двумя боксами (`AvatarMorph`: аватар $\leftrightarrow$ полноэкранное фото). Жёстче `soft`, потому что пользователь ждёт завершения перехода, но сохраняет инерцию и прерываемость пружины. |
+
+### Единственная разрешённая кривая времени: `EASE_OUT_EXPO`
+
+```ts
+export const EASE_OUT_EXPO: [number, number, number, number] = [0.16, 1, 0.3, 1];
+```
+
+Используется **только** для не-пространственных свойств, у которых нет физической массы:
+- `opacity` (`140–220 мс`)
+- `filter: blur(...)` (`160–180 мс`)
+- цвет / тонировка диммера
+
+---
+
+## 4. Инженерные паттерны и рецепты реализации
+
+Ниже описаны проверенные в бою методики проекта. При создании новых экранов и компонентов берите за основу именно их.
+
+---
+
+### Паттерн 1. Полёт общего элемента (Shared-Element Flight / Container Morph)
+**Эталон в коде:** [`apps/web/src/components/profile/AvatarMorph.tsx`](../../apps/web/src/components/profile/AvatarMorph.tsx), [`apps/web/src/pages/Profile.tsx`](../../apps/web/src/pages/Profile.tsx) (`openAvatarGallery` / `closeAvatarGallery`).
+
+Реализует сцены 2–5 из видео Telegram: превращение круглого аватара в полноэкранное фото и обратно.
+
+#### Почему НЕ браузерный View Transitions API для морфа формы:
+> **Задокументированный тупик (не повторять):** браузерный `document.startViewTransition` умеет только кросс-фейдить два растровых снимка (`::view-transition-old` и `::view-transition-new`). Если попытаться анимировать `border-radius` и `overflow: clip` на группе переходов, Chrome обрезает весь входящий снимок страницы по неверному боксу — тёмный вьюер рисуется маленьким прямоугольником, а вокруг него торчит профиль. Поэтому для морфа `круг ↔ прямоугольник` мы используем **реальный летящий DOM-элемент** (`AvatarMorph`).
+
+#### Алгоритм идеального полёта (`FLIP` на пружинах):
+1. **Декодирование до старта (`img.decode()`):** перед монтированием целевого окна обязательно дождитесь `preload.decode()`. У картинки без известного intrinsic-размера нет финального прямоугольника (`getBoundingClientRect` вернёт 0), и морфу некуда будет приземлиться.
+2. **Портал в `document.body` поверх всех контекстов наложения (`z-index: 200`):** тег `<main>` имеет `isolate`, поэтому клон внутри страницы окажется *под* порталом лайтбокса (`z-index: 150`). Летящий элемент всегда рендерится через `createPortal(..., document.body)`.
+3. **Вёрстка в конечном размере + трансформация (`scale` вместо `width/height`):**
+   Анимация `width` и `height` вызывает пересчёт макета (reflow) на каждом кадре. Вместо этого элемент сразу верстается в большом прямоугольнике `base`, а его начальное (свёрнутое) состояние задаётся через `x`, `y`, `scaleX`, `scaleY`:
+   ```ts
+   const base = opening ? target : from;
+   const small = opening ? from : target;
+
+   const collapsed = {
+     x: small.x + small.width / 2 - (base.x + base.width / 2),
+     y: small.y + small.height / 2 - (base.y + base.height / 2),
+     scaleX: small.width / base.width,
+     scaleY: small.height / base.height,
+     borderRadius: "50%",
+   };
+   const expanded = { x: 0, y: 0, scaleX: 1, scaleY: 1, borderRadius: "0%" };
+   ```
+4. **Раздельная хореография углов при открытии и закрытии:**
+   - При **открытии** `borderRadius` стартует сразу (`delay: 0`) на `SPRING.shape` — кружок быстро превращается в квадратное окно и долетает уже как фотография.
+   - При **закрытии** `borderRadius` получает задержку `delay: 0.14s` — фотография летит к аватарке прямоугольной и скругляется в `50%` только в финальной фазе посадки в кружок.
+5. **Бесшовная передача эстафеты (`onLanded` → `onDone`):**
+   - Во время полёта целевое фото в лайтбоксе скрыто (`hideActiveMedia`), а поверх аватара скрыты мелкие бейджи (`avatarMorphing`), чтобы они не висели поверх летящего снимка.
+   - В момент `onAnimationComplete` вызывается `onLanded()`: реальное фото лайтбокса мгновенно включается **ровно под клоном** (в том же боксе и того же размера), после чего сам клон плавно растворяется за `FADE_MS = 140 мс`. Благодаря этому даже субпиксельная разница рендеринга никогда не даёт заметного скачка («попа»).
+   - При закрытии растворение не нужно: вьюер уже погас, и клон просто размонтируется в точке посадки на аватар.
+
+---
+
+### Паттерн 2. Многомерное появление и раскрытие поверхностей (Dimensional Morph)
+**Эталон в коде:** `morphVariants`, `morphTransition`, `morphOrigin` в [`apps/web/src/lib/motion.ts`](../../apps/web/src/lib/motion.ts) и [`apps/web/src/components/ui/overlay-motion.tsx`](../../apps/web/src/components/ui/overlay-motion.tsx).
+
+В `gomo6` ни одно меню, поповер, диалог, карточка или строка не должны появляться «голым фейдом» (`opacity: 0 → 1`). Любая поверхность разворачивается как физический объект из точки, которая её породила:
+
+```tsx
+// Компактные поверхности (меню, карточки, поповеры, статы):
+// scale: 0.88 -> 1 (SPRING_SMOOTH)
+// opacity: 0 -> 1 (0.16s, EASE_OUT_EXPO)
+// filter: blur(6px) -> blur(0px) (0.18s, EASE_OUT_EXPO)
+const ITEM = morphVariants(0.88, 6);
+
+<motion.div
+  variants={ITEM}
+  transition={morphTransition(reduceMotion)}
+  style={morphOrigin({ x: 0, y: 0 })} // точка привязки к триггеру
+/>
+```
+
+#### Правила использования Dimensional Morph:
+1. **Логический `origin`:**
+   - Для Radix-оверлеев (`Dialog`, `DropdownMenu`, `Popover`, `ContextMenu`) используйте `<OverlayMotion>` через `asChild` — он автоматически берёт точку привязки из CSS-переменной `--radix-*-content-transform-origin`.
+   - Для элементов в потоке задавайте `morphOrigin({ x, y })`: аватар слева — `{ x: 0 }`, правый виджет `ActiEye` — `{ x: 1 }`, выпадающая строка альбомов под таб-баром — `{ y: 0 }`.
+2. **Табу на `blur` для больших контейнеров:**
+   Если анимируется полноэкранная обёртка или большой список, передавайте `morphVariants(0.97, 0)` (`blurPx = 0`). Оставленный на крупном контейнере `filter` создаёт новый composited layer для всего поддерева и роняет FPS при скролле.
+3. **Защита первого рендера от каскадного подавления (`didPaintRef`):**
+   Не ставьте `AnimatePresence initial={false}` высоко над деревом страницы — через `PresenceContext` он тихо отключит входные анимации у всех вложенных дочерних компонентов. Вместо этого отслеживайте первый маунт локальным `useRef(false)` там, где анимация нужна только при переключении (как в `ProfileTabs.tsx`).
+
+---
+
+### Паттерн 3. Жестовая шторка с упругим сопротивлением и закрытием по импульсу (Velocity-Driven Sheet)
+**Эталон в коде:** [`apps/web/src/components/composer/RichComposer.tsx`](../../apps/web/src/components/composer/RichComposer.tsx).
+
+Мобильная шторка создания записи (`RichComposer`) настроена в точности по канонам Telegram iOS:
+
+1. **Единый `MotionValue` (`sheetY`) на весь жизненный цикл:**
+   Открытие, перетаскивание пальцем и закрытие двигают **одну и ту же величину `sheetY`**. Благодаря этому скорость пальца при броске бесшовно переходит в закрывающую пружину.
+2. **Упругое натяжение (`dragElastic`):**
+   - Драг заводится только от шапки шторки (`dragListener={false}`, `dragControls.start(event)`), чтобы не мешать скроллу текста внутри редактора.
+   - `dragConstraints={{ top: 0, bottom: 0 }}` + `dragElastic={{ top: 0.22, bottom: 0.7 }}`: вверх шторка тянется туго (коэффициент `0.22`), вниз — податливо, но с ощутимым натяжением пружины.
+3. **Подложка под верхний перелёт (Overshoot Pad):**
+   Когда при открытии или возврате пружина `SPRING.composer` пролетает верхнюю точку (`y < 0`), нижний край шторки отрывается от низа экрана. Чтобы в эту щель не просвечивала страница, позади нижней части шторки лежит неподвижная плашка в цвет фона (`h-56 bg-background md:hidden`), которая убирается в момент начала закрытия.
+4. **Закрытие ТОЛЬКО по скорости броска (`velocity.y > 650`), никогда по дистанции:**
+   Пользователь может оттянуть шторку хоть до середины экрана, подумать, остановиться и отпустить — и она **всегда** упруго вернётся наверх. Закрывает шторку только решительный смах вниз (`info.velocity.y > 650`) или нажатие `×` / `Escape` (которые передают искусственный импульс `DISMISS_VELOCITY = 1000`, чтобы закрытие кнопкой ощущалось как тот же физический бросок).
+5. **Никакого fade-out на самой панели:**
+   Сама шторка уходит **только движением** (`opacity` всегда `1`). Затемнение фона (`bg-black/45`) лежит в отдельном соседнем слое и гаснет параллельно (`duration: 0.22s, ease: EASE_OUT_EXPO`).
+
+---
+
+### Паттерн 4. Свайп-возврат экранов с конусом захвата (Interactive Peek & Swipe-Back)
+**Эталон в коде:** [`apps/web/src/hooks/useSwipeBackToClose.ts`](../../apps/web/src/hooks/useSwipeBackToClose.ts) (мобильный чат $\rightarrow$ список бесед) и [`apps/web/src/pages/WallPost.tsx`](../../apps/web/src/pages/WallPost.tsx) (оверлей записи стены $\rightarrow$ профиль/лента).
+
+Реализует сцены 1, 3, 5 и 8 из видео Telegram — возможность в любой момент «подглядеть» предыдущий экран и отпустить обратно или смахнуть совсем:
+
+1. **Фоновый маршрут остаётся смонтированным (`backgroundLocation`):**
+   При открытии записи со стены или профиля предыдущий экран не размонтируется — оверлей рендерится поверх него. Когда пользователь тянет верхний экран вправо, под ним в реальном времени виден живой предыдущий экран, ровно на том же месте скролла.
+2. **Мёртвая зона (`16px`) и конус `±40°`:**
+   - Первые `SWIPE_BACK_ARM_PX = 16px` движения игнорируются, чтобы вертикальный скролл ленты или чата никогда не срывал панель с места.
+   - Как только смещение превысило `16px`, проверяется угол: если движение направлено вправо и укладывается в конус `±40°` от горизонтали (`Math.abs(dy) <= dx * Math.tan(40°)`), жест захватывается (`e.preventDefault()`), а сдвиг считается как `dx - 16`, чтобы панель не прыгнула на величину мёртвой зоны.
+   - Свайпы влево свободно проходят к свайпу ответа на сообщение (swipe-to-reply).
+3. **Двойной критерий завершения (дистанция ИЛИ флик):**
+   При отпускании пальца экран закрывается, если пройдено `> 32%` ширины вьюпорта (`SWIPE_BACK_EXIT_FRACTION = 0.32`) **или** скорость пальца превысила `0.55 px/ms` (`SWIPE_BACK_EXIT_SPEED`). Иначе экран упруго возвращается в `0` на пружине `SPRING.sheet`.
+
+---
+
+### Паттерн 5. Скролл-втягивание с защёлкой и упругим отстрелом (Scroll Suction, Latch & Eject)
+**Эталон в коде:** [`apps/web/src/components/profile/RecedeOnScroll.tsx`](../../apps/web/src/components/profile/RecedeOnScroll.tsx) и [`apps/web/src/lib/scrollResistance.ts`](../../apps/web/src/lib/scrollResistance.ts).
+
+Вместо того чтобы шапка профиля, статистика, био и закреплённые треды просто уезжали вверх как плоский лист бумаги, каждый блок по очереди «втягивается» под верхнюю кромку:
+
+1. **Двухслойная обёртка без обратной связи (Zero-Feedback Measurement):**
+   Внешний `<div ref={outerRef}>` остаётся в обычном потоке документа и никогда не получает `transform`. Внутренний `<motion.div>` получает `scale`, `y` и `opacity` с `transformOrigin: "50% 0%"`. Благодаря этому `outerRef.getBoundingClientRect()` всегда возвращает честную геометрию блока без влияния текущего сжатия.
+2. **Втягивание по кривой `smoothstep` при скролле вниз:**
+   Прогресс $p \in [0, 1]$ пропускается через $s(p) = p^2(3 - 2p)$: блок почти не меняется в начале, а у самой кромки ускоренно сжимается (`scale → 0.76`, `y → -44px`, `opacity → 0.4`).
+3. **Защёлка (Latch) и сопротивление при скролле вверх:**
+   Обратный ход — **не** та же кривая в реверсе! Как только блок втянулся (`0.03 < raw < 0.8`), при смене направления скролла вверх он **защёлкивается (`locked`)** и остаётся сжатым. Чтобы освободить его, нужно «вытянуть» защёлку:
+   ```ts
+   // Медленное вытягивание требует 130px хода; резкий флик срывает защёлку уже за 30px
+   export const releasePullPx = (speedPxPerMs: number, basePx = 130, floorPx = 30): number => {
+     const ease = 1 - Math.min(0.8, Math.max(0, speedPxPerMs) / 3);
+     return Math.max(floorPx, basePx * ease);
+   };
+   ```
+   В момент срыва защёлки блок не «доезжает до позиции скролла», а **выстреливает в полностью раскрытое состояние (`progress → 0`)** на пружине `SPRING.eject` с лёгким 1–1.5% перелётом. Любое движение вниз мгновенно отменяет выстрел и возвращает прямой контроль пальцу.
+
+---
+
+### Паттерн 6. Отложенное прилипание (Delayed Sticky Pin) и скраббинг вкладок
+**Эталон в коде:** [`apps/web/src/pages/profile/ProfileTabs.tsx`](../../apps/web/src/pages/profile/ProfileTabs.tsx).
+
+Решает две классические проблемы веб-интерфейсов: скучное плоское прилипание `position: sticky` и дрожание при JS-эмуляции скролла.
+
+1. **Как работает Delayed Pin:**
+   - Таб-бар всегда имеет `position: sticky; top: var(--app-header-pad, 0px)`.
+   - Пока бар только подъезжает к шапке, отрицательное смещение `pinY = Math.max(-h * 0.65, Math.min(0, flowTop - pad))` **отменяет sticky-эффект**, и бар честно уходит под шапку вместе со страницей.
+   - Как только под шапкой скрылось **65% высоты бара** (`flowTop <= pad - h * 0.65`), срабатывает защёлка: `pinY` пружинит из `-0.65 * h` в `0` на `SPRING.eject`, и одновременно включается матовое стекло `.profile-tabbar--stuck`.
+   - **После прилипания JS на скролле не делает ничего:** `pinY` равен `0`, и бар держит нативный CSS `sticky` без единого пересчёта трансформации на кадр.
+   - Чтобы измерение `flowTop` не зависело от собственного `pinY` бара и не вызывало дребезг на границе отпускания (`pad + 8px` гистерезиса), позиция в потоке вычисляется от верхней кромки следующего за баром не-sticky контейнера `tabBodyWrapRef`.
+2. **Непрерывный жест скраббинга по вкладкам (`ScrubIndicator`):**
+   - Пользователь может зажать активную вкладку и повести палец вдоль ряда.
+   - На время жеста штатный `layoutId="profile-tabs-indicator"` скрывается, а вместо него монтируется `ScrubIndicator` на двух пружинах `useSpring(x, SPRING.snappy)` и `useSpring(width, SPRING.snappy)`.
+   - Подпись новой активной вкладки плавно раскрывается от `width: 0` до `width: "auto"` на без-отскоковой пружине `SPRING.reveal`, а полоска индикатора в каждом `requestAnimationFrame` догоняет реальную ширину раскрывающейся кнопки.
+3. **Направленный вход тела вкладки (`travelDirection`):**
+   - Переключение вкладки имеет пространственное направление (`TAB_ORDER` слева направо).
+   - Контент новой вкладки входит из лёгкого смещения `x: direction * SPATIAL_OFFSET.tab` (`±14px`) и `scale: 0.97 → 1` с `originY: 0` — этого достаточно, чтобы мозг считал направление движения, но экран не превращался в карусель.
+
+---
+
+### Паттерн 7. Тактильная микро-физика, счётчики и световой курсор
+**Эталоны в коде:**
+- [`apps/web/src/components/LikeButton.tsx`](../../apps/web/src/components/LikeButton.tsx) — лайк и счётчик.
+- [`apps/web/src/components/FriendButton.tsx`](../../apps/web/src/components/FriendButton.tsx) — спин-морф иконки и пульсирующее кольцо подтверждения.
+- [`apps/web/src/pages/profile/ProfileStats.tsx`](../../apps/web/src/pages/profile/ProfileStats.tsx) — каскад блоков статистики (числа появляются сразу).
+- [`apps/web/src/components/ui/ink-bar.tsx`](../../apps/web/src/components/ui/ink-bar.tsx) — перетекающее световое пятно под тулбаром.
+
+Ключевые правила микро-взаимодействий:
+1. **Отклик на нажатие (`pressFeedback`):** каждая интерактивная кнопка или чип сжимается при `pointerdown` (`whileTap: { scale: 0.96 }`, для крупных аватаров — `0.95`, для квадратных кнопок действий — `active:scale-90`) и отскакивает на `SPRING.snappy`.
+2. **Смена состояния через спин-морф (`FriendButton`):** когда кнопка меняет смысл (`+` $\rightarrow$ `✓` $\rightarrow$ `Друзья`), старая иконка уходит через `{ scale: 0.3, rotate: 90, opacity: 0 }`, а новая входит из `{ scale: 0.3, rotate: -90, opacity: 0 }` на `SPRING.pop`, сопровождаясь одноразовым расширяющимся кольцом `scale: 1 → 1.28, opacity: 0.35 → 0`.
+3. **Счётчики прыгают только при реальном изменении (`mountedRef`):**
+   - При первом рендере карточки число лайков **не должно** подпрыгивать. Прыжок (`scale: 1.35 → 1` на `SPRING.bouncy`) разрешён только после того, как компонент уже смонтирован (`mountedRef.current === true`) и значение реально изменилось.
+   - **Данные не «загружаются» анимацией.** Числа показываются сразу в конечном виде: никакого счётчика от `0` до значения, никакого набора цифр по одной. Прокрутка цифр читается как «ещё грузится», а не как движение, поэтому от `CountUp` в строке статистики профиля отказались. Движется только сам блок (каскадный вход), а не значение внутри него.
+   - Все анимируемые числа обязаны иметь класс `tabular-nums`, чтобы изменение ширины цифр не шатало соседний текст.
+
+
+---
+
+### Паттерн 8. Перспективные приёмы из референса Telegram (для новых фич gomo6)
+
+При реализации следующих этапов развития профилей, подарков и навигации в `gomo6` используйте следующие рецепты, напрямую снятые с видео Telegram iOS:
+
+1. **Профиль, растущий из кликнутого аватара (Origin-to-Profile Container Transform):**
+   - При клике на аватар пользователя в чате, ленте или посте стены сохраняйте его `ViewportRect` (`toViewportRect(el.getBoundingClientRect())`) в `location.state.originAvatarRect` (или лёгком сторе).
+   - На странице `/profile/:id` при наличии `originAvatarRect` запускайте `AvatarMorph` из сохранённых координат источника прямо в `avatarOriginRef` шапки профиля, а карточку шапки раскрывайте через `morphOrigin`, вычисленный относительно точки клика.
+   - При прямом переходе по ссылке (когда `originAvatarRect` нет) используйте стандартный каскад входа.
+2. **Волна смены темы от аватара (Radial Theme Flood):**
+   - Когда профиль применяет кастомные `theme_tokens` владельца (`applyProfileThemeTokens` в `Profile.tsx`) или пользователь переключает тему в студии профиля, не делайте резкую подмену цветов и не кросс-фейдьте плоские скриншоты.
+   - Запускайте круговую маску `clip-path: circle(0px at <avatarCenterX> <avatarCenterY>) → circle(150vmax at <avatarCenterX> <avatarCenterY>)` на `SPRING.soft` (или через `::view-transition-new(root)` с круговым `clip-path` от координат аватара и отключённым дефолтным fade). Тогда новая палитра физически «омоет» экран сверху вниз от аватара, как в сцене 6 (`00:12.0`).
+3. **Орбитальные подарки / витрина вокруг аватара (Floating Gift Orbs):**
+   - Если подарок выносится в шапку профиля, его фоновый цикл (idle) должен быть **медленным и дешёвым для GPU**: только `transform: translate3d(x, y, 0) scale(s)` с периодом `6–8 секунд` (синусоида с разной фазой для каждого орба).
+   - Эллиптическое распределение: ближние к нижним диагоналям орбы имеют `scale: 0.9–1.0, opacity: 1`, дальние верхние — `scale: 0.65–0.75, opacity: 0.75`.
+   - При перетаскивании подарка в центр (или при отправке нового подарка) он приземляется на `SPRING.pop` с мягким свечением (`radial-gradient` в цвет подарка позади стикера — без анимированного `backdrop-filter`).
+
+---
+
+## 5. Строгие табу (Чего делать категорически нельзя)
+
+Эти ограничения выстраданы при живом тестировании и профилировании в браузере (см. также [MOTION_TASTE.md](MOTION_TASTE.md)):
+
+1. **Никаких `duration` + `ease-in-out` / `linear` для пространственного перемещения.** Любой `x`, `y`, `scale`, `rotate` обязан управляться пресетом из `SPRING`.
+2. **Никаких инлайновых пружин (`stiffness`, `damping`, `type: "spring"`) в компонентах.** Тест `apps/web/src/lib/motion.contract.test.ts` упадёт в CI. Если нужен новый физический характер — обоснуйте его, добавьте именованный пресет в `apps/web/src/lib/motion.ts` и задокументируйте здесь.
+3. **Никаких fade-out (`opacity → 0`) на крупных панелях и шторках.** Большая поверхность уходит только физическим движением; затухать имеет право только отдельный слой диммера под ней.
+4. **Никакого независимого быстрого гашения диммера раньше панели.** Если страница под панелью светлеет, пока сама панель ещё на полпути к выходу, глаз считывает это как просадку FPS и дешевизну.
+5. **Никакой покадровой анимации `width`, `height`, `top`, `left` в списках и при полётах объектов.** Вся геометрия полётов строится только на `transform` (`translate`, `scaleX`, `scaleY`). Исключение — однократное раскрытие контейнера с `overflow: hidden` на `SPRING.reveal` (например, подпись активной вкладки или строка альбомов).
+6. **Никакой длительной анимации `backdrop-filter` или `filter: blur()` на весь экран.** Размытие — самая тяжёлая операция композитора на мобильных GPU. `blur` можно выставить статически (например, на прилипшем баре) или проиграть коротким входным импульсом `≤ 180 мс` на компактном поповере (`OverlayMotion`), но никогда не тянуть за скроллом.
+7. **Никаких скролл-привязанных трансформаций внутри мессенджера (`MessageList`).** Скролл чата в `gomo6` — это выверенная система в духе Telegram Web (`MESSENGER_CHAT_SCROLL.md`), где `scrollTop` пишется строго один раз за коммит в `fasterdom`. Любые скролл-параллаксы или `content-visibility` на строках сообщений вернут фризы на iOS WebKit.
+8. **Никакого перелёта (overshoot) > 1.5% на крупных контейнерах.** На маленьких иконках 15% баунса (`SPRING.pop`) выглядят живо; на карточке профиля или шторке 6–7% баунса выглядят как дешёвая мультяшность.
+
+---
+
+## 6. Доступность, слабые устройства и тесты
+
+Каждая анимация в `gomo6` обязана корректно деградировать в трёх режимах:
+
+1. **`prefers-reduced-motion: reduce`:**
+   - На корне приложения подключён `<MotionConfig reducedMotion="user">`.
+   - В каждом компоненте используйте `const reduce = useReducedMotion()` и хелперы `springFor(preset, reduce)` / `morphTransition(reduce)` / `pressFeedback(reduce)`.
+   - Когда `reduce === true`, любой переход схлопывается в `INSTANT = { duration: 0 }`, начальные пространственные смещения (`x`, `y`, `scale`, `blur`) отключаются (`initial={false}`), и интерфейс мгновенно оказывается в том же самом финальном состоянии без потери функциональности.
+2. **Слабые устройства (`perf-lite` tier):**
+   - Проверяется через `isPerfLite()` (`document.documentElement.classList.contains("perf-lite")` из `utils/perfTier`).
+   - В режиме `perf-lite` отключаются тяжёлые View Transitions, постоянные стеклянные размытия и фоновые ambient-циклы.
+3. **Тестовое окружение (`import.meta.env.MODE === "test"`):**
+   - В `jsdom` нет аппаратного композитора, поэтому покадровые декоративные анимации, которые дёргают `setState` на каждый тик (`useMotionValueEvent` → `setState`, как в удалённом `CountUp`), замедляют тесты и создают шум.
+   - Если такая анимация всё же нужна (например, счётчик лайков), обязательно используйте защиту:
+     ```ts
+     const skipMotion = reduceMotion || import.meta.env.MODE === "test";
+     ```
+
+---
+
+## 7. Чеклист разработчика перед сдачей анимации (Definition of Done)
+
+Перед тем как считать задачу по анимации готовой, проверьте все 7 пунктов:
+
+- [ ] **Происхождение физики:** Все пружины взяты из `SPRING` / `springFor` в `@/lib/motion`, нет ни одного инлайнового `stiffness`/`damping`.
+- [ ] **Тест-страж зелёный:**
+  ```bash
+  npm run test --workspace=@gomo6/web -- src/lib/motion.contract.test.ts src/lib/motion.test.ts
+  ```
+- [ ] **Типизация чистая:**
+  ```bash
+  npx tsc --noEmit -p apps/web/tsconfig.app.json
+  ```
+- [ ] **Тест на прерываемость (Grab & Reverse Test):** Запустите переход и на середине (через `100–150 мс`) нажмите назад, смените вкладку или перехватите панель пальцем. Объект обязан плавно развернуться из текущей точки с сохранением скорости — без скачка в `0` и без залипания.
+- [ ] **60/120 FPS без Layout Thrashing:** В Chrome DevTools $\rightarrow$ Performance во время анимации нет красных треугольников Forced Reflow (чтения `getBoundingClientRect` / `offsetWidth` не перемешаны с записью стилей в одном кадре).
+- [ ] **Слойность и порталы:** Летящие элементы и оверлеи не обрезаются родительским `overflow: hidden` или `isolate` и не оставляют «мёртвых» невидимых клонов с `pointer-events: auto` после завершения.
+- [ ] **Проверка `prefers-reduced-motion`:** При включении эмуляции `prefers-reduced-motion: reduce` в DevTools элемент мгновенно принимает финальное состояние, фокус клавиатуры не теряется.
