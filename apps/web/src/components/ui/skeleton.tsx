@@ -1,7 +1,12 @@
 import { cn } from "@/lib/utils";
 
-function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("animate-pulse rounded-md bg-muted", className)} {...props} />;
+interface SkeletonProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Static placeholders avoid a pulse competing with entrance choreography. */
+  pulse?: boolean;
+}
+
+function Skeleton({ className, pulse = true, ...props }: SkeletonProps) {
+  return <div className={cn(pulse && "animate-pulse", "rounded-md bg-muted", className)} {...props} />;
 }
 
 export { Skeleton };

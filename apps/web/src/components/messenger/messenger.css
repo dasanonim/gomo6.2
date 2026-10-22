@@ -50,6 +50,14 @@ main.is-messenger-page {
   border-right: 1px solid oklch(var(--border));
 }
 
+.sidebar-depth-scrim {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  background: rgb(0 0 0 / 0.28);
+  pointer-events: none;
+}
+
 .sidebar-resizer {
   position: absolute;
   z-index: 5;
@@ -583,6 +591,22 @@ main.is-messenger-page {
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+.chat-topbar-profile-trigger {
+  display: block;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.chat-topbar-profile-trigger:focus-visible {
+  outline: 2px solid oklch(var(--ring));
+  outline-offset: 3px;
 }
 
 .chat-topbar-main > div:last-child {
@@ -4261,6 +4285,15 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
     height: 100%;
   }
 
+  /* Keep decorative iteration events off the renderer during the chat push and
+     swipe-back. React/Sentry listen for animationiteration at the root; on a
+     busy mobile main thread those otherwise unrelated events can land in the
+     middle of the panel's compositor animation. The static online dot remains. */
+  .messenger-shell.mobile-chat-open .online-dot::after {
+    animation: none;
+    opacity: 0;
+  }
+
   .sidebar-resizer {
     display: none;
   }
@@ -4378,8 +4411,12 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
     display: inline-flex;
   }
 
+  /* AppLayout measures the real header (including the PWA status-bar inset) and
+     publishes it as --app-header-height. Hardcoding 70px here broke on phones
+     with a notch/Dynamic Island, where the search bar slid under the header.
+     Add a small breathing gap so the search pill does not touch the header. */
   .sidebar-top {
-      margin-top: 70px;
+      margin-top: calc(var(--app-header-height, 70px) + 10px);
   }
 }
 
@@ -4389,7 +4426,7 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
   .sidebar-top {
     height: 40px;
     margin: 10px 10px 8px;
-    margin-top: 60px;
+    margin-top: calc(var(--app-header-height, 60px) + 10px);
     gap: 0;
   }
 

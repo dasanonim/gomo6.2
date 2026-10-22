@@ -10,6 +10,13 @@ const { mockReadThrough, mockListProps } = vi.hoisted(() => ({
   mockListProps: {} as any,
 }));
 
+const { mockNavigate } = vi.hoisted(() => ({ mockNavigate: vi.fn() }));
+
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>();
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 const { mockStore } = vi.hoisted(() => {
   return {
     mockStore: {
@@ -262,6 +269,40 @@ describe("ChatView", () => {
       render(<ChatView {...defaultProps} />);
 
       expect(mockListProps.unreadBoundaryAt).toBeNull();
+    });
+  });
+
+  describe("profile navigation from the chat avatar", () => {
+    beforeEach(() => {
+      mockStore.me = { id: "me-1", username: "me" };
+      mockStore.conversations = [mockConversation({ other_avatar_url: "/avatar.jpg" })];
+      mockStore.selectedConversationId = "conv-1";
+      mockStore.messages = [mockMessage()];
+    });
+
+    it("carries the tapped avatar's viewport box into the profile route", () => {
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+        x: 14, y: 24, width: 40, height: 40,
+      } as DOMRect);
+
+      render(<ChatView {...defaultProps} />);
+      fireEvent.click(screen.getByRole("button", { name: "Открыть профиль" }));
+
+      expect(mockNavigate).toHaveBeenCalledWith("/profile/other-1", {
+        state: {
+          originAvatarRect: { x: 14, y: 24, width: 40, height: 40 },
+          originAvatarSrc: "/avatar.jpg",
+        },
+      });
+    });
+
+    it("still opens the profile normally when there is no avatar image", () => {
+      mockStore.conversations = [mockConversation()];
+
+      render(<ChatView {...defaultProps} />);
+      fireEvent.click(screen.getByRole("button", { name: "Открыть профиль" }));
+
+      expect(mockNavigate).toHaveBeenCalledWith("/profile/other-1", { state: undefined });
     });
   });
 

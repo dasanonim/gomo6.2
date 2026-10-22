@@ -27,11 +27,12 @@ function makePromiseChain(resolvedValue: any): any {
   return chain;
 }
 
-const { mockFrom, mockRpc, mockAuth, mockParams } = vi.hoisted(() => ({
+const { mockFrom, mockRpc, mockAuth, mockParams, mockSharedAuth } = vi.hoisted(() => ({
   mockFrom: vi.fn<any>().mockImplementation(() => makePromiseChain({ data: [], error: null })),
   mockRpc: vi.fn<any>().mockResolvedValue({ data: null, error: null }),
   mockAuth: { getSession: vi.fn(), getUser: vi.fn(), onAuthStateChange: vi.fn(), signOut: vi.fn() },
   mockParams: { current: {} as Record<string, string> },
+  mockSharedAuth: vi.fn(),
 }));
 
 vi.mock("@/integrations/api/compat", () => ({
@@ -48,9 +49,13 @@ vi.mock("@/integrations/api/client", () => ({
   apiClient: { request: vi.fn().mockResolvedValue({ data: [] }) },
 }));
 
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => mockSharedAuth(),
+}));
+
 vi.mock("@/components/ThreadFeed", () => ({
-  ThreadFeed: ({ onReady }: { onReady?: () => void }) => (
-    <div data-testid="thread-feed">
+  ThreadFeed: ({ onReady, animateEntrance }: { onReady?: () => void; animateEntrance?: boolean }) => (
+    <div data-testid="thread-feed" data-animate-entrance={String(animateEntrance)}>
       ThreadFeed
       <button type="button" data-testid="feed-ready" onClick={() => onReady?.()}>
         ready
@@ -73,10 +78,6 @@ vi.mock("@/components/HistoryView", () => ({
 }));
 vi.mock("@/components/FavoritesView", () => ({
   FavoritesView: () => <div data-testid="favorites-view">Favorites</div>,
-}));
-
-vi.mock("@/components/PentagramLoader", () => ({
-  PentagramLoader: () => <div data-testid="pentagram-loader">Loading...</div>,
 }));
 
 vi.mock("@/components/NotificationBell", () => ({ NotificationBell: () => null }));
@@ -151,6 +152,7 @@ vi.mock("react-router-dom", async () => {
 
 function setupLoggedIn() {
   const user = { id: "user-1" };
+  mockSharedAuth.mockReturnValue({ user, isLoading: false });
   const session = { user, access_token: "token-abc" };
   mockAuth.getSession.mockResolvedValue({ data: { session }, error: null });
   mockAuth.getUser.mockResolvedValue({ data: { user }, error: null });
@@ -240,20 +242,29 @@ describe("Index", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSharedAuth.mockReturnValue({ user: null, isLoading: true });
+    document.documentElement.classList.remove("perf-lite");
+    localStorage.removeItem("transition-style");
     mockParams.current = {};
     window.history.pushState({}, "", "/");
   });
 
-  afterEach(() => {});
+  afterEach(() => {
+    document.documentElement.classList.remove("perf-lite");
+  });
 
-  it("shows pentagram loader while loading", () => {
+  it("shows matching story and card skeletons while authentication is checked", () => {
     mockAuth.getSession.mockReturnValue(new Promise(() => {}));
     mockAuth.getUser.mockReturnValue(new Promise(() => {}));
     mockAuth.onAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } }, error: null });
 
     const { container } = renderWithProviders(<IndexComponent />);
-    const loaderContainer = container.querySelector(".min-h-screen");
-    expect(loaderContainer).toBeInTheDocument();
+    expect(container.querySelector("[aria-busy='true']")).toBeInTheDocument();
+    expect(screen.getByTestId("stories-rail-skeleton")).toBeInTheDocument();
+    expect(screen.getByTestId("feed-skeleton")).toBeInTheDocument();
+    expect(container.querySelector(".animate-pulse")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("pentagram-loader")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("thread-feed")).not.toBeInTheDocument();
   });
 
   it("renders ThreadFeed when logged in", async () => {
@@ -262,6 +273,24 @@ describe("Index", () => {
     await waitFor(() => {
       expect(screen.getByTestId("thread-feed")).toBeInTheDocument();
     });
+  });
+
+  it("uses the shared auth cache to render the feed immediately on an SPA return", async () => {
+    setupLoggedIn();
+
+    renderWithProviders(<IndexComponent />);
+
+    expect(screen.getByTestId("thread-feed")).toBeInTheDocument();
+  });
+
+  it("keeps the lightweight feed cascade enabled on perf-lite devices", async () => {
+    document.documentElement.classList.add("perf-lite");
+    setupLoggedIn();
+
+    renderWithProviders(<IndexComponent />);
+
+    await waitFor(() => expect(screen.getByTestId("thread-feed")).toBeInTheDocument());
+    expect(screen.getByTestId("thread-feed")).toHaveAttribute("data-animate-entrance", "true");
   });
 
   it("renders the feed without the recommendations/subscriptions switcher", async () => {

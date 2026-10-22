@@ -1,10 +1,13 @@
-import { memo, useCallback, useState, useMemo } from "react";
+import { memo, useCallback, useState, useMemo, useRef } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { Gift, Link2, MessageCircle, NotebookPen, Search, UserPlus, X } from "lucide-react";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { UserBadge } from "@/components/UserBadge";
 import { UserAvatar } from "@/components/UserAvatar";
 import { useMessengerStore } from "@/stores/messengerStore";
 import { useLanguageStore } from "@/stores/languageStore";
+import { ConversationListSkeleton } from "@/components/skeletons/ContentSkeletons";
+import { STREAM_CASCADE_VARIANTS, STREAM_ITEM_VARIANTS } from "@/lib/motion";
 import { formatConversationDate, formatPresence, getGroupInitials, getInitials } from "./utils";
 import { messengerConversationPreview } from "./messengerRichTextUtils";
 import { NewChatDialog } from "./NewChatDialog";
@@ -16,6 +19,7 @@ interface Props {
   startingChat?: boolean;
   targetUserId?: string | null;
   isCollapsed?: boolean;
+  animateEntrance?: boolean;
 }
 
 const ConversationCard = memo(function ConversationCard({
@@ -210,22 +214,25 @@ const ConversationRows = memo(function ConversationRows({
   onSelect,
   isCollapsed,
   myUserId,
+  motionEnabled,
 }: {
   conversations: ConversationView[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   isCollapsed: boolean;
   myUserId: string | null;
+  motionEnabled: boolean;
 }) {
   return (
     <>
       {conversations.map((conv) => (
-        <div
+        <motion.div
           key={conv.id}
           className="conversation-native-row chat-native-row"
           // Conversation cards are 72px tall (see `.conversation-card`), so the
           // intrinsic fallback matches instead of the generic 64px.
           style={{ containIntrinsicSize: "auto 72px" }}
+          variants={motionEnabled ? STREAM_ITEM_VARIANTS : undefined}
         >
           <ConversationCard
             conversation={conv}
@@ -234,7 +241,7 @@ const ConversationRows = memo(function ConversationRows({
             isCollapsed={isCollapsed}
             myUserId={myUserId}
           />
-        </div>
+        </motion.div>
       ))}
     </>
   );
@@ -246,6 +253,7 @@ export const ConversationList = memo(function ConversationList({
   startingChat,
   targetUserId,
   isCollapsed = false,
+  animateEntrance = true,
 }: Props) {
   const conversations = useMessengerStore((s) => s.conversations);
   const myUserId = useMessengerStore((s) => s.me?.id ?? null);
@@ -254,9 +262,21 @@ export const ConversationList = memo(function ConversationList({
   const error = useMessengerStore((s) => s.error);
   const setError = useMessengerStore((s) => s.setError);
   const initLoading = useMessengerStore((s) => s.isInitialLoading);
+  const prefersReducedMotion = useReducedMotion();
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showNewChat, setShowNewChat] = useState(false);
   const [notesCreating, setNotesCreating] = useState(false);
+
+  // Only run the entrance cascade the first time real conversations land.
+  // Subsequent updates (new messages, reorder, search) must not re-cascade.
+  const didAnimateRef = useRef(false);
+  const runInitialCascade =
+    animateEntrance &&
+    !prefersReducedMotion &&
+    conversations.length > 0 &&
+    !initLoading &&
+    !didAnimateRef.current;
 
   const notesConversation = useMemo(() => conversations.find((c) => c.is_notes) ?? null, [conversations]);
 
@@ -333,51 +353,62 @@ export const ConversationList = memo(function ConversationList({
         </div>
       )}
 
-      <div className="conversation-list" role="navigation" aria-label="Диалоги">
-        {initLoading && conversations.length === 0 && (
-          <div className="panel-loader-overlay sidebar-loader">
-            <PentagramLoader size="md" />
-          </div>
-        )}
+      {initLoading && conversations.length === 0 ? (
+        <ConversationListSkeleton isCollapsed={isCollapsed} />
+      ) : (
+        <motion.div
+          ref={listRef}
+          className="conversation-list"
+          role="navigation"
+          aria-label="Диалоги"
+          data-testid="conversation-list"
+          variants={STREAM_CASCADE_VARIANTS}
+          initial={runInitialCascade ? "hidden" : false}
+          animate={runInitialCascade ? "show" : undefined}
+          onAnimationComplete={() => { didAnimateRef.current = true; }}
+        >
+          <motion.div variants={runInitialCascade ? STREAM_ITEM_VARIANTS : undefined}>
+            <NotesCard
+              notes={notesConversation}
+              isSelected={Boolean(notesConversation && selectedId === notesConversation.id)}
+              isCollapsed={isCollapsed}
+              creating={notesCreating}
+              myUserId={myUserId}
+              onOpen={handleOpenNotes}
+            />
+          </motion.div>
 
-        <NotesCard
-          notes={notesConversation}
-          isSelected={Boolean(notesConversation && selectedId === notesConversation.id)}
-          isCollapsed={isCollapsed}
-          creating={notesCreating}
-          myUserId={myUserId}
-          onOpen={handleOpenNotes}
-        />
+          {conversations.length === 0 && !initLoading && (
+            <div className="empty-card">
+              <MessageCircle size={18} />
+              <p>Диалогов пока нет.</p>
+              {targetUserId && onStartChat && (
+                <button
+                  type="button"
+                  className="cta-button"
+                  onClick={handleStartChat}
+                  disabled={startingChat}
+                >
+                  {startingChat ? <PentagramLoader size="sm" /> : (
+                    <>
+                      <UserPlus size={14} /> Открыть диалог
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          )}
 
-        {conversations.length === 0 && !initLoading && (
-          <div className="empty-card">
-            <MessageCircle size={18} />
-            <p>Диалогов пока нет.</p>
-            {targetUserId && onStartChat && (
-              <button
-                type="button"
-                className="cta-button"
-                onClick={handleStartChat}
-                disabled={startingChat}
-              >
-                {startingChat ? <PentagramLoader size="sm" /> : (
-                  <>
-                    <UserPlus size={14} /> Открыть диалог
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-        )}
-
-        <ConversationRows
-          conversations={filteredConversations}
-          selectedId={selectedId}
-          onSelect={handleSelect}
-          isCollapsed={isCollapsed}
-          myUserId={myUserId}
-        />
-      </div>
+          <ConversationRows
+            conversations={filteredConversations}
+            selectedId={selectedId}
+            onSelect={handleSelect}
+            isCollapsed={isCollapsed}
+            myUserId={myUserId}
+            motionEnabled={runInitialCascade}
+          />
+        </motion.div>
+      )}
     </>
   );
 });

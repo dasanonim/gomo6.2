@@ -112,15 +112,19 @@ export function useSwipeBackToClose(options: { enabled: boolean; onBack: () => v
         const vx = lastT > prevT ? (lastX - prevX) / (lastT - prevT) : 0;
         const width = window.innerWidth;
         if (lastX > width * SWIPE_BACK_EXIT_FRACTION || vx > SWIPE_BACK_EXIT_SPEED) {
-          // Exit: glide the panel fully off, then leave the chat.
+          // Exit on the same spring as the other chat transitions, carrying
+          // the release velocity through the end of the swipe.
           animate(x, width, {
-            duration: 0.18,
-            ease: [0.32, 0.72, 0, 1],
+            ...SPRING.sheet,
+            velocity: Math.max(-1800, Math.min(1800, vx * 1000)),
             onComplete: () => onBackRef.current(),
           });
         } else {
           // Snap back with a spring (the WallPost overlay feel).
-          animate(x, 0, SPRING.sheet);
+          animate(x, 0, {
+            ...SPRING.sheet,
+            velocity: Math.max(-1800, Math.min(1800, vx * 1000)),
+          });
         }
       }
     };

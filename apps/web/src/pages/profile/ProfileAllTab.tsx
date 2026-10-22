@@ -8,7 +8,7 @@ import { FeedWallPostCard } from "@/components/FeedWallPostCard";
 import { Lightbox, type LightboxItem } from "@/components/Lightbox";
 import { QuietLoading } from "@/components/QuietLoading";
 import { useLoadingBarStore } from "@/stores/loadingBarStore";
-import { morphOrigin, morphTransition, morphVariants, STAGGER } from "@/lib/motion";
+import { CASCADE_VARIANTS, morphOrigin, morphTransition, morphVariants } from "@/lib/motion";
 import { normalizeWallPostRecord, type WallPost } from "@/utils/wallNormalizers";
 import { fetchThreadLikesBatch, toFeedThread, type ThreadApiRow } from "@/utils/threadFeedItem";
 
@@ -17,8 +17,6 @@ const PAGE_SIZE = 20;
 /** Pull the next page this far before the sentinel reaches the viewport. */
 const PRELOAD_MARGIN_PX = 600;
 
-/** The stream arrives as a rapid cascade of dimensional morphs. */
-const CASCADE: Variants = { hidden: {}, show: { transition: STAGGER } };
 const CARD_ITEM: Variants = morphVariants(0.94, 0);
 
 // Same select as ProfileWall so a card renders identically in both places.
@@ -255,7 +253,7 @@ export const ProfileAllTab = ({
         <motion.div
           initial={reduceMotion ? false : "hidden"}
           animate="show"
-          variants={CASCADE}
+      variants={CASCADE_VARIANTS}
           className="space-y-4"
         >
           {body}

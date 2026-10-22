@@ -1,10 +1,12 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Folder, Lock, MessageCircle, NotebookPen, Pin, Gift, FileUp } from "lucide-react";
 import { toast } from "sonner";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { UserBadge } from "@/components/UserBadge";
-import { UserAvatar } from "@/components/UserAvatar";
-import { giftImageUrl } from "@/utils/storage";
+import { isAnimatedAvatarUrl, UserAvatar } from "@/components/UserAvatar";
+import { giftImageUrl, storageUrl } from "@/utils/storage";
+import { toViewportRect } from "@/utils/domRect";
 import {
   getConversationReadThrough,
   queueMarkDelivered,
@@ -46,6 +48,7 @@ export const ChatView = memo(function ChatView({
   onTyping,
 }: Props) {
   const language = useLanguageStore((state) => state.language);
+  const navigate = useNavigate();
   const conversation = useMessengerStore(selectSelectedConversation);
   const messages = useMessengerStore((s) => s.messages);
   // O(1) lookups by server id for quoted replies and the pinned message —
@@ -125,6 +128,23 @@ export const ChatView = memo(function ChatView({
   const latestMessageId = messages[messages.length - 1]?.id;
   const latestMessageSentAt = messages[messages.length - 1]?.sent_at;
   const isNotesChat = Boolean(conversation?.is_notes);
+
+  const openConversationProfile = useCallback((element: HTMLElement) => {
+    if (!conversation?.other_user_id || conversation.is_group || conversation.is_notes) return;
+
+    const from = toViewportRect(element.getBoundingClientRect());
+    const rawAvatar = conversation.other_avatar_url;
+    const avatarSrc = rawAvatar ? storageUrl("post-images", rawAvatar) || rawAvatar : null;
+    const profileAvatarOrigin = from && avatarSrc && !isAnimatedAvatarUrl(avatarSrc)
+      ? { from, src: avatarSrc }
+      : undefined;
+
+    navigate(`/profile/${conversation.other_user_id}`, {
+      state: profileAvatarOrigin
+        ? { originAvatarRect: profileAvatarOrigin.from, originAvatarSrc: profileAvatarOrigin.src }
+        : undefined,
+    });
+  }, [conversation, navigate]);
 
   // Folder chips for the notes chat (decrypted client-side).
   const noteFolders = useMemo(() => {
@@ -545,24 +565,40 @@ export const ChatView = memo(function ChatView({
             <button type="button" className="mobile-only messenger-back-button" onClick={(e) => { e.stopPropagation(); onBack(); }} aria-label="Назад">
               <ArrowLeft size={16} />
             </button>
-            <div className="avatar small">
-              {conversation.is_notes ? (
+            {conversation.other_user_id && !conversation.is_group && !conversation.is_notes ? (
+              <button
+                type="button"
+                className="chat-topbar-profile-trigger"
+                aria-label="Открыть профиль"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openConversationProfile(event.currentTarget);
+                }}
+              >
+                <div className="avatar small">
+                  {conversation.other_avatar_url ? (
+                    <UserAvatar
+                      src={conversation.other_avatar_url}
+                      userId={conversation.other_user_id}
+                      alt={conversation.other_username || ""}
+                      className="w-full h-full"
+                    />
+                  ) : (
+                    <span>{getInitials(conversation.other_username || "")}</span>
+                  )}
+                </div>
+              </button>
+            ) : (
+              <div className="avatar small">
+                {conversation.is_notes ? (
                 <div className="avatar notes-avatar">
                   <span className="notes-avatar-icon"><NotebookPen size={18} /></span>
                 </div>
-              ) : conversation.is_group ? (
-                <span>{getGroupInitials(conversation.group_name)}</span>
-              ) : conversation.other_avatar_url ? (
-                <UserAvatar
-                  src={conversation.other_avatar_url}
-                  userId={conversation.other_user_id}
-                  alt={conversation.other_username || ""}
-                  className="w-full h-full"
-                />
-              ) : (
-                <span>{getInitials(conversation.other_username || "")}</span>
-              )}
-            </div>
+                ) : (
+                  <span>{getGroupInitials(conversation.group_name)}</span>
+                )}
+              </div>
+            )}
             <div className="chat-topbar-info">
               <div className="chat-topbar-username flex items-center gap-1">
                 {conversation.is_notes ? (

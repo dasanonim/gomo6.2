@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useParams, useNavigate, useLocation, useNavigationType } from "react-router-dom";
 import { ImagePlus, Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "@/integrations/api/compat";
@@ -39,8 +39,10 @@ import {
   springFor,
 } from "@/lib/motion";
 import { AvatarMorph } from "@/components/profile/AvatarMorph";
+import { isAnimatedAvatarUrl } from "@/components/UserAvatar";
 import { RecedeOnScroll } from "@/components/profile/RecedeOnScroll";
 import { toViewportRect, type ViewportRect } from "@/utils/domRect";
+import { readProfileAvatarOrigin } from "@/utils/profileAvatarTransition";
 import { ForumProfilePanel } from "./profile/ForumProfilePanel";
 import { DEFAULT_FORUM_SIDE, PROFILE_VIEW_MODE_EVENT, getProfileViewMode, type ForumSide } from "@/lib/profileViewMode";
 
@@ -61,8 +63,14 @@ const Profile = () => {
   const { t } = useTranslation();
   const { userId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const navigationType = useNavigationType();
   const transitionStyle = useTransitionStyle();
   const prefersReducedMotion = useReducedMotion();
+  const profileAvatarOrigin = useMemo(
+    () => navigationType === "PUSH" ? readProfileAvatarOrigin(location.state) : null,
+    [location.state, navigationType],
+  );
 
   const [profile, setProfile] = useState<Profile | null>(null);
   // A route parameter can resolve to nothing (deleted account, or an old public
@@ -415,6 +423,12 @@ const Profile = () => {
     to?: ViewportRect;
     landed?: boolean;
   } | null>(null);
+  const [profileEntryMorph, setProfileEntryMorph] = useState<{
+    src: string;
+    from: ViewportRect;
+    to: ViewportRect;
+  } | null>(null);
+  const entryMorphStartedForRef = useRef<string | null>(null);
 
   const openAvatarGallery = () => {
     if (avatarMorph) return;
@@ -489,6 +503,58 @@ const Profile = () => {
     if (!isNonFriendOnPrivate) return true;
     return !hidden;
   };
+
+  // A profile opened from the chat keeps the same avatar pixels in flight from
+  // the chat header to the profile header. Wait until privacy is resolved, the
+  // real avatar is mounted and the source image is decoded, so the flight has
+  // two measured endpoints and never starts blank or reveals a hidden avatar.
+  useLayoutEffect(() => {
+    if (
+      !profileAvatarOrigin ||
+      prefersReducedMotion ||
+      !profile?.id ||
+      !avatarSrc ||
+      isAnimatedAvatarUrl(profileAvatarOrigin.src) ||
+      isAnimatedAvatarUrl(avatarSrc) ||
+      !privacyChecked ||
+      (isNonFriendOnPrivate && privateHideAvatar) ||
+      entryMorphStartedForRef.current === location.key
+    ) return;
+
+    const to = toViewportRect(avatarOriginRef.current?.getBoundingClientRect());
+    if (!to) return;
+
+    let cancelled = false;
+    const image = new Image();
+    image.src = profileAvatarOrigin.src;
+    const decoded = typeof image.decode === "function"
+      ? image.decode().catch(() => undefined)
+      : Promise.resolve();
+    void decoded.then(() => {
+      if (cancelled) return;
+      entryMorphStartedForRef.current = location.key;
+      setProfileEntryMorph({
+        src: profileAvatarOrigin.src,
+        from: profileAvatarOrigin.from,
+        to,
+      });
+    });
+
+    return () => { cancelled = true; };
+  }, [
+    profileAvatarOrigin,
+    prefersReducedMotion,
+    profile?.id,
+    avatarSrc,
+    privateHideAvatar,
+    privacyChecked,
+    isNonFriendOnPrivate,
+    location.key,
+  ]);
+
+  const finishProfileEntryMorph = useCallback(() => {
+    setProfileEntryMorph(null);
+  }, []);
 
   const canViewThreads = canViewSection(privateHideThreads);
   const threadsVisible = showThreadsTab && canViewThreads;
@@ -1048,6 +1114,19 @@ const Profile = () => {
             to={avatarMorph.to}
             onLanded={landAvatarMorph}
             onDone={finishAvatarMorph}
+          />
+        )}
+
+        {/* The avatar that led here flies into the profile header. Ordinary
+            profile links and direct visits never mount this element. */}
+        {profileEntryMorph && (
+          <AvatarMorph
+            src={profileEntryMorph.src}
+            direction="open"
+            from={profileEntryMorph.from}
+            to={profileEntryMorph.to}
+            onLanded={() => {}}
+            onDone={finishProfileEntryMorph}
           />
         )}
 

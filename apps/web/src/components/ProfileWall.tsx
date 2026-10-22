@@ -6,7 +6,7 @@ import { Lock } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { wsService } from "@/services/websocket";
-import { morphOrigin, morphTransition, morphVariants, STAGGER } from "@/lib/motion";
+import { CASCADE_VARIANTS, morphOrigin, morphTransition, morphVariants } from "@/lib/motion";
 
 import { CreateWallPost } from "@/components/CreateWallPost";
 import { CreateWallPostInline } from "@/components/CreateWallPostInline";
@@ -45,8 +45,6 @@ const WALL_POST_SELECT = `
 // Pinned posts are only returned on the first page.
 const PAGE_SIZE = 10;
 
-/** First paint of the wall: cards cascade in, each one a dimensional morph. */
-const CASCADE: Variants = { hidden: {}, show: { transition: STAGGER } };
 const CARD_ITEM: Variants = morphVariants(0.94, 0);
 
 // Minimum delay between auto-loads triggered by the scroll sentinel. Prevents
@@ -678,7 +676,7 @@ export const ProfileWall = ({
           <motion.div
             initial={reduceMotion ? false : "hidden"}
             animate="show"
-            variants={CASCADE}
+      variants={CASCADE_VARIANTS}
             className="space-y-4"
           >
             {posts
