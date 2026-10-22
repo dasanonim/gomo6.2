@@ -1,7 +1,7 @@
-import { lazy, Suspense, useLayoutEffect, useRef, useEffect, useState } from "react";
+import { lazy, Suspense, useLayoutEffect, useRef, useEffect, useState, type PointerEvent as ReactPointerEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion } from "motion/react";
+import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
 import { ChevronDown, Gift, Layers, LayoutGrid, MessageSquareText, Plus, Trophy, Users, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -87,19 +87,20 @@ interface TabDef {
  * icon + label. The active strip (shared layoutId) slides between tabs along
  * the bottom edge and the label width animates open — delayed so the text
  * unfolds after the strip lands — then collapses when switching away. */
-const TabButton = ({ tab, active, onClick }: { tab: TabDef; active: boolean; onClick: () => void }) => {
+const TabButton = ({ tab, active, onClick, hideIndicator = false }: { tab: TabDef; active: boolean; onClick: () => void; hideIndicator?: boolean }) => {
   const Icon = tab.icon;
   const reduceMotion = useReducedMotion();
   return (
     <motion.button
+      data-tab-key={tab.key}
       onClick={onClick}
       {...pressFeedback(reduceMotion)}
       transition={springFor("snappy", reduceMotion)}
-      className={`relative flex items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-2 text-xs sm:text-sm font-medium transition-colors ${
+      className={`relative flex touch-pan-y items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-2 text-xs sm:text-sm font-medium transition-colors ${
         active ? "text-primary" : "text-muted-foreground hover:text-foreground"
       }`}
     >
-      {active && (
+      {active && !hideIndicator && (
         <motion.span
           layoutId="profile-tabs-indicator"
           className="absolute bottom-0 left-2 right-2 h-[2.5px] rounded-full bg-gradient-to-r from-primary to-accent"
@@ -137,6 +138,7 @@ const WallTabButton = ({
   chevronOpen,
   onChevronClick,
   chevronTitle,
+  hideIndicator = false,
 }: {
   active: boolean;
   label: string;
@@ -145,12 +147,14 @@ const WallTabButton = ({
   chevronOpen: boolean;
   onChevronClick: () => void;
   chevronTitle: string;
+  hideIndicator?: boolean;
 }) => {
   const Icon = LayoutGrid;
   const reduceMotion = useReducedMotion();
   return (
     <div
-      className={`relative flex items-center rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+      data-tab-key="wall"
+      className={`relative flex touch-pan-y items-center rounded-lg text-xs sm:text-sm font-medium transition-colors ${
         active ? "text-primary" : "text-muted-foreground hover:text-foreground"
       }`}
     >
@@ -184,6 +188,7 @@ const WallTabButton = ({
         className="relative z-10 overflow-hidden"
       >
         <button
+          data-no-scrub
           onClick={onChevronClick}
           className={`flex items-center py-2 pr-2.5 pl-0.5 transition-colors ${
             chevronOpen ? "text-foreground" : "text-muted-foreground hover:text-foreground"
@@ -199,7 +204,7 @@ const WallTabButton = ({
           </motion.span>
         </button>
       </motion.span>
-      {active && (
+      {active && !hideIndicator && (
         <motion.span
           layoutId="profile-tabs-indicator"
           className="absolute bottom-0 left-2 right-2 h-[2.5px] rounded-full bg-gradient-to-r from-primary to-accent"
@@ -213,16 +218,61 @@ const WallTabButton = ({
 // Subscribers tab button (people who follow this user). The list itself loads
 // lazily inside the tab — the bar deliberately carries no counter: it would pop
 // in only after the tab has been opened once and then stay stale until reload.
-const SubscribersTabButton = ({ activeTab, onClick }: { activeTab: string; onClick: () => void }) => {
+const SubscribersTabButton = ({ activeTab, onClick, hideIndicator = false }: { activeTab: string; onClick: () => void; hideIndicator?: boolean }) => {
   const { t } = useTranslation();
   return (
     <TabButton
       tab={{ key: "subscribers", icon: Users, label: t("profile.subscribers") }}
       active={activeTab === 'subscribers'}
       onClick={onClick}
+      hideIndicator={hideIndicator}
     />
   );
 };
+
+/**
+ * The scrubbing underline. It mounts on pointer-down at the grabbed tab's
+ * underline rect, then every frame retargets to the active tab's centre. The
+ * springs make it pull out from under the finger and overshoot slightly when
+ * the active tab changes; the 2.5px line is the same element the `layoutId`
+ * indicator would be, so the hand-over on release is invisible.
+ */
+function ScrubIndicator({
+  rowRef,
+  tabKey,
+  initial,
+}: {
+  rowRef: { current: HTMLDivElement | null };
+  tabKey: ProfileTab;
+  initial: { x: number; w: number };
+}) {
+  const x = useSpring(initial.x, SPRING.snappy);
+  const width = useSpring(initial.w, SPRING.snappy);
+
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const btn = rowRef.current?.querySelector<HTMLElement>(`[data-tab-key="${tabKey}"]`);
+      if (btn) {
+        // Follow the label as it expands/collapses: the underline always ends
+        // up under the active tab, never under the finger.
+        x.set(btn.offsetLeft + 8);
+        width.set(btn.offsetWidth - 16);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [rowRef, tabKey, x, width]);
+
+  return (
+    <motion.span
+      aria-hidden="true"
+      className="pointer-events-none absolute bottom-1 left-0 z-20 h-[2.5px] rounded-full bg-gradient-to-r from-primary to-accent"
+      style={{ x, width }}
+    />
+  );
+}
 
 /** Profile tabs bar + active tab body. Visibility follows the owner's privacy
  * settings; for non-friends on a private profile the wall tab always stays
@@ -260,6 +310,77 @@ export function ProfileTabs({
 }: ProfileTabsProps) {
   const { t } = useTranslation();
   const reduceMotion = useReducedMotion();
+
+  // ── Tab scrubbing ────────────────────────────────────────────────────────
+  // Grab the active tab and drag: the underline is pulled from under the
+  // finger to the nearest tab centre, springs across when the pointer crosses a
+  // midpoint, and the tab it lands on opens mid-gesture. Pointer capture keeps
+  // the drag alive across tab switches.
+  const scrubRowRef = useRef<HTMLDivElement | null>(null);
+  const scrubActiveRef = useRef(false);
+  const scrubKeyRef = useRef<ProfileTab | null>(null);
+  const scrubMovedRef = useRef(false);
+  const scrubStartXRef = useRef(0);
+  const scrubInitialRef = useRef<{ x: number; w: number } | null>(null);
+  const [scrubKey, setScrubKey] = useState<ProfileTab | null>(null);
+
+  const startScrub = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("[data-no-scrub]")) return;
+    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-tab-key]");
+    if (!target) return;
+    const key = target.dataset.tabKey as ProfileTab | undefined;
+    if (!key || key !== activeTab) return;
+    scrubInitialRef.current = {
+      x: target.offsetLeft + 8,
+      w: Math.max(0, target.offsetWidth - 16),
+    };
+    scrubStartXRef.current = event.clientX;
+    scrubActiveRef.current = true;
+    scrubMovedRef.current = false;
+    scrubKeyRef.current = key;
+    setScrubKey(key);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const moveScrub = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!scrubActiveRef.current) return;
+    if (Math.abs(event.clientX - scrubStartXRef.current) > 4) scrubMovedRef.current = true;
+    const row = event.currentTarget;
+    const pointerX = event.clientX - row.getBoundingClientRect().left;
+    let bestKey: ProfileTab | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const el of Array.from(row.querySelectorAll<HTMLElement>("[data-tab-key]"))) {
+      const key = el.dataset.tabKey as ProfileTab | undefined;
+      if (!key) continue;
+      const distance = Math.abs(pointerX - (el.offsetLeft + el.offsetWidth / 2));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestKey = key;
+      }
+    }
+    if (bestKey && bestKey !== scrubKeyRef.current) {
+      scrubKeyRef.current = bestKey;
+      setScrubKey(bestKey);
+      // Switch content without the tab-click scroll snap: the drag keeps going
+      // and the page must not jump under the finger.
+      onTabChange(bestKey);
+    }
+  };
+
+  const endScrub = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!scrubActiveRef.current) return;
+    scrubActiveRef.current = false;
+    scrubKeyRef.current = null;
+    setScrubKey(null);
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  };
+
+  const handleScrubClickCapture = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!scrubMovedRef.current) return;
+    scrubMovedRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
 
   // Warm the lazy tab-body chunks as soon as the profile mounts, so opening a
   // tab swaps its data in fully instead of popping the card/panel in a beat
@@ -556,12 +677,21 @@ export function ProfileTabs({
             visible there and would only add per-frame cost. */}
         <span className="profile-tabbar__bg" aria-hidden="true" />
         <div className="relative z-10 overflow-x-auto">
-        <div className="flex gap-1 min-w-max px-1.5 py-1">
+        <div
+          ref={scrubRowRef}
+          className="relative flex gap-1 min-w-max px-1.5 py-1"
+          onPointerDown={startScrub}
+          onPointerMove={moveScrub}
+          onPointerUp={endScrub}
+          onPointerCancel={endScrub}
+          onClickCapture={handleScrubClickCapture}
+        >
           {allTabVisible && (
             <TabButton
               tab={{ key: "all", icon: Layers, label: t("profile.allContent") }}
               active={activeTab === 'all'}
               onClick={() => switchTab('all')}
+              hideIndicator={!!scrubKey}
             />
           )}
           {wallTabVisible && (
@@ -573,6 +703,7 @@ export function ProfileTabs({
               chevronOpen={albumsOpen || selectedAlbumId !== null}
               onChevronClick={toggleAlbumsRow}
               chevronTitle={t("profile.albums")}
+              hideIndicator={!!scrubKey}
             />
           )}
           {canViewAchievements && (
@@ -584,6 +715,7 @@ export function ProfileTabs({
               }}
               active={activeTab === 'achievements'}
               onClick={() => switchTab('achievements')}
+              hideIndicator={!!scrubKey}
             />
           )}
           {showThreadsTab && canViewThreads && (
@@ -591,6 +723,7 @@ export function ProfileTabs({
               tab={{ key: "threads", icon: MessageSquareText, label: t("profile.threads") }}
               active={activeTab === 'threads'}
               onClick={() => switchTab('threads')}
+              hideIndicator={!!scrubKey}
             />
           )}
           {canViewGifts && (
@@ -602,12 +735,21 @@ export function ProfileTabs({
               }}
               active={activeTab === 'gifts'}
               onClick={() => switchTab('gifts')}
+              hideIndicator={!!scrubKey}
             />
           )}
           {canViewSubscriptions && (
             <SubscribersTabButton
               activeTab={activeTab}
               onClick={() => switchTab('subscribers')}
+              hideIndicator={!!scrubKey}
+            />
+          )}
+          {scrubKey && scrubInitialRef.current && (
+            <ScrubIndicator
+              rowRef={scrubRowRef}
+              tabKey={scrubKey}
+              initial={scrubInitialRef.current}
             />
           )}
         </div>
