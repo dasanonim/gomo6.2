@@ -20,12 +20,9 @@ import {
   morphVariants,
   pressFeedback,
   springFor,
-  STAGGER,
+  CASCADE_VARIANTS,
 } from "@/lib/motion";
 import type { AvatarDragHandlers, Profile } from "./types";
-
-/** Parent cascade for the header blocks. */
-const CASCADE: Variants = { hidden: {}, show: { transition: STAGGER } };
 
 // Heavy interaction-only component — split into a separate chunk so the
 // profile page's initial JS is small on mobile. Loaded on first use (edit
@@ -125,7 +122,7 @@ export function ProfileHeader({
     <motion.div
       initial={reduceMotion ? false : "hidden"}
       animate="show"
-      variants={CASCADE}
+      variants={CASCADE_VARIANTS}
       className="flex items-center justify-between gap-2 sm:gap-3"
     >
       <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">

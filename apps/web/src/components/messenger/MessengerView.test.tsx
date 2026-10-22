@@ -129,11 +129,11 @@ describe("MessengerView", () => {
     expect(mockWs.connect).toHaveBeenCalled();
   });
 
-  it("shows a loader during initial loading", () => {
+  it("renders the conversation list skeleton during initial loading", () => {
     mockStore.isInitialLoading = true;
     render(<MessengerView />);
-    expect(screen.getByTestId("loader-lg")).toBeInTheDocument();
-    expect(screen.queryByTestId("conversation-list")).not.toBeInTheDocument();
+    expect(screen.getByTestId("conversation-list")).toBeInTheDocument();
+    expect(screen.queryByTestId("loader-lg")).not.toBeInTheDocument();
   });
 
   it("renders conversation list and chat view", () => {

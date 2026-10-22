@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  CASCADE_VARIANTS,
   INSTANT,
   SPRING,
+  SPATIAL_OFFSET,
+  STREAM_CASCADE_VARIANTS,
+  STREAM_ITEM_VARIANTS,
+  STAGGER,
   hoverLift,
   pressFeedback,
   spatialEnter,
@@ -23,6 +28,32 @@ describe("motion presets", () => {
     expect(springFor("standard", false)).toBe(SPRING.standard);
     // `useReducedMotion()` is null while unknown — motion is allowed.
     expect(springFor("standard", null)).toBe(SPRING.standard);
+  });
+});
+
+describe("shared stream choreography", () => {
+  it("uses the common short cascade for content groups", () => {
+    expect(CASCADE_VARIANTS).toEqual({
+      hidden: {},
+      show: { transition: STAGGER },
+    });
+  });
+
+  it("moves stream rows only a small distance and uses the standard spring", () => {
+    expect(STREAM_CASCADE_VARIANTS.show).toEqual({
+      transition: { staggerChildren: 0.055, delayChildren: 0.02 },
+    });
+    expect(STREAM_ITEM_VARIANTS.hidden).toEqual({
+      opacity: 0,
+      y: SPATIAL_OFFSET.row,
+      scale: 0.975,
+    });
+    expect(STREAM_ITEM_VARIANTS.show).toMatchObject({
+      opacity: 1,
+      y: 0,
+      scale: 1,
+      transition: SPRING.standard,
+    });
   });
 });
 

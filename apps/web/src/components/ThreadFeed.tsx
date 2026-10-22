@@ -1,14 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { useProfileInvalidation } from "@/hooks/useProfileInvalidation";
 import { FeedThreadCard, type FeedThread } from "@/components/FeedThreadCard";
 import { FeedWallPostCard } from "@/components/FeedWallPostCard";
 import { PentagramLoader } from "@/components/PentagramLoader";
-import { QuietLoading } from "@/components/QuietLoading";
 import { Lightbox, type LightboxItem } from "@/components/Lightbox";
 import type { WallPost } from "@/utils/wallNormalizers";
 import { wsService, type WebSocketMessageType } from "@/services/websocket";
 import { useLoadingBarStore } from "@/stores/loadingBarStore";
 import { feedItemToThread, feedItemToWallPost } from "@/utils/threadFeedItem";
+import { STREAM_CASCADE_VARIANTS, STREAM_ITEM_VARIANTS } from "@/lib/motion";
+import { ThreadFeedSkeleton } from "@/components/skeletons/ContentSkeletons";
+import {
+  readFeedPageCache,
+  writeFeedPageCache,
+} from "@/components/feed/feedPageCache";
 
 /** One unified feed item as returned by GET /api/v1/feed. */
 interface FeedItem {
@@ -73,9 +79,13 @@ interface ThreadFeedProps {
    *  keep the previous view on screen until the feed is actually ready, so
    *  switching to it never flashes a skeleton. */
   onReady?: () => void;
+  /** Disable the first-page cascade when the user selected no-motion or the
+   *  browser is already animating the route swap. */
+  animateEntrance?: boolean;
 }
 
 const PULL_THRESHOLD = 60;
+const INITIAL_CASCADE_LIMIT = 6;
 
 /**
  * Unified personalized feed (threads + wall posts).
@@ -92,11 +102,15 @@ export const ThreadFeed = ({
   currentUserColor,
   limit = 20,
   onReady,
+  animateEntrance = true,
 }: ThreadFeedProps) => {
-  const [items, setItems] = useState<FeedItem[]>([]);
+  const prefersReducedMotion = useReducedMotion();
+  const [cachedPage] = useState(() => readFeedPageCache<FeedItem>(currentUserId, limit));
+  const [items, setItems] = useState<FeedItem[]>(() => cachedPage?.items ?? []);
   const [loading, setLoading] = useState(true);
+  const [initialPageReady, setInitialPageReady] = useState(Boolean(cachedPage));
   const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  const [hasMore, setHasMore] = useState(cachedPage?.hasMore ?? true);
   const [pendingNew, setPendingNew] = useState<FeedItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -105,15 +119,28 @@ export const ThreadFeed = ({
 
   // Latest-value refs so the long-lived websocket/observer/focus handlers never
   // close over stale state.
-  const itemsRef = useRef<FeedItem[]>([]);
+  const itemsRef = useRef<FeedItem[]>(cachedPage?.items ?? []);
   const pendingRef = useRef<FeedItem[]>([]);
   const newestMsRef = useRef<number | null>(null);
   const loadingRef = useRef(true);
   const loadingMoreRef = useRef(false);
-  const hasMoreRef = useRef(true);
+  const hasMoreRef = useRef(cachedPage?.hasMore ?? true);
   // Kept in a ref so `onReady` is never a loadInitial dependency — a fresh
   // callback identity each render would re-run the load effect forever.
   const onReadyRef = useRef(onReady);
+  const initialPagePendingRef = useRef(!cachedPage);
+  const readyReportedRef = useRef(false);
+  const warmCachePendingRef = useRef(Boolean(cachedPage));
+  const cachedItemIdsRef = useRef(new Set((cachedPage?.items ?? []).map((item) => item.item_id)));
+  const cachedNewestMsRef = useRef(
+    cachedPage?.items.reduce(
+      (newest, item) => {
+        const createdAt = Date.parse(item.created_at);
+        return Number.isFinite(createdAt) ? Math.max(newest, createdAt) : newest;
+      },
+      0,
+    ) ?? 0,
+  );
 
   const observerRef = useRef<IntersectionObserver>();
   const loadMoreRef = useRef<HTMLDivElement>(null);
@@ -130,6 +157,14 @@ export const ThreadFeed = ({
   useEffect(() => { loadingMoreRef.current = loadingMore; }, [loadingMore]);
   useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
   useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
+  const reportReady = useCallback(() => {
+    if (readyReportedRef.current) return;
+    readyReportedRef.current = true;
+    onReadyRef.current?.();
+  }, []);
+  useEffect(() => {
+    if (cachedPage) reportReady();
+  }, [cachedPage, reportReady]);
   useEffect(() => {
     newestMsRef.current = items.length ? Math.max(...items.map(createdMs)) : null;
   }, [items, createdMs]);
@@ -175,9 +210,34 @@ export const ThreadFeed = ({
         feedItems = feedItems.slice(0, limit);
       }
 
-      setItems(feedItems);
-      setHasMore(hasMoreData);
-      if (feedItems.length > 0) advanceSeen(Math.max(...feedItems.map(createdMs)));
+      const warmCachePending = warmCachePendingRef.current;
+      const newSinceCache = warmCachePending
+        ? feedItems.filter(
+            (item) =>
+              !cachedItemIdsRef.current.has(item.item_id) &&
+              Date.parse(item.created_at) > cachedNewestMsRef.current,
+          )
+        : [];
+
+      if (warmCachePending && newSinceCache.length > 0) {
+        // Keep the cached page in place and let the existing "new posts" pill
+        // reveal the newer rows only when the reader asks for them.
+        setPendingNew((previous) => {
+          const seen = new Set(previous.map((item) => item.item_id));
+          return [
+            ...newSinceCache.filter((item) => !seen.has(item.item_id)),
+            ...previous,
+          ];
+        });
+        setHasMore(hasMoreData);
+      } else {
+        itemsRef.current = feedItems;
+        setItems(feedItems);
+        setHasMore(hasMoreData);
+        writeFeedPageCache(currentUserId, limit, feedItems, hasMoreData);
+        if (feedItems.length > 0) advanceSeen(Math.max(...feedItems.map(createdMs)));
+      }
+      warmCachePendingRef.current = false;
     } catch (error) {
       if ((error as Error).name === "AbortError") return;
       console.error("Error loading feed:", error);
@@ -190,10 +250,14 @@ export const ThreadFeed = ({
       // data landed.
       if (abortRef.current === controller) {
         setLoading(false);
-        onReadyRef.current?.();
+        if (initialPagePendingRef.current) {
+          initialPagePendingRef.current = false;
+          setInitialPageReady(true);
+        }
+        reportReady();
       }
     }
-  }, [limit, advanceSeen, createdMs]);
+  }, [limit, currentUserId, advanceSeen, createdMs, reportReady]);
 
   const loadMore = useCallback(async () => {
     if (loadingMoreRef.current || !hasMoreRef.current) return;
@@ -264,13 +328,15 @@ export const ThreadFeed = ({
     // Mark everything about to be shown as seen so it never re-appears.
     advanceSeen(Math.max(...pending.map(createdMs)));
 
-    setItems(prev => {
-      const seen = new Set(prev.map(p => p.item_id));
-      const added = pending.filter(p => !seen.has(p.item_id));
-      return [...added, ...prev];
-    });
+    const current = itemsRef.current;
+    const seen = new Set(current.map((item) => item.item_id));
+    const added = pending.filter((item) => !seen.has(item.item_id));
+    const nextItems = [...added, ...current];
+    itemsRef.current = nextItems;
+    setItems(nextItems);
+    writeFeedPageCache(currentUserId, limit, nextItems.slice(0, limit), hasMoreRef.current);
     setPendingNew([]);
-  }, [advanceSeen, createdMs]);
+  }, [advanceSeen, createdMs, currentUserId, limit]);
 
   useEffect(() => {
     loadInitial();
@@ -304,14 +370,19 @@ export const ThreadFeed = ({
         const payload = typeof message.data === "string" ? JSON.parse(message.data) : message.data;
         const id = String((payload as { id?: unknown } | null)?.id ?? "");
         if (!id) return;
-        setItems(prev => prev.filter(it => !(it.item_type === "wall_post" && it.item_id === id)));
+        const nextItems = itemsRef.current.filter(
+          (item) => !(item.item_type === "wall_post" && item.item_id === id),
+        );
+        itemsRef.current = nextItems;
+        setItems(nextItems);
+        writeFeedPageCache(currentUserId, limit, nextItems.slice(0, limit), hasMoreRef.current);
         setPendingNew(prev => prev.filter(it => !(it.item_type === "wall_post" && it.item_id === id)));
       } catch {
         // Malformed payload — the next poll reconciles the feed anyway.
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [currentUserId, limit]);
 
   useEffect(() => {
     const onFocus = () => { checkForNew(); };
@@ -378,19 +449,22 @@ export const ThreadFeed = ({
     }
   };
 
-  // No skeleton before the first page lands: the header's loading bar is the
-  // progress cue (and for in-page switches Index keeps the previous view on
-  // screen), so the content simply fades in instead of a layout-shifting
-  // skeleton. Once there is content, a background revalidation must not replace
-  // it either.
-  if (loading && items.length === 0) {
-    return <QuietLoading />;
+  // Initial loading uses card-shaped placeholders. Once there is content, a
+  // background revalidation keeps it mounted instead of flashing the skeleton.
+  if (loading && items.length === 0 && !initialPageReady) {
+    return <ThreadFeedSkeleton />;
   }
+
+  const runInitialCascade =
+    initialPageReady && animateEntrance && !prefersReducedMotion;
 
   return (
     <>
-      <div
-        className="space-y-4 view-fade-in"
+      <motion.div
+        className="space-y-4"
+        variants={STREAM_CASCADE_VARIANTS}
+        initial={runInitialCascade ? "hidden" : false}
+        animate={runInitialCascade ? "show" : undefined}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
@@ -427,38 +501,51 @@ export const ThreadFeed = ({
             </p>
           </div>
         ) : (
-          items.map((item) => {
+          items.map((item, index) => {
+            const rowVariants = runInitialCascade && index < INITIAL_CASCADE_LIMIT
+              ? STREAM_ITEM_VARIANTS
+              : undefined;
             if (item.item_type === "thread") {
               const thread = feedToThread(item);
               return (
-                <FeedThreadCard
+                <motion.div
                   key={`thread-${thread.id}`}
-                  thread={thread}
+                  data-motion={rowVariants ? "cascade-row" : undefined}
+                  variants={rowVariants}
+                >
+                  <FeedThreadCard
+                    thread={thread}
+                    currentUserId={currentUserId}
+                    currentUsername={currentUsername}
+                    currentUserColor={currentUserColor}
+                    initialLikesCount={item.likes_count}
+                    initialUserLiked={item.liked_by_viewer}
+                    onImageClick={(items, idx) => {
+                      setGalleryItems(items);
+                      setGalleryIndex(idx);
+                    }}
+                  />
+                </motion.div>
+              );
+            }
+            const wallPost = feedToWallPost(item);
+            return (
+              <motion.div
+                key={`wall-${wallPost.id}`}
+                data-motion={rowVariants ? "cascade-row" : undefined}
+                variants={rowVariants}
+              >
+                <FeedWallPostCard
+                  post={wallPost}
                   currentUserId={currentUserId}
                   currentUsername={currentUsername}
                   currentUserColor={currentUserColor}
-                  initialLikesCount={item.likes_count}
-                  initialUserLiked={item.liked_by_viewer}
                   onImageClick={(items, idx) => {
                     setGalleryItems(items);
                     setGalleryIndex(idx);
                   }}
                 />
-              );
-            }
-            const wallPost = feedToWallPost(item);
-            return (
-              <FeedWallPostCard
-                key={`wall-${wallPost.id}`}
-                post={wallPost}
-                currentUserId={currentUserId}
-                currentUsername={currentUsername}
-                currentUserColor={currentUserColor}
-                onImageClick={(items, idx) => {
-                  setGalleryItems(items);
-                  setGalleryIndex(idx);
-                }}
-              />
+              </motion.div>
             );
           })
         )}
@@ -475,7 +562,7 @@ export const ThreadFeed = ({
             </div>
           )}
         </div>
-      </div>
+      </motion.div>
 
       {!!galleryItems && (
         <Lightbox

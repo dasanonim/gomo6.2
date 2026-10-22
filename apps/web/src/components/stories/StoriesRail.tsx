@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useStoriesStore } from "@/stores/storiesStore";
 import { StoryAvatar } from "./StoryAvatar";
 import { useStoriesRealtime } from "./useStoriesRealtime";
+import { StoriesRailSkeleton } from "@/components/skeletons/ContentSkeletons";
 
 /**
  * The stories rail above the feed — the same shape as Telegram's: your own
@@ -36,16 +37,7 @@ export function StoriesRail() {
   if (!user?.id) return null;
   if (!railLoaded && rail.length === 0) {
     // Skeleton keeps the page from jumping once the rail arrives.
-    return (
-      <div className="mb-4 flex gap-4 overflow-hidden" aria-hidden="true">
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="flex w-[76px] shrink-0 flex-col items-center gap-2">
-            <div className="h-12 w-12 animate-pulse rounded-full bg-muted" />
-            <div className="h-2 w-10 animate-pulse rounded bg-muted" />
-          </div>
-        ))}
-      </div>
-    );
+    return <StoriesRailSkeleton />;
   }
 
   const ownName = ownGroup?.owner.name || user.username || t("stories.you");

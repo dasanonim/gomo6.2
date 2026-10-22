@@ -1,7 +1,6 @@
 import { useEffect, useRef, useCallback, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { motion, animate, useReducedMotion, useTransform } from "motion/react";
-import { PentagramLoader } from "@/components/PentagramLoader";
 import { useMessengerStore, selectSelectedConversation } from "@/stores/messengerStore";
 import { messengerWs } from "@/services/messengerWebSocket";
 import { eventManager } from "@/services/eventManager";
@@ -312,19 +311,6 @@ export const MessengerView = () => {
   const typingUsername = conversation
     ? Object.values(typingUsers).find((t) => t.user_id === conversation.other_user_id)?.username ?? null
     : null;
-
-  // ── Initial loading state ─────────────────────────────────────────────
-  if (isInitialLoading) {
-    return (
-      <div className="messenger-app" data-kb-app>
-        <div className="messenger-shell">
-          <div className="panel-loader-overlay" style={{ gridColumn: "1 / -1" }}>
-            <PentagramLoader size="lg" />
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   // ── Render ────────────────────────────────────────────────────────────
   return (

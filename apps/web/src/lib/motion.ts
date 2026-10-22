@@ -106,7 +106,7 @@ export const SPATIAL_OFFSET = {
   /** Tab/segment content — a hint of direction, not a slide show. */
   tab: 14,
   /** Cards and rows appearing in a stream. */
-  row: 10,
+  row: 14,
   /** Full panels swapping in a two-pane layout. */
   panel: 24,
 } as const;
@@ -152,6 +152,32 @@ export const hoverLift = (reduce: boolean | null, scale = 1.03) =>
 
 /** A rapid cascade. Tight enough to feel immediate, never blocking. */
 export const STAGGER = { staggerChildren: 0.025, delayChildren: 0.02 } as const;
+
+/** Shared parent choreography for content groups across the app. */
+export const CASCADE_VARIANTS: Variants = {
+  hidden: {},
+  show: { transition: STAGGER },
+};
+
+/** A more legible cadence for long-form streams: each card gets its own beat. */
+export const STREAM_CASCADE_VARIANTS: Variants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.055, delayChildren: 0.02 } },
+};
+
+/** Restrained card landing: lift + tiny scale settle, never a flat opacity-only reveal. */
+export const STREAM_ITEM_VARIANTS: Variants = {
+  hidden: { opacity: 0, y: SPATIAL_OFFSET.row, scale: 0.975 },
+  show: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: {
+      ...SPRING.standard,
+      opacity: { duration: 0.16, ease: EASE_OUT_EXPO },
+    },
+  },
+};
 
 export interface MorphOrigin {
   /** 0 = left edge, 0.5 = centre, 1 = right edge. */
@@ -203,4 +229,3 @@ export const morphTransition = (
         opacity: { duration: 0.16, ease: EASE_OUT_EXPO },
         filter: { duration: 0.18, ease: EASE_OUT_EXPO },
       };
-

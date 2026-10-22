@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 import { PrefetchLink } from "@/components/PrefetchLink";
 import { api } from "@/integrations/api/compat";
 import { useProfileCache } from "@/contexts/ProfileCacheContext";
+import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Bookmark, ChevronRight, FileText, Hash, History, Home, Plus, Users, X } from "lucide-react";
 import { LegalConsentGate } from "@/components/legal/LegalConsentGate";
@@ -14,6 +15,7 @@ import { useThreadSections, type SectionWithSubsections, type ThreadSubsection }
 import { SectionIcon } from "@/components/topic/sectionIcons";
 import { SectionThreads } from "@/components/SectionThreads";
 import { QuietLoading } from "@/components/QuietLoading";
+import { StoriesRailSkeleton, ThreadFeedSkeleton } from "@/components/skeletons/ContentSkeletons";
 import { MyPosts } from "@/components/MyPosts";
 import { HistoryView } from "@/components/HistoryView";
 import { FavoritesView } from "@/components/FavoritesView";
@@ -25,7 +27,6 @@ import { useSidebarTabsStore } from "@/stores/sidebarTabsStore";
 import { usePendingView, pendingViewClass } from "@/hooks/usePendingView";
 import { useTransitionStyle } from "@/hooks/useTransitionStyle";
 import { isViewTransitionStyle, sectionTransitionName } from "@/lib/viewTransitions";
-import { PentagramLoader } from "@/components/PentagramLoader";
 
 interface GomoSub {
   id: string;
@@ -51,8 +52,14 @@ const MAIN_VIEW_DEPTH: Record<MainView, number> = {
 
 const Index = () => {
   const { loadProfile } = useProfileCache();
+  // AppLayout owns the shared auth query. On an SPA return it already has the
+  // viewer, so the feed can pick its viewer-scoped cache before its local
+  // profile/terms bootstrap finishes.
+  const { user: authUser, isLoading: authLoading } = useAuth();
   const [joinedGomoSubs, setJoinedGomoSubs] = useState<GomoSub[]>([]);
-  const [user, setUser] = useState<{ id: string } | null>(null);
+  const [user, setUser] = useState<{ id: string } | null>(() =>
+    authUser?.id ? { id: authUser.id } : null,
+  );
   const [currentUserUsername, setCurrentUserUsername] = useState("");
   // Consumed by ProcessedContent to colour @-mentions of the current user inside
   // post text, but nothing computes it any more (nickname colours now come from
@@ -63,7 +70,7 @@ const Index = () => {
   const [showTerms, setShowTerms] = useState(false);
   // Ранее принятая версия документов (null — записи нет).
   const [acceptedTermsVersion, setAcceptedTermsVersion] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(authLoading);
   // Sidebar «Разделы»: which section is expanded to show its subsections.
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const { sections, loading: sectionsLoading } = useThreadSections();
@@ -207,6 +214,15 @@ const Index = () => {
   
   useSessionTime(user?.id);
 
+  // The global auth query resolves before this page's profile customization and
+  // terms checks. That's enough to select the private feed cache and render it;
+  // those secondary requests continue without putting a loader in front of it.
+  useEffect(() => {
+    if (authLoading) return;
+    setUser(authUser?.id ? { id: authUser.id } : null);
+    setLoading(false);
+  }, [authLoading, authUser?.id]);
+
   useEffect(() => {
     const checkAuth = async () => {
       try {
@@ -310,8 +326,22 @@ const Index = () => {
 
   if (loading) {
     return (
-      <div className="bg-background flex items-center justify-center min-h-screen">
-        <PentagramLoader size="lg" />
+      <div className="bg-background min-h-screen">
+        <div className="max-w-6xl mx-auto px-4 py-6">
+          <div className="flex flex-col lg:grid lg:grid-cols-4 gap-6">
+            <div className="lg:col-span-3">
+              {targetMode === "feed" ? (
+                <>
+                  <StoriesRailSkeleton />
+                  <ThreadFeedSkeleton />
+                </>
+              ) : (
+                <QuietLoading className="min-h-[45vh]" />
+              )}
+            </div>
+            <div className="hidden lg:block lg:col-span-1" aria-hidden="true" />
+          </div>
+        </div>
       </div>
     );
   }
@@ -337,9 +367,11 @@ const Index = () => {
                 {/* Stories rail: only on the feed itself, above the cards. */}
                 {view.isShown("feed") && <StoriesRail />}
                 <ThreadFeed
+                  key={user?.id ?? "anon"}
                   currentUserId={user?.id}
                   currentUsername={currentUserUsername}
                   currentUserColor={currentUserColor}
+                  animateEntrance={!viewTransitionTarget && transitionStyle !== "none"}
                   onReady={view.readyFor("feed")}
                 />
               </div>

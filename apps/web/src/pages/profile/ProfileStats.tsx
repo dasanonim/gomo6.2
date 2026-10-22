@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { motion, useReducedMotion, type Variants } from "motion/react";
 import { formatCompactNumber } from "@/utils/formatNumber";
 import { ActiEye } from "@/components/ActiEye";
-import { morphOrigin, morphTransition, morphVariants, pressFeedback, STAGGER } from "@/lib/motion";
+import { CASCADE_VARIANTS, morphOrigin, morphTransition, morphVariants, pressFeedback } from "@/lib/motion";
 import type { Profile } from "./types";
 
 export interface ProfileStatsProps {
@@ -15,7 +15,6 @@ export interface ProfileStatsProps {
   onOpenWall: () => void;
 }
 
-const CASCADE: Variants = { hidden: {}, show: { transition: STAGGER } };
 const STAT_ITEM: Variants = morphVariants(0.88);
 
 /** One clickable stat of the inline row — number + label, X-style. */
@@ -67,7 +66,7 @@ export function ProfileStats({ profile, show, onOpenWall }: ProfileStatsProps) {
     <motion.div
       initial={reduceMotion ? false : "hidden"}
       animate="show"
-      variants={CASCADE}
+      variants={CASCADE_VARIANTS}
       className="flex items-center justify-between gap-2"
     >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">

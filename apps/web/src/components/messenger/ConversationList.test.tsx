@@ -102,17 +102,19 @@ describe("ConversationList", () => {
   });
 
   describe("loading state", () => {
-    it("shows loader when loading and no conversations", () => {
+    it("shows skeleton when loading and no conversations", () => {
       mockStore.isInitialLoading = true;
       render(<ConversationList />);
-      expect(screen.getByTestId("loader-md")).toBeInTheDocument();
+      expect(screen.getByTestId("conversation-list-skeleton")).toBeInTheDocument();
+      expect(screen.queryByTestId("conversation-list")).not.toBeInTheDocument();
     });
 
-    it("does not show loader when conversations exist", () => {
+    it("does not show skeleton when conversations exist", () => {
       mockStore.conversations = [mockConversation()];
       mockStore.isInitialLoading = true;
       render(<ConversationList />);
-      expect(screen.queryByTestId("loader-md")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("conversation-list-skeleton")).not.toBeInTheDocument();
+      expect(screen.getByTestId("conversation-list")).toBeInTheDocument();
     });
   });
 

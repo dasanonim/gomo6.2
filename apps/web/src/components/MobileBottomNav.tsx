@@ -14,6 +14,7 @@ import { useMessengerStore } from "@/stores/messengerStore";
 import { NavigationLink } from "@/components/NavigationLink";
 import { UserAvatar } from "@/components/UserAvatar";
 import { profileUrl } from "@/utils/entityUrl";
+import { springFor } from "@/lib/motion";
 import "./MobileBottomNav.css";
 
 type TabId = "feed" | "communities" | "chats" | "profile";
@@ -81,11 +82,11 @@ export function MobileBottomNav({ user }: MobileBottomNavProps) {
 
   useEffect(() => {
     if (dragRef.current?.didMove || tabWidth <= 0) return;
-    const controls = animate(indicatorX, activeIndex * tabWidth, {
-      ...(prefersReducedMotion
-        ? { duration: 0 }
-        : { type: "spring" as const, stiffness: 430, damping: 34, mass: 0.72 }),
-    });
+    const controls = animate(
+      indicatorX,
+      activeIndex * tabWidth,
+      springFor("standard", prefersReducedMotion),
+    );
     return () => controls.stop();
   }, [activeIndex, indicatorX, prefersReducedMotion, tabWidth]);
 
@@ -147,11 +148,11 @@ export function MobileBottomNav({ user }: MobileBottomNavProps) {
       suppressClickRef.current = false;
     }, 0);
     if (cancelled || tabWidth <= 0) {
-      animate(indicatorX, activeIndex * tabWidth, {
-        ...(prefersReducedMotion
-          ? { duration: 0 }
-          : { type: "spring" as const, stiffness: 430, damping: 34, mass: 0.72 }),
-      });
+      animate(
+        indicatorX,
+        activeIndex * tabWidth,
+        springFor("standard", prefersReducedMotion),
+      );
       return;
     }
 
@@ -171,11 +172,11 @@ export function MobileBottomNav({ user }: MobileBottomNavProps) {
     if (target.id !== activeTab) {
       navigate(target.to);
     } else {
-      animate(indicatorX, activeIndex * tabWidth, {
-        ...(prefersReducedMotion
-          ? { duration: 0 }
-          : { type: "spring" as const, stiffness: 430, damping: 34, mass: 0.72 }),
-      });
+      animate(
+        indicatorX,
+        activeIndex * tabWidth,
+        springFor("standard", prefersReducedMotion),
+      );
     }
   };
 

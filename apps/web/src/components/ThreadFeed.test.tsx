@@ -1,7 +1,11 @@
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, act } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi, afterEach, beforeAll, afterAll } from "vitest";
 
 import { wsService } from "@/services/websocket";
+import {
+  __resetFeedPageCacheForTests,
+  writeFeedPageCache,
+} from "@/components/feed/feedPageCache";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -165,6 +169,7 @@ describe("ThreadFeed", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    __resetFeedPageCacheForTests();
     defaultFetchMocks();
     intersectionCallback = null;
   });
@@ -175,7 +180,7 @@ describe("ThreadFeed", () => {
 
   // ─── Loading state ──────────────────────────────────────────────────────────
 
-  it("shows a quiet loading placeholder (no skeleton) before the first page", () => {
+  it("shows feed-shaped skeleton cards before the first page", () => {
     // Never-resolving fetch
     mockFetch.mockImplementation(() => new Promise(() => {}));
 
@@ -186,9 +191,9 @@ describe("ThreadFeed", () => {
       />,
     );
 
-    // No skeleton any more — the header's loading bar is the progress cue.
+    expect(container.querySelector("[data-testid='feed-skeleton']")).toHaveAttribute("aria-busy", "true");
+    expect(container.querySelectorAll("[data-testid='feed-post-skeleton']")).toHaveLength(2);
     expect(container.querySelector(".animate-pulse")).not.toBeInTheDocument();
-    expect(container.querySelector("[aria-busy='true']")).toBeInTheDocument();
   });
 
   // ─── Feed rendering ─────────────────────────────────────────────────────────
@@ -205,6 +210,96 @@ describe("ThreadFeed", () => {
       expect(screen.getByText("First Thread")).toBeInTheDocument();
     });
     expect(screen.getByText("Second Thread")).toBeInTheDocument();
+  });
+
+  it("cascades the first six cards without animating the rest of a long page", async () => {
+    const items = Array.from({ length: 8 }, (_, index) =>
+      createMockThreadItem({ id: `thread-${index}`, title: `Thread ${index}` }),
+    );
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(makeFeedResponse(items)),
+    });
+
+    const { container } = render(
+      <ThreadFeedComponent currentUserId="current-user" currentUsername="currentuser" />,
+    );
+
+    await waitFor(() => expect(screen.getByText("Thread 7")).toBeInTheDocument());
+    expect(container.querySelectorAll('[data-motion="cascade-row"]')).toHaveLength(6);
+  });
+
+  it("skips the cascade when the parent disables entrance motion", async () => {
+    const { container } = render(
+      <ThreadFeedComponent
+        currentUserId="current-user"
+        currentUsername="currentuser"
+        animateEntrance={false}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("First Thread")).toBeInTheDocument());
+    expect(container.querySelector('[data-motion="cascade-row"]')).not.toBeInTheDocument();
+  });
+
+  it("renders a viewer's cached first page immediately and revalidates it", async () => {
+    writeFeedPageCache(
+      "current-user",
+      20,
+      [createMockThreadItem({ id: "cached-thread", title: "Cached Thread" })],
+      true,
+    );
+    mockFetch.mockImplementation(() => new Promise(() => {}));
+    const onReady = vi.fn();
+
+    const { container } = render(
+      <ThreadFeedComponent
+        currentUserId="current-user"
+        currentUsername="currentuser"
+        onReady={onReady}
+      />,
+    );
+
+    expect(screen.getByText("Cached Thread")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='feed-skeleton']")).not.toBeInTheDocument();
+    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/feed?limit=21"),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("keeps cached posts in place and reveals fetched newcomers through the existing pill", async () => {
+    const cachedItem = createMockThreadItem({
+      id: "cached-thread",
+      title: "Cached Thread",
+      created_at: "2025-01-18T10:00:00Z",
+    });
+    writeFeedPageCache("current-user", 20, [cachedItem], true);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(makeFeedResponse([
+        createMockThreadItem({
+          id: "new-thread",
+          title: "New Thread",
+          created_at: "2025-01-19T10:00:00Z",
+        }),
+        cachedItem,
+      ])),
+    });
+
+    render(
+      <ThreadFeedComponent currentUserId="current-user" currentUsername="currentuser" />,
+    );
+
+    expect(screen.getByText("Cached Thread")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Показать 1 новых пост/ })).toBeInTheDocument();
+    });
+    expect(screen.queryByText("New Thread")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Показать 1 новых пост/ }));
+    expect(screen.getByText("New Thread")).toBeInTheDocument();
   });
 
   it("renders correct number of thread cards", async () => {
