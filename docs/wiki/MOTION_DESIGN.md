@@ -2,6 +2,8 @@
 
 **Status:** design sheet + P1/P8 implemented (`feat/animations`).
 Reference: Telegram iOS concept video (75 s, 1080×1080@60) — the "profile" reel.
+Owner taste notes (what was signed off / rejected, with locked parameters):
+[MOTION_TASTE.md](MOTION_TASTE.md). Read it before changing any animation.
 This file is the direction, not a spec of what exists.
 
 Purpose: keep motion **one language**, sourced from a real reference instead of

@@ -19,6 +19,9 @@
  * Reduced motion is honoured per-component via `useSpring(reduce)`; when it is
  * on, every preset collapses to an instant transition and spatial offsets are
  * dropped.
+ *
+ * Signed-off taste and locked parameters live in docs/wiki/MOTION_TASTE.md —
+ * read it before adding or retuning a preset.
  */
 import type { Transition, Variants } from "motion/react";
 
