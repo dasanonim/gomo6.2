@@ -203,24 +203,32 @@ const GomoSubs = () => {
               )}
             </div>
             {userId && (
-              <div className="grid shrink-0 grid-cols-2 rounded-full border border-border/50 bg-surface p-0.5" role="tablist" aria-label="Фильтр сообществ">
+              <div
+                className="relative grid shrink-0 grid-cols-2 rounded-full border border-border/50 bg-surface p-0.5"
+                role="tablist"
+                aria-label="Фильтр сообществ"
+              >
+                {/* Thumb: always mounted, sliding by transform (no framer
+                    layout projection). The controls strip is sticky with
+                    backdrop-blur — layoutId projection there mis-measures
+                    while the page scrolls and the thumb jumps; a plain x
+                    animation stays exact in every scroll position.
+                    grid-cols-2 ⇒ one cell = 50% − the 2px inset. */}
+                <motion.span
+                  aria-hidden
+                  className="absolute bottom-0.5 left-0.5 top-0.5 w-[calc(50%-2px)] rounded-full bg-primary"
+                  animate={{ x: tab === "mine" ? "100%" : "0%" }}
+                  initial={false}
+                  transition={springFor("snappy", prefersReducedMotion)}
+                />
                 {(["all", "mine"] as const).map((t) => (
                   <button
                     key={t}
                     role="tab"
                     aria-selected={tab === t}
                     onClick={() => switchTab(t)}
-                    className="relative h-9 rounded-full px-3.5 text-sm"
+                    className="relative z-10 h-9 rounded-full px-3.5 text-sm"
                   >
-                    {/* Telegram-style thumb: one shared layoutId element slides
-                        and morphs between the two labels instead of two fades. */}
-                    {tab === t && (
-                      <motion.span
-                        layoutId="gomosub-view-thumb"
-                        className="absolute inset-0 rounded-full bg-primary"
-                        transition={springFor("snappy", prefersReducedMotion)}
-                      />
-                    )}
                     <span
                       className={cn(
                         "relative z-10 transition-colors duration-200",
