@@ -538,10 +538,15 @@ const Board = () => {
 
   // Opening a gomosub by bare slug used to fetch threads with `channel_id=is.null`,
   // i.e. only channel-less posts — most subs looked empty until a channel was
-  // picked. Entering a sub now lands on its first channel (Discord behaviour).
+  // picked. Entering a sub now lands on its first forum channel (Discord
+  // behaviour). Only ONCE per mount: the bare slug is also the «общий» feed —
+  // an explicit click on that sidebar link must stay put.
+  const didAutoOpenRef = useRef(false);
   useEffect(() => {
+    if (didAutoOpenRef.current) return;
     if (!isGomoRoute || channelSlug || !slug) return;
     if (channels.length === 0) return;
+    didAutoOpenRef.current = true;
     // Prefer a forum channel: records live there, while `text` channels are
     // live chats that would greet the user with an empty composer instead.
     const first = channels.find((ch) => ch.kind === "forum") ?? channels[0];
