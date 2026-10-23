@@ -196,16 +196,13 @@ export function MobileBottomNav({ user, chromeHidden = false }: MobileBottomNavP
       aria-label="Основная навигация"
       aria-hidden={chromeHidden || undefined}
       // Telegram-style chrome exit: the rail slides below the viewport with the
-      // same spring family as the header's slide up, opacity follows for the
-      // safe-area gap, and visibility flips only at the end of the exit
-      // (transitionEnd) — never cutting the slide short.
+      // same spring family as the header's slide up; opacity follows for the
+      // safe-area gap. No visibility gating — that used to freeze the element
+      // invisible until the return spring finished, which read as "the panel
+      // popped back in with no animation". aria-hidden + the `is-chrome-hidden`
+      // pointer cutout cover interaction while it is off-screen.
       initial={false}
-      animate={
-        chromeHidden
-          ? { y: "112%", opacity: 0, transitionEnd: { visibility: "hidden" as const } }
-          : { y: "0%", opacity: 1, transitionEnd: { visibility: "visible" as const } }
-      }
-      style={{ visibility: "visible" as const }}
+      animate={chromeHidden ? { y: "112%", opacity: 0 } : { y: "0%", opacity: 1 }}
       transition={springFor("standard", prefersReducedMotion)}
     >
       <div
