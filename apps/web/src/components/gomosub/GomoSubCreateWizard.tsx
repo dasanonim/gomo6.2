@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { uploadFile, storageUrl } from "@/utils/storage";
 import { apiErrorMessage } from "@/utils/apiErrors";
 import { cn } from "@/lib/utils";
-import { Check, Globe, Hash, Lock, Pencil, Users, X } from "lucide-react";
+import { Check, Globe, Hash, Lock, Pencil, Users } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
 /* Presets                                                             */
@@ -300,14 +300,17 @@ export const GomoSubCreateWizard = ({ open, onOpenChange, onSubmit }: WizardProp
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[min(680px,92dvh)] w-[96vw] flex-col gap-0 overflow-hidden rounded-2xl border-border/60 bg-surface p-0 shadow-2xl sm:max-w-lg">
+      <DialogContent
+        overlayClassName="bg-background/95 backdrop-blur-sm"
+        className="flex h-[min(680px,92dvh)] w-[96vw] flex-col gap-0 overflow-hidden rounded-2xl border-border/60 bg-surface p-0 shadow-2xl sm:max-w-lg"
+      >
         <DialogHeader className="sr-only">
           <DialogTitle>Создание g-саба</DialogTitle>
         </DialogHeader>
 
-        {/* Header: progress bar + step dot/title + close */}
+        {/* Header: progress bar + step dot/title (× is the shared Dialog Close) */}
         <div className="relative shrink-0 px-5 pt-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between pr-9">
             <span className="text-[13px] font-semibold text-foreground/90">
               <span className="text-muted-foreground">{index + 1} ·</span> {STEPS[index]}
             </span>
@@ -319,47 +322,42 @@ export const GomoSubCreateWizard = ({ open, onOpenChange, onSubmit }: WizardProp
               style={{ width: `${((index + 1) / STEPS.length) * 100}%` }}
             />
           </div>
-          <button
-            type="button"
-            onClick={() => onOpenChange(false)}
-            aria-label="Закрыть"
-            className="absolute right-3 top-1 flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
         </div>
 
-        {/* Body: one thought per screen, slide transitions */}
-        <div className="relative min-h-0 flex-1 overflow-y-auto">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={index}
-              initial={{ opacity: 0, x: dir * 48 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: dir * -48 }}
-              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-              className="px-5 py-5"
-            >
-              {index === 0 && (
-                <WizardPickTemplate template={template} onPick={(t) => setTemplate(t)} />
-              )}
-              {index === 1 && (
-                <WizardPickContext
-                  context={context}
-                  template={template}
-                  onPick={(ctx) => setContext(ctx)}
-                />
-              )}
-              {index === 2 && (
-                <WizardFinish
-                  name={name}
-                  setName={setName}
-                  slug={slug}
-                  slugValid={slugValid}
-                  slugEditing={slugEditing}
-                  onSlugStartEdit={() => { setSlugValue(slug); setSlugEditing(true); }}
-                  onSlugEdit={(v) => setSlugValue(v.toLowerCase())}
-                  onCancelSlugEdit={() => setSlugValue(null)}
+        {/* Body: one thought per screen, slide transitions.
+            Outer frame clips the slides (no scrollbars mid-animation); the
+            inner scroller owns vertical scrolling with a stable gutter so the
+            classic scrollbar never flashes in/out while steps change. */}
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          <div className="absolute inset-0 overflow-y-auto overflow-x-hidden px-5 py-5 [scrollbar-gutter:stable]">
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={index}
+                initial={{ opacity: 0, x: dir * 48 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: dir * -48 }}
+                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              >
+                {index === 0 && (
+                  <WizardPickTemplate template={template} onPick={(t) => setTemplate(t)} />
+                )}
+                {index === 1 && (
+                  <WizardPickContext
+                    context={context}
+                    template={template}
+                    onPick={(ctx) => setContext(ctx)}
+                  />
+                )}
+                {index === 2 && (
+                  <WizardFinish
+                    name={name}
+                    setName={setName}
+                    slug={slug}
+                    slugValid={slugValid}
+                    slugEditing={slugEditing}
+                    onSlugStartEdit={() => { setSlugValue(slug); setSlugEditing(true); }}
+                    onSlugEdit={(v) => setSlugValue(v.toLowerCase())}
+                    onCancelSlugEdit={() => setSlugValue(null)}
                   onCommitSlug={commitSlugEdit}
                   avatarPath={avatarPath}
                   uploadingAvatar={uploadingAvatar}
@@ -370,6 +368,7 @@ export const GomoSubCreateWizard = ({ open, onOpenChange, onSubmit }: WizardProp
               )}
             </motion.div>
           </AnimatePresence>
+          </div>
         </div>
 
         {/* Footer: back / next */}

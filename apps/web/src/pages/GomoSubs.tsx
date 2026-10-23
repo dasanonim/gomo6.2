@@ -233,20 +233,20 @@ const GomoSubs = () => {
         </div>
       </div>
 
-      {/* ── Joined rail (+ скрытая «не на каждый день» кнопка создания) ── */}
-      {mine.length > 0 && (
-        <section>
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-muted-foreground">Мои сообщества</h2>
-            <button
-              onClick={() => navigate("/g/create")}
-              title="Создать новый саб"
-              aria-label="Создать новый саб"
-              className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
-          </div>
+      {/* ── Joined rail (always visible: with subs or as a create entry) ── */}
+      <section>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-muted-foreground">Мои сообщества</h2>
+          <button
+            onClick={() => navigate("/g/create")}
+            title="Создать новый саб"
+            aria-label="Создать новый саб"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </div>
+        {mine.length > 0 ? (
           <div className="mt-2 flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
             {mine.map((sub) => {
               const avatar = sub.gomosub_avatar_url
@@ -273,8 +273,16 @@ const GomoSubs = () => {
               );
             })}
           </div>
-        </section>
-      )}
+        ) : (
+          <button
+            onClick={() => navigate("/g/create")}
+            className="mt-2 flex h-11 items-center gap-2 rounded-full border border-dashed border-border/70 px-4 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+          >
+            <Plus className="h-4 w-4 text-primary" />
+            Создай первый саб
+          </button>
+        )}
+      </section>
 
       {/* ── Catalog grid ── */}
       <main className="mt-4 pb-10">
