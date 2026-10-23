@@ -219,6 +219,7 @@ const en: LocaleResources = {
     login: "Log in",
     register: "Sign up",
     openSearch: "Open search",
+    closeSearch: "Hide search",
     translate: "Translations",
     skipToContent: "Skip to main content",
     searchPlaceholder: "Search: user, g-sub, post...",

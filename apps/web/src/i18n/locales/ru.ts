@@ -220,6 +220,7 @@ const ru: LocaleResources = {
     login: "Войти",
     register: "Регистрация",
     openSearch: "Открыть поиск",
+    closeSearch: "Скрыть поиск",
     translate: "Переводы",
     skipToContent: "Перейти к основному содержимому",
     searchPlaceholder: "Поиск: юзер, g-саб, запись...",

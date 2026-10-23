@@ -1295,45 +1295,58 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
             <Gomo6Mark className="app-header-logo h-11 w-11 text-primary transition-transform duration-200 ease-out group-hover:scale-105" />
           </NavigationLink>
           <div className="flex gap-1 sm:gap-2 items-center shrink-0">
+            {/* Desktop search: one element that morphs — the lens button IS
+                the pill's right end, and the field unrolls leftward out of it
+                with a spring (width via framer, colors via CSS transition).
+                Enter submits; Esc / outside click / navigation collapses it
+                back into the lens. */}
             <div ref={searchRef} className="hidden lg:block relative">
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={t('nav.openSearch')}
-                className="h-8 w-8 p-0 rounded-full"
-                onClick={() => setDesktopSearchExpanded((prev) => !prev)}
-              >
-                <Search className="h-4 w-4" />
-              </Button>
-
-              <motion.div
+              <motion.form
+                onSubmit={submitSearch}
                 initial={false}
-                animate={{
-                  width: desktopSearchExpanded ? 520 : 0,
-                  opacity: desktopSearchExpanded ? 1 : 0,
-                }}
-                transition={{ duration: 0.22, ease: "easeOut" }}
-                className="absolute right-0 top-0 overflow-hidden"
+                animate={{ width: desktopSearchExpanded ? 520 : 36 }}
+                transition={SPRING.standard}
+                className={`relative flex items-center justify-end h-9 rounded-full transition-[border-color,background-color,box-shadow,backdrop-filter] duration-200 ease-out ${
+                  desktopSearchExpanded
+                    ? "border border-border/70 bg-background/90 backdrop-blur shadow-lg"
+                    : "border border-transparent bg-transparent"
+                }`}
               >
-                <form onSubmit={submitSearch} className="relative w-[520px]">
-                  <div className="h-10 rounded-full border border-border/70 bg-background/90 backdrop-blur px-2 pr-1 flex items-center shadow-lg">
-                    <Search className="w-4 h-4 ml-2 text-muted-foreground" />
-                    <Input
-                      ref={desktopSearchInputRef}
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder={t('nav.searchPlaceholder')}
-                      className="h-8 pl-3 pr-2 border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-                      onFocus={() => {
-                        if (searchQuery.trim().length >= 2) setSearchOpen(true);
-                      }}
-                    />
-                    <Button type="submit" size="sm" variant="ghost" className="h-8 px-3 rounded-full">
-                      {t('nav.find')}
-                    </Button>
-                  </div>
-                </form>
-              </motion.div>
+                <motion.div
+                  className="flex-1 min-w-0 pl-3 z-[1]"
+                  initial={false}
+                  animate={{ opacity: desktopSearchExpanded ? 1 : 0 }}
+                  transition={{ duration: 0.18, ease: "easeOut" }}
+                  style={{ pointerEvents: desktopSearchExpanded ? undefined : "none" }}
+                >
+                  <Input
+                    ref={desktopSearchInputRef}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape" && desktopSearchExpanded) {
+                        e.preventDefault();
+                        setDesktopSearchExpanded(false);
+                      }
+                    }}
+                    placeholder={t('nav.searchPlaceholder')}
+                    className="h-9 w-full pl-0 pr-2 py-0 border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                    onFocus={() => {
+                      if (searchQuery.trim().length >= 2) setSearchOpen(true);
+                    }}
+                  />
+                </motion.div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={desktopSearchExpanded ? t('nav.closeSearch') : t('nav.openSearch')}
+                  className="absolute right-0 top-0 h-9 w-9 p-0 rounded-full shrink-0"
+                  onClick={() => setDesktopSearchExpanded((prev) => !prev)}
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
+              </motion.form>
 
               {searchOpen && desktopSearchExpanded && (
                 <div className="absolute top-12 right-0 w-[520px] rounded-2xl border border-border bg-card/95 backdrop-blur shadow-lg p-3 z-50 space-y-3">
