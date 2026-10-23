@@ -46,18 +46,16 @@ const profileWallCommentAuthorJSON = `CASE WHEN c.is_deleted THEN '{}'::json ELS
   '{}'::json
 ) END AS author`
 
-// wallPostCountsSQL returns the correlated-subquery columns that embed the
-// interaction state of every wall post. The {viewer} placeholder is replaced
-// with the authenticated viewer's parameter reference by runSelectQuery.
-//
-// Embedding counts here removed the biggest request amplifier in the wall UI:
-// the client used to fire 5 requests per post (likes count, comments count,
-// reposts count, my like, my repost) — a 20-post wall cost 100 requests.
+// wallPostCountsSQL returns the interaction state of every wall post. The
+// four counters are denormalized columns on profile_wall_posts maintained by
+// DB triggers (migrations 139/140 — same source the feed reads), so listing N
+// posts costs no per-post aggregation. Only the viewer-dependent predicates
+// stay correlated: they are single indexed lookups, not counts.
 const wallPostCountsSQL = `
-       (SELECT COUNT(*) FROM profile_wall_post_likes l WHERE l.post_id = p.id) AS likes_count,
-       (SELECT COUNT(*) FROM profile_wall_post_comments cm WHERE cm.post_id = p.id) AS comments_count,
-       (SELECT COUNT(*) FROM profile_wall_post_reposts r WHERE r.post_id = p.id) AS reposts_count,
-       (SELECT COUNT(*) FROM profile_wall_post_views v WHERE v.post_id = p.id) AS views_count,
+       p.likes_count AS likes_count,
+       p.comments_count AS comments_count,
+       p.reposts_count AS reposts_count,
+       p.views_count AS views_count,
        EXISTS(SELECT 1 FROM profile_wall_post_likes l WHERE l.post_id = p.id AND l.user_id = {viewer}) AS liked_by_viewer,
        (SELECT r.id FROM profile_wall_post_reposts r WHERE r.post_id = p.id AND r.user_id = {viewer} AND r.wall_user_id = {viewer} LIMIT 1) AS my_repost_record_id,
        (SELECT r.reposted_wall_post_id FROM profile_wall_post_reposts r WHERE r.post_id = p.id AND r.user_id = {viewer} AND r.wall_user_id = {viewer} LIMIT 1) AS my_reposted_wall_post_id,`

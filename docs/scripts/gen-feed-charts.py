@@ -60,6 +60,36 @@ def main() -> None:
     )
 
     grouped_categories(
+        "opt-chatter-counts.svg",
+        "Дубли запросов на странице профиля",
+        "число запросов за загрузку /profile/11 · dev-стенд",
+        [
+            ("unread-count", 3, 1),
+            ("emoji-subs", 3, 1),
+            ("emoji-packs", 3, 1),
+            ("conversations", 2, 1),
+            ("auth/me", 2, 1),
+            ("notifications", 2, 1),
+            ("membership", 3, 1),
+        ],
+        4,
+        before_total="44",
+        after_total="30",
+    )
+
+    grouped_categories(
+        "opt-wall-buffers.svg",
+        "Стена профиля: буферы на 10 постов",
+        "пользователь с 84 постами · тёплый кэш · меньше — лучше",
+        [
+            ("10 постов", 554, 73),
+        ],
+        600,
+        before_total="554",
+        after_total="73",
+    )
+
+    grouped_categories(
         "opt-feed-scaling.svg",
         "Авторизованная лента при росте корпуса, мс",
         "бенч: 60 юзеров, ~5 лайков/пост · старая — O(корпус), новая — O(страница)",

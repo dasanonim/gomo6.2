@@ -2,8 +2,6 @@
 // Owns WebSocket subscription lifecycle, reconnection recovery, and polling fallback.
 
 import { wsService, type WebSocketMessage, type WebSocketMessageType } from "./websocket";
-import { messengerApi } from "./messengerApi";
-import { apiClient } from "@/integrations/api/client";
 
 type MessageHandler = (message: WebSocketMessage) => void;
 
@@ -161,23 +159,39 @@ class EventManager {
 
   // ── Internal: Sync ─────────────────────────────────────────────────────────
 
+  private syncInFlight: Promise<void> | null = null;
+
   private async syncAll(_forceFullRefetch = false): Promise<void> {
+    if (this.syncInFlight) return this.syncInFlight;
+    this.syncInFlight = this.doSync();
+    try {
+      await this.syncInFlight;
+    } finally {
+      this.syncInFlight = null;
+    }
+  }
+
+  private async doSync(): Promise<void> {
     this.lastSyncTime = Date.now();
 
     try {
-      const notifResp = await apiClient.request<{ unread_count: number }>(
-        `/api/v1/notifications/unread-count`,
-      );
-      if (notifResp) {
-        const count = (notifResp.data as { unread_count?: number } | null)?.unread_count ?? 0;
-        this.onNotificationCountUpdate?.(count);
-      }
+      // Single source of truth for the badge: the notification store owns the
+      // request (in-flight dedupe + 15s TTL), so the bell's own init fetch and
+      // this sync never hit the network twice. Dynamic import: the store
+      // already imports this manager statically, so a static import back
+      // would be a module cycle.
+      const { useNotificationStore } = await import("../stores/notificationStore");
+      await useNotificationStore.getState().fetchUnreadCount();
     } catch {
       // Silent
     }
 
     try {
-      const convs = await messengerApi.listConversations();
+      // TTL-guarded inside the store: right after init (or a recent sync) this
+      // reuses the snapshot instead of refetching, but the count callback
+      // still fires so badges stay correct.
+      const { useMessengerStore } = await import("../stores/messengerStore");
+      const convs = await useMessengerStore.getState().loadConversations();
       this.onMessengerCountUpdate?.(convs);
     } catch {
       // Silent

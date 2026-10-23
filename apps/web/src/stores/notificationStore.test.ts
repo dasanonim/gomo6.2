@@ -131,4 +131,34 @@ describe('notificationStore', () => {
 
     expect(store.getState().isLoadingMore).toBe(true);
   });
+
+  it('racing init() calls fetch the badge and first page once', async () => {
+    const { apiClient } = await import('@/integrations/api/client');
+    const store = useNotificationStore;
+
+    await act(async () => {
+      await Promise.all([store.getState().init('u1'), store.getState().init('u1')]);
+    });
+
+    expect(vi.mocked(apiClient.getUnreadNotificationsCount)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(apiClient.getNotifications)).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetchUnreadCount reuses a fresh badge instead of refetching', async () => {
+    const { apiClient } = await import('@/integrations/api/client');
+    const store = useNotificationStore;
+
+    await act(async () => {
+      await store.getState().fetchUnreadCount();
+      await store.getState().fetchUnreadCount();
+    });
+
+    expect(vi.mocked(apiClient.getUnreadNotificationsCount)).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await store.getState().fetchUnreadCount(true);
+    });
+
+    expect(vi.mocked(apiClient.getUnreadNotificationsCount)).toHaveBeenCalledTimes(2);
+  });
 });

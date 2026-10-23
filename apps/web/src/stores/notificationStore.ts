@@ -17,13 +17,20 @@ type NotificationStore = {
   fetchInitial: (isRead?: string) => Promise<void>;
   fetchMore: () => Promise<void>;
   resetAndFetch: (isRead?: string) => Promise<void>;
-  fetchUnreadCount: () => Promise<void>;
+  fetchUnreadCount: (force?: boolean) => Promise<void>;
   markAsRead: (id: string) => void;
   markAllAsRead: () => void;
   cleanup: () => void;
 };
 
 const PAGE_SIZE = 20;
+
+// Freshness window for the unread badge: WS pushes every increment
+// immediately, so background re-reads only need to heal drift (missed socket
+// events while offline). Anything inside the window is served from the store.
+const UNREAD_COUNT_TTL_MS = 15_000;
+let unreadCountInFlight: Promise<void> | null = null;
+let unreadCountLoadedAt = 0;
 
 export const useNotificationStore = create<NotificationStore>((set, get) => ({
   notifications: [],
@@ -37,8 +44,10 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
 
   init: (userId: string) => {
     if (get().initialized) return;
-
-    set({ isLoading: true, notifications: [], offset: 0, hasMore: true });
+    // Mark synchronously: with StrictMode (or two mounters racing) the second
+    // init() must observe the first BEFORE its async work settles, otherwise
+    // both fetch the badge and the first page.
+    set({ initialized: true, isLoading: true, notifications: [], offset: 0, hasMore: true });
 
     // Ensure eventManager is initialized
     eventManager.init(userId);
@@ -82,9 +91,9 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
 
     // Fetch the unread badge independently of the messenger store's sync, so
     // the bell is correct even before the messenger initializes.
-    get().fetchUnreadCount();
+    void get().fetchUnreadCount();
 
-    get().fetchInitial().then(() => set({ isLoading: false, initialized: true }));
+    void get().fetchInitial().then(() => set({ isLoading: false }));
   },
 
   fetchInitial: async (isRead?: string) => {
@@ -154,16 +163,24 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
     await get().fetchInitial(isRead);
   },
 
-  fetchUnreadCount: async () => {
-    try {
-      const resp = await apiClient.getUnreadNotificationsCount();
-      if (resp.data) {
-        const d = resp.data as { unread_count: number };
-        set({ unreadCount: d.unread_count });
+  fetchUnreadCount: async (force?: boolean) => {
+    if (unreadCountInFlight) return unreadCountInFlight;
+    if (!force && Date.now() - unreadCountLoadedAt < UNREAD_COUNT_TTL_MS) return;
+    unreadCountInFlight = (async () => {
+      try {
+        const resp = await apiClient.getUnreadNotificationsCount();
+        if (resp.data) {
+          const d = resp.data as { unread_count: number };
+          set({ unreadCount: d.unread_count });
+          unreadCountLoadedAt = Date.now();
+        }
+      } catch {
+        // Silent
+      } finally {
+        unreadCountInFlight = null;
       }
-    } catch {
-      // Silent
-    }
+    })();
+    return unreadCountInFlight;
   },
 
   markAsRead: (id: string) => {
@@ -201,6 +218,8 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
   },
 
   cleanup: () => {
+    unreadCountInFlight = null;
+    unreadCountLoadedAt = 0;
     set({
       notifications: [],
       unreadCount: 0,

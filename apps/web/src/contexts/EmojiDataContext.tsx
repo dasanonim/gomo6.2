@@ -49,6 +49,10 @@ interface EmojiDataContextValue {
 
 const EmojiDataContext = createContext<EmojiDataContextValue | null>(null);
 
+// Freshness window for the subscriptions snapshot: the picker reads it on
+// every open, so background re-reads only need to heal drift.
+const EMOJI_DATA_TTL_MS = 60_000;
+
 export const EmojiDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Seed synchronously from the local cache so the very first paint already
   // has emojis and packs — no network round-trip before custom emojis render.
@@ -77,6 +81,13 @@ export const EmojiDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const loadingRef = useRef(false);
   const initialLoadStartedRef = useRef(false);
   const userIdRef = useRef<string | null>(cacheSeed?.userId ?? null);
+  // Single-flight + freshness for the subscriptions fetch: every driver
+  // (mount, auth-change, focus, background refresh) funnels through
+  // loadSubscribedData, which collapses concurrent calls and reuses a fresh
+  // load for the same user instead of refetching.
+  const loadInFlightRef = useRef<Promise<void> | null>(null);
+  const loadedUserRef = useRef<string | null>(null);
+  const loadedAtRef = useRef(0);
 
   // Sync with the app's shared auth query (same key as useAuth): when the
   // authenticated user changes — login/logout in THIS tab or another — reload
@@ -91,7 +102,15 @@ export const EmojiDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
   const authUserId = authUser?.id ?? null;
 
-  const loadSubscribedData = useCallback(async () => {
+  const loadSubscribedData = useCallback(async (force?: boolean) => {
+    // Collapse every driver (mount, auth-change, focus, background refresh)
+    // onto one request: concurrent callers share it, and a fresh load for the
+    // same user is reused for 60s. Mutations pass force=true.
+    if (loadInFlightRef.current) {
+      await loadInFlightRef.current;
+      return;
+    }
+    const active = loadInFlightRef.current = (async () => {
     try {
       const { data: { user } } = await api.auth.getUser();
       const uid = user?.id ?? null;
@@ -107,6 +126,10 @@ export const EmojiDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (!user) {
         // Logged out: per-user state is already cleared above (privacy); the
         // emoji map stays so posts and nicknames keep rendering.
+        setIsLoading(false);
+        return;
+      }
+      if (!force && uid === loadedUserRef.current && Date.now() - loadedAtRef.current < EMOJI_DATA_TTL_MS) {
         setIsLoading(false);
         return;
       }
@@ -126,6 +149,8 @@ export const EmojiDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setSubscribedPacks(subscribed);
       setOwnedPacks(owned);
       setSubscribedPackIds(new Set(subscribed.map(p => p.id)));
+      loadedUserRef.current = uid;
+      loadedAtRef.current = Date.now();
 
       const emojiMap = new Map<string, EmojiData>();
       for (const pack of packs) {
@@ -156,7 +181,10 @@ export const EmojiDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // Allow subsequent reloads (auth changes, refreshData). The initial-load
       // guard sets this true once so the watcher above cannot double-fetch.
       loadingRef.current = false;
+      loadInFlightRef.current = null;
     }
+    })();
+    await active;
   }, []);
 
   useEffect(() => {
@@ -329,8 +357,9 @@ export const EmojiDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
 
     // Background refresh keeps counts/ordering accurate without blocking the
-    // UI — the pack is already visible from the optimistic update.
-    void loadSubscribedData();
+    // UI — the pack is already visible from the optimistic update. Forced: the
+    // server state just changed, so the TTL snapshot is stale by definition.
+    void loadSubscribedData(true);
     return true;
   }, [loadSubscribedData]);
 
@@ -363,7 +392,7 @@ export const EmojiDataProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return false;
     }
 
-    void loadSubscribedData();
+    void loadSubscribedData(true);
     return true;
   }, [subscribedPackIds, subscribedPacks, loadSubscribedData]);
 

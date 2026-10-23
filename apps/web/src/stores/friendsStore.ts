@@ -2,6 +2,10 @@ import { create } from "zustand";
 import { api } from "@/integrations/api/compat";
 import { useLoadingBarStore } from "@/stores/loadingBarStore";
 
+// In-flight status checks per user: the profile page and every mounted
+// FriendButton ask for the same status on mount — they share one request.
+const statusInFlight = new Map<string, Promise<FriendStatus>>();
+
 /**
  * Relationship with another user from the viewer's perspective.
  * - `none` — not following, not followed by, not friends
@@ -250,23 +254,33 @@ export const useFriendsStore = create<FriendsStore>((set, get) => ({
   },
 
   checkStatus: async (userId: string): Promise<FriendStatus> => {
-    try {
-      const resp = await apiRequest(`/api/v1/friends/status/${userId}`);
-      if (resp.success) {
-        const status = resp.data.status as FriendStatus;
-        const followsYou = Boolean(resp.data.follows_you);
-        set((state) => ({
-          friendStatusMap: {
-            ...state.friendStatusMap,
-            [userId]: { status, followsYou },
-          },
-        }));
-        return status;
+    const pending = statusInFlight.get(userId);
+    if (pending) return pending;
+    const run = (async (): Promise<FriendStatus> => {
+      try {
+        const resp = await apiRequest(`/api/v1/friends/status/${userId}`);
+        if (resp.success) {
+          const status = resp.data.status as FriendStatus;
+          const followsYou = Boolean(resp.data.follows_you);
+          set((state) => ({
+            friendStatusMap: {
+              ...state.friendStatusMap,
+              [userId]: { status, followsYou },
+            },
+          }));
+          return status;
+        }
+      } catch {
+        // Silent
       }
-    } catch {
-      // Silent
+      return "none";
+    })();
+    statusInFlight.set(userId, run);
+    try {
+      return await run;
+    } finally {
+      statusInFlight.delete(userId);
     }
-    return "none";
   },
 
   setStatus: (userId: string, status: FriendStatus, followsYou?: boolean) => {

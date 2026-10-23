@@ -16,6 +16,7 @@ import { getProfileCustomization, type ProfileCustomization } from "@/utils/prof
 import { normalizeProfileBackgroundVariant, type ProfileBackgroundVariant } from "@/utils/profileBackground";
 import { isValidThemeTokens, applyProfileThemeTokens } from "@/utils/profileTheme";
 import { getCurrentUserMeta } from "@/utils/currentUserMeta";
+import { useFriendsStore } from "@/stores/friendsStore";
 import { useProfileData } from "./profile/useProfileData";
 import { warmProfilePageRow } from "@/routes/data/profileData";
 import { useProfileEditing } from "./profile/useProfileEditing";
@@ -188,8 +189,6 @@ const Profile = () => {
 
   const loadProfile = useCallback(async () => {
     const sessionAuth = await api.auth.getSession();
-    const token = sessionAuth.data.session?.access_token;
-    const headers: Record<string, string> | undefined = token ? { 'Authorization': `Bearer ${token}` } : undefined;
     const localSessionUser = sessionAuth.data.session?.user;
 
     // The route parameter is a public number on new links and a UUID on old
@@ -229,12 +228,14 @@ const Profile = () => {
     const profileId = data?.id ?? "";
     const isOwnProfileBySession = !!localSessionUser?.id && localSessionUser.id === profileId;
 
-    // The three dependent reads stay parallel with each other.
+    // The two dependent reads stay parallel with each other. Friendship status
+    // is NOT fetched here: it lives in the shared friends store (the same
+    // source the FriendButton reads), so the page and the button share one
+    // request and the guards below follow later button actions without reload.
     let privacyRes: Response | null = null;
-    let friendshipRes: Response | null = null;
     let customization: Awaited<ReturnType<typeof getProfileCustomization>> | null = null;
     if (profileId) {
-      [privacyRes, friendshipRes, customization] = await Promise.all([
+      [privacyRes, customization] = await Promise.all([
         // The generic /privacy_settings endpoint is viewer-scoped (returns only
         // the caller's own row), so a foreign profile must use the public
         // /users/:id/privacy endpoint — the same rules the server enforces on
@@ -242,11 +243,6 @@ const Profile = () => {
         isOwnProfileBySession
           ? fetch(`/api/v1/privacy_settings?user_id=eq.${profileId}`)
           : fetch(`/api/v1/users/${profileId}/privacy`),
-        // Guests cannot read a foreign user's friend status (protected endpoint)
-        // and the owner is always a friend — skip the request in both cases.
-        !isOwnProfileBySession && localSessionUser?.id
-          ? fetch(`/api/v1/friends/status/${profileId}`, { headers }).catch(() => null)
-          : Promise.resolve(null),
         getProfileCustomization(profileId),
       ]);
     }
@@ -297,17 +293,18 @@ const Profile = () => {
 
       // Friendship status for the private-profile guards. Use the session user
       // (localSessionUser) instead of React state currentUser to avoid a race
-      // where currentUser is not yet set. The owner is always a friend; guests
-      // get "not a friend" without a doomed 401 request.
+      // where currentUser is not yet set. The value is resolved through the
+      // shared friends store (deduped with the FriendButton); the reactive
+      // subscription below then keeps the guards in sync with later actions.
+      // Guests cannot read a foreign user's friend status (protected endpoint)
+      // and the owner is always a friend — no request in both cases.
       if (isOwnProfileBySession) {
         setIsMutualFriend(true);
-      } else if (localSessionUser?.id && friendshipRes) {
-        try {
-          const friendResult = await friendshipRes.json();
-          setIsMutualFriend(friendResult.data?.status === 'friends');
-        } catch {
-          setIsMutualFriend(false);
-        }
+      } else if (localSessionUser?.id) {
+        setIsMutualFriend(null);
+        void useFriendsStore.getState().checkStatus(profileId).then((s) => {
+          setIsMutualFriend(s === "friends");
+        });
       } else {
         setIsMutualFriend(false);
       }
@@ -329,6 +326,13 @@ const Profile = () => {
   // owner checks and the messenger deep link. The parameter itself may be a
   // public number, so the resolved row id is what gets passed around.
   const resolvedUserId = profile?.id ?? "";
+
+  // Live friendship status for the private-profile guards below. The store is
+  // the single source (loadProfile resolves through it too), so befriending
+  // via the FriendButton updates the guards without a page reload.
+  const liveFriendStatus = useFriendsStore((s) =>
+    resolvedUserId ? s.friendStatusMap[resolvedUserId]?.status : undefined,
+  );
 
   const realtimeStatus = useUserRealtimeStatus(resolvedUserId || undefined);
   useEffect(() => {
@@ -367,6 +371,11 @@ const Profile = () => {
   // section CanViewUser* checks) so the client hides exactly what the backend
   // refuses to serve.
   const isOwnProfile = !!resolvedUserId && currentUser?.id === resolvedUserId;
+
+  useEffect(() => {
+    if (liveFriendStatus === undefined || !resolvedUserId || isOwnProfile) return;
+    setIsMutualFriend(liveFriendStatus === "friends");
+  }, [liveFriendStatus, resolvedUserId, isOwnProfile]);
   // ── Stories ───────────────────────────────────────────────────────────────
   // One read per profile visit feeds both the avatar ring and the viewer; the
   // store keeps the slide list, so marking a slide viewed shrinks the ring

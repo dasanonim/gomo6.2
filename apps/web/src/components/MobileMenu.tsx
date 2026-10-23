@@ -24,6 +24,7 @@ import {
 import { toast } from "sonner";
 import { HeaderUsername } from "@/components/HeaderUsername";
 import { storageUrl } from "@/utils/storage";
+import { useProfileCache } from "@/contexts/ProfileCacheContext";
 import { useQuery } from "@tanstack/react-query";
 import { formatDropsLabel } from "@/utils/formatDropsLabel";
 import { SectionIcon } from "@/components/topic/sectionIcons";
@@ -123,23 +124,21 @@ export const MobileMenu = ({ user, isModerator }: MobileMenuProps) => {
     staleTime: 30 * 1000,
   });
 
+  // Self username/avatar ride the batched profile loader (one shared
+  // /profiles/summary call with every mounted badge) instead of a dedicated
+  // per-mount /profiles request.
+  const { loadProfile } = useProfileCache();
+
   useEffect(() => {
     if (user) {
-      const loadProfile = async () => {
-        const { data } = await api
-          .from("profiles")
-          .select("username, avatar_url")
-          .eq("id", user.id)
-          .single();
-
-        if (data) {
-          setUsername(data.username as string);
-          setAvatarUrl(storageUrl("post-images", data.avatar_url as string | null));
-        }
+      const loadSelfProfile = async () => {
+        const data = await loadProfile(user.id);
+        if (data.username) setUsername(data.username);
+        setAvatarUrl(storageUrl("post-images", data.avatarUrl ?? null));
       };
-      loadProfile();
+      loadSelfProfile();
     }
-  }, [user]);
+  }, [user, loadProfile]);
 
   useEffect(() => {
     if (!user?.id) return;

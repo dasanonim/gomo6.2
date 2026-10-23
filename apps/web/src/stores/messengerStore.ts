@@ -43,6 +43,19 @@ let messageLoadGeneration = 0;
 let loadMoreRequestGeneration = 0;
 let conversationLoadGeneration = 0;
 let initInFlight: Promise<void> | null = null;
+// Freshness window for the conversation list: background syncs (reconnect,
+// ShareSheet open, group-updated broadcasts) reuse the snapshot instead of
+// refetching. Explicit user-driven reloads pass { force: true }.
+const CONVERSATIONS_TTL_MS = 30_000;
+let conversationsInFlight: Promise<ConversationView[]> | null = null;
+let conversationsLoadedAt = 0;
+
+/** Test-only reset for the conversation-list TTL/single-flight (mirrors
+ * __resetOutboxForTests): each test starts with a cold cache. */
+export function __resetConversationCacheForTests(): void {
+  conversationsInFlight = null;
+  conversationsLoadedAt = 0;
+}
 /** The outbox retry loop (one timer, one in-flight flush). */
 let outboxTimer: ReturnType<typeof setTimeout> | null = null;
 let outboxFlushing = false;
@@ -478,7 +491,7 @@ type MessengerStore = {
 
   // ── Actions (API) ─────────────────────────────────────────────────────
   init: () => Promise<void>;
-  loadConversations: () => Promise<void>;
+  loadConversations: (opts?: { force?: boolean }) => Promise<ConversationView[]>;
   ensureConversation: (conversationId: string) => Promise<void>;
   loadMessages: (conversationId: string) => Promise<void>;
   syncMessages: (conversationId: string) => Promise<void>;
@@ -615,18 +628,32 @@ export const useMessengerStore = create<MessengerStore>((set, get) => ({
   },
 
   // ── Load conversations ────────────────────────────────────────────────
-  loadConversations: async () => {
+  // Returns the current snapshot (freshly fetched or TTL-cached) so background
+  // syncs can feed it straight into their callbacks without a second read.
+  loadConversations: async (opts?: { force?: boolean }) => {
+    if (!opts?.force && Date.now() - conversationsLoadedAt < CONVERSATIONS_TTL_MS) {
+      return get().conversations;
+    }
+    if (conversationsInFlight) return conversationsInFlight;
     const generation = ++conversationLoadGeneration;
-    const raw = await messengerApi.listConversations();
-    const convs = await decryptNotesPreviews(raw);
-    if (generation !== conversationLoadGeneration) return;
-    const selectedId = get().selectedConversationId;
-    // The open conversation is considered read locally immediately. This
-    // prevents a reconnect/poll response that crossed the mark-read request
-    // from flashing the old server counter back into the UI.
-    set({
-      conversations: convs.map((conversation) => normalizeConversationUnread(conversation, selectedId)),
-    });
+    conversationsInFlight = (async () => {
+      const raw = await messengerApi.listConversations();
+      const convs = await decryptNotesPreviews(raw);
+      if (generation !== conversationLoadGeneration) return get().conversations;
+      const selectedId = get().selectedConversationId;
+      // The open conversation is considered read locally immediately. This
+      // prevents a reconnect/poll response that crossed the mark-read request
+      // from flashing the old server counter back into the UI.
+      const updated = convs.map((conversation) => normalizeConversationUnread(conversation, selectedId));
+      set({ conversations: updated });
+      conversationsLoadedAt = Date.now();
+      return updated;
+    })();
+    try {
+      return await conversationsInFlight;
+    } finally {
+      conversationsInFlight = null;
+    }
   },
 
   // ── Ensure single conversation exists in list (for WS first-message case)

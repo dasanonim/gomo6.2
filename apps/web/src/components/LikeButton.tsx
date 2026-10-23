@@ -22,6 +22,50 @@ interface LikeButtonProps {
   isThread?: boolean; // New prop to distinguish between posts and threads
 }
 
+type RecentLiker = { username: string; display_name?: string | null; nickname_emoji_id?: string | null; id: string; public_id?: number | null; avatar_url?: string | null; is_anonymous?: boolean };
+
+// Recent-likers tooltip cache: hovering N rows used to fire N identical RPCs
+// with zero reuse (re-hover, re-mount, neighbouring rows). One entry per
+// post/thread, 60s TTL, in-flight dedupe; invalidated on like toggle because
+// your own like changes the recent-3.
+const LIKERS_TTL_MS = 60_000;
+const likersCache = new Map<string, { at: number; rows: RecentLiker[] }>();
+const likersInFlight = new Map<string, Promise<RecentLiker[]>>();
+
+const likersKey = (postId: string, isThread: boolean): string =>
+  `${isThread ? "t" : "p"}:${postId}`;
+
+const fetchRecentLikers = (postId: string, isThread: boolean): Promise<RecentLiker[]> => {
+  const k = likersKey(postId, isThread);
+  const hit = likersCache.get(k);
+  if (hit && Date.now() - hit.at < LIKERS_TTL_MS) return Promise.resolve(hit.rows);
+  const pending = likersInFlight.get(k);
+  if (pending) return pending;
+  const run = (async (): Promise<RecentLiker[]> => {
+    try {
+      const likersFunction = isThread ? 'get_recent_thread_likers' : 'get_recent_post_likers';
+      const { data: likers } = await api.rpc(likersFunction, {
+        [isThread ? 'thread_uuid' : 'post_uuid']: postId,
+        limit_count: 3
+      });
+      const rows = (likers as RecentLiker[]) || [];
+      likersCache.set(k, { at: Date.now(), rows });
+      return rows;
+    } catch (error) {
+      console.error('Error loading recent likers:', error);
+      return hit?.rows ?? [];
+    } finally {
+      likersInFlight.delete(k);
+    }
+  })();
+  likersInFlight.set(k, run);
+  return run;
+};
+
+const invalidateRecentLikers = (postId: string, isThread: boolean): void => {
+  likersCache.delete(likersKey(postId, isThread));
+};
+
 export const LikeButton = memo(({ postId, currentUserId, postAuthorId, onLikeChange, isThread = false }: LikeButtonProps) => {
   const { getLikeData, loadLikeData, updateLikeData } = useLikesCache();
   const [isLiked, setIsLiked] = useState(false);
@@ -56,21 +100,12 @@ export const LikeButton = memo(({ postId, currentUserId, postAuthorId, onLikeCha
     loadData();
   }, [postId, currentUserId, isThread, getLikeData, loadLikeData]);
 
-  // Load recent likers when tooltip opens
+  // Load recent likers when tooltip opens (cached: re-hover and neighbouring
+  // rows reuse the snapshot, like toggle invalidates it).
   useEffect(() => {
     const loadRecentLikers = async () => {
       if (!tooltipOpen || likesCount === 0) return;
-
-      try {
-        const likersFunction = isThread ? 'get_recent_thread_likers' : 'get_recent_post_likers';
-        const { data: likers } = await api.rpc(likersFunction, {
-          [isThread ? 'thread_uuid' : 'post_uuid']: postId,
-          limit_count: 3
-        });
-        setRecentLikers((likers as { username: string; id: string; public_id?: number | null; avatar_url?: string | null; nickname_emoji_id?: string | null; is_anonymous?: boolean }[]) || []);
-      } catch (error) {
-        console.error('Error loading recent likers:', error);
-      }
+      setRecentLikers(await fetchRecentLikers(postId, isThread));
     };
 
     loadRecentLikers();
@@ -91,6 +126,7 @@ export const LikeButton = memo(({ postId, currentUserId, postAuthorId, onLikeCha
     setIsLiked(newLiked);
     setLikesCount(newCount);
     updateLikeData(postId, isThread, newLiked, newCount);
+    invalidateRecentLikers(postId, isThread);
     onLikeChange?.(newLiked, newCount);
 
     setIsLoading(true);

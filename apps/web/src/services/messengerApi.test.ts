@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { messengerApi } from "./messengerApi";
 import { apiClient } from "@/integrations/api/client";
 
@@ -65,15 +65,40 @@ describe("messengerApi", () => {
   });
 
   describe("getMyProfile", () => {
+    // getCurrentUser caches for 30s across tests in this file: move the fake
+    // clock monotonically forward so every case starts expired (fake Date
+    // only — real timers keep the retry/backoff paths honest).
+    let fakeNow = 0;
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      if (!fakeNow) fakeNow = Date.now();
+      fakeNow += 31_000;
+      vi.setSystemTime(fakeNow);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it("returns profile data", async () => {
       mockFetchRaw({ success: true, data: { id: "u1", username: "test" } });
       const profile = await messengerApi.getMyProfile();
       expect(profile).toEqual({ id: "u1", username: "test" });
     });
 
-    it("throws on server error", async () => {
-      mockFetchRaw({ error: "Unauthorized" }, 401);
-      await expect(messengerApi.getMyProfile()).rejects.toThrow();
+    it("shares one request between concurrent callers", async () => {
+      mockFetchRaw({ success: true, data: { id: "u1", username: "test" } });
+      const [a, b] = await Promise.all([
+        messengerApi.getMyProfile(),
+        messengerApi.getMyProfile(),
+      ]);
+      expect(a).toEqual({ id: "u1", username: "test" });
+      expect(b).toEqual({ id: "u1", username: "test" });
+      expect(vi.mocked(global.fetch).mock.calls.filter(([url]) => String(url).includes("/api/v1/auth/me"))).toHaveLength(1);
+    });
+
+    it("throws not authenticated when logged out", async () => {
+      apiClient.clearTokens();
+      await expect(messengerApi.getMyProfile()).rejects.toThrow("not authenticated");
     });
   });
 

@@ -82,17 +82,13 @@ async function req<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export const messengerApi = {
   // ── Profile ───────────────────────────────────────────────────────────
+  // Served from the shared 30s-cached current-user call: init, reconnects and
+  // uploads must not each fire their own /auth/me (the page already resolves
+  // identity through getCurrentUser on mount).
   async getMyProfile(): Promise<{ id: string; username: string }> {
-    try {
-      const result = await apiClient.request<{ id: string; username: string }>('/api/v1/auth/me');
-      return result.data as { id: string; username: string };
-    } catch (e) {
-      const err = e as Error & { status?: number };
-      if (err.status === 401 || (!apiClient.getToken() && !apiClient.getCSRFToken())) {
-        throw new Error("not authenticated");
-      }
-      throw new Error("server_unreachable");
-    }
+    const user = await apiClient.getCurrentUser();
+    if (!user) throw new Error("not authenticated");
+    return { id: user.id, username: user.username };
   },
 
   // ── Conversations ─────────────────────────────────────────────────────
