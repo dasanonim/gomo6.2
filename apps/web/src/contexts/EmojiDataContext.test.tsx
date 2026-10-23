@@ -87,3 +87,44 @@ describe('EmojiDataContext resolveEmojis failure', () => {
     expect(result.current.failedEmojiIds.has('emoji-2')).toBe(false);
   });
 });
+
+describe('EmojiDataContext subscriptions loading', () => {
+  it('collapses concurrent refreshes onto one subscriptions pair', async () => {
+    // Mount load fails (default mock) so no TTL snapshot exists; the two
+    // racing refreshes must then share a single in-flight load.
+    const { result } = renderHook(() => useEmojiData(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+    mockRawRequest.mockResolvedValue({ data: [] });
+    mockRawRequest.mockClear();
+
+    // Two background refreshes racing (mount/auth/focus drivers firing at
+    // once) must share a single in-flight load: one subscriptions call + one
+    // owned-packs call, not two pairs.
+    await act(async () => {
+      await Promise.all([result.current.refreshData(), result.current.refreshData()]);
+    });
+
+    expect(mockRawRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses a fresh snapshot instead of refetching', async () => {
+    mockRawRequest.mockResolvedValue({ data: [] });
+
+    const { result } = renderHook(() => useEmojiData(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+    const afterMount = mockRawRequest.mock.calls.length;
+
+    await act(async () => {
+      await result.current.refreshData();
+    });
+
+    // Mount already loaded for this user within the TTL: no new traffic.
+    expect(mockRawRequest.mock.calls.length).toBe(afterMount);
+  });
+});

@@ -231,8 +231,10 @@ class MessengerWebSocket {
   }
 
   private handleGroupUpdated(_msg: WebSocketMessage): void {
-    // Reload conversations to pick up group changes
-    useMessengerStore.getState().loadConversations();
+    // Reload conversations to pick up group changes. Forced: this is an
+    // explicit server event about a user-visible change, not a periodic sync.
+    // Concurrent bursts still collapse on the in-flight request.
+    void useMessengerStore.getState().loadConversations({ force: true });
   }
 }
 

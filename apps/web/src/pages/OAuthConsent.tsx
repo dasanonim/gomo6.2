@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/integrations/api/compat";
+import { apiClient } from "@/integrations/api/client";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -108,32 +109,30 @@ const OAuthConsent = () => {
         );
         return;
       }
-      // Get user info from /me endpoint
+      // User info rides the shared cached current-user call (30s single-flight
+      // with the rest of the app) instead of a raw /auth/me fetch.
       try {
-        const meRes = await fetch("/api/v1/auth/me", {
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        });
-        if (meRes.ok) {
-          const meData = await meRes.json();
-          // /api/v1/auth/me responds with the unified { success, data } wrapper,
-          // so the profile lives at meData.data — not at the top level.
-          const me = meData?.data ?? meData ?? {};
+        const me = await apiClient.getCurrentUser();
+        if (me) {
           setUserInfo({
-            id: me.id || session.user.id,
-            username: me.username || session.user.username || session.user.email?.split("@")[0] || "User",
-            avatar_url: me.avatar_url,
+            id: (me as { id?: string }).id || session.user.id,
+            username:
+              (me as { username?: string }).username ||
+              session.user.username ||
+              session.user.email?.split("@")[0] ||
+              "User",
+            avatar_url: (me as { avatar_url?: string }).avatar_url,
           });
         } else {
-          // Fallback to session user
+          // Fallback to session user (verified session first, profile
+          // metadata second — same priority as the primary path above).
           const { data: userData } = await api.auth.getUser();
           setUserInfo({
             id: session.user.id,
             username:
+              session.user.username ||
               (userData?.user as { user_metadata?: { username?: string } } | null)?.user_metadata?.username ||
               userData?.user?.username ||
-              session.user.username ||
               session.user.email?.split("@")[0] ||
               "User",
           });

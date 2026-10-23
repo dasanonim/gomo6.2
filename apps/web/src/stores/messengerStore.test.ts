@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { destroyMessenger, queueMarkRead, useMessengerStore } from "./messengerStore";
+import { destroyMessenger, queueMarkRead, useMessengerStore, __resetConversationCacheForTests } from "./messengerStore";
 import { messengerApi } from "@/services/messengerApi";
 import { loadCachedMessages, saveCachedMessages } from "@/utils/messengerCache";
 import { listOutbox, outboxKey, putOutbox, __resetOutboxForTests } from "@/components/messenger/core/outbox";
@@ -82,6 +82,7 @@ describe("messengerStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     destroyMessenger();
+    __resetConversationCacheForTests();
     localStorage.clear();
     vi.mocked(loadCachedMessages).mockResolvedValue(null);
     vi.mocked(saveCachedMessages).mockResolvedValue(undefined);
@@ -137,6 +138,27 @@ describe("messengerStore", () => {
       await useMessengerStore.getState().loadConversations();
 
       expect(useMessengerStore.getState().conversations).toHaveLength(2);
+    });
+
+    it("reuses the fresh snapshot for background reloads", async () => {
+      vi.mocked(messengerApi.listConversations).mockResolvedValue([mockConv({ id: "conv-a" })]);
+
+      const first = await useMessengerStore.getState().loadConversations();
+      const second = await useMessengerStore.getState().loadConversations();
+
+      expect(vi.mocked(messengerApi.listConversations)).toHaveBeenCalledTimes(1);
+      expect(second).toEqual(first);
+    });
+
+    it("refetches when forced", async () => {
+      vi.mocked(messengerApi.listConversations).mockResolvedValue([mockConv({ id: "conv-a" })]);
+      await useMessengerStore.getState().loadConversations();
+
+      vi.mocked(messengerApi.listConversations).mockResolvedValue([mockConv({ id: "conv-b" })]);
+      const second = await useMessengerStore.getState().loadConversations({ force: true });
+
+      expect(vi.mocked(messengerApi.listConversations)).toHaveBeenCalledTimes(2);
+      expect(second.map((c) => c.id)).toEqual(["conv-b"]);
     });
   });
 
