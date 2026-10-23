@@ -1318,12 +1318,12 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
                   ref={mobileSearchInputRef}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      setMobileSearchOpen(false);
-                      window.setTimeout(() => mobileSearchInputRef.current?.blur(), 0);
-                    }
+                  // Focus = open; blurred (clicked/tapped anywhere outside,
+                  // tabbed away, native "done") = collapsed. relatedTarget
+                  // guard keeps result clicks (inside the wrapper) alive.
+                  onBlur={(e) => {
+                    if (searchRef.current?.contains(e.relatedTarget as Node | null)) return;
+                    setMobileSearchOpen(false);
                   }}
                   placeholder={t('nav.searchPlaceholder')}
                   className="h-9 flex-1 pl-0 pr-3 border-0 bg-transparent shadow-none rounded-none focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -1380,11 +1380,14 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
                     ref={desktopSearchInputRef}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape" && desktopSearchExpanded) {
-                        e.preventDefault();
-                        setDesktopSearchExpanded(false);
-                      }
+                    // Focus is the source of truth: blurred = collapsed. No
+                    // separate Esc ritual on desktop/mobile — click anywhere
+                    // outside (or tab away) just closes. relatedTarget guard
+                    // keeps a click inside the pill/results from collapsing
+                    // before the click lands (e.g. the lens toggle, a result).
+                    onBlur={(e) => {
+                      if (searchRef.current?.contains(e.relatedTarget as Node | null)) return;
+                      setDesktopSearchExpanded(false);
                     }}
                     placeholder={t('nav.searchPlaceholder')}
                     className="h-9 w-full pl-0 pr-2 py-0 border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
