@@ -4,7 +4,7 @@ import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom"
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api } from "@/integrations/api/compat";
 import { PentagramLoader } from "@/components/PentagramLoader";
-import { AppearanceSection } from "@/components/settings/AppearanceSection";
+import { AppearanceSection, resolveAppearanceSubView } from "@/components/settings/AppearanceSection";
 import { PrivacySection } from "@/components/settings/PrivacySection";
 import { SecuritySection } from "@/components/settings/SecuritySection";
 import { ProfileSection } from "@/components/settings/ProfileSection";
@@ -101,7 +101,10 @@ const Settings = () => {
   const activeSection = getSettingsSection(section);
 
   const goToEntry = (entry: SearchEntry) => {
-    const target = `/settings/${entry.section}${location.search}`;
+    const params = new URLSearchParams(location.search);
+    if (entry.view) params.set("view", entry.view);
+    const search = params.toString() ? `?${params.toString()}` : "";
+    const target = `/settings/${entry.section}${search}`;
     if (location.pathname !== `/settings/${entry.section}`) navigate(target);
     if (entry.anchor) {
       window.setTimeout(() => {
@@ -237,7 +240,18 @@ const Settings = () => {
           {isMobile && activeSection && <h1 className="mb-4 text-xl font-bold">{t(activeSection.labelKey)}</h1>}
 
           {activeSection?.id === "appearance" ? (
-            <AppearanceSection appearance={appearance} />
+            <AppearanceSection
+              appearance={appearance}
+              view={resolveAppearanceSubView(new URLSearchParams(location.search).get("view"))}
+              onViewChange={(next) => {
+                const params = new URLSearchParams(location.search);
+                // «Темы» — дефолт: держим URL чистым, остальные — в ?view=.
+                if (next === "themes") params.delete("view");
+                else params.set("view", next);
+                const search = params.toString() ? `?${params.toString()}` : "";
+                navigate(`/settings/appearance${search}`, { replace: true });
+              }}
+            />
           ) : activeSection?.id === "privacy" ? (
             <PrivacySection userId={userId} />
           ) : activeSection?.id === "security" ? (

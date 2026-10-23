@@ -5,6 +5,13 @@ import type { LocaleResources } from "./types";
 
 const ru: LocaleResources = {
   settings2: {
+    appearanceTabThemes: "Темы",
+    appearanceTabText: "Шрифт и язык",
+    appearanceTabInterface: "Интерфейс",
+    themeFilterAll: "Все",
+    themeFilterMine: "Мои",
+    themeSearchPlaceholder: "Поиск темы по названию",
+    themeSearchEmpty: "Ничего не нашлось",
     searchPlaceholder: "Поиск по настройкам",
     clearSearch: "Очистить поиск",
     secProfileDesc: "Студия, плейсхолдеры, вид постов",

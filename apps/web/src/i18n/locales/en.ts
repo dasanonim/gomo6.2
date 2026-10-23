@@ -4,6 +4,13 @@ import type { LocaleResources } from "./types";
 
 const en: LocaleResources = {
   settings2: {
+    appearanceTabThemes: "Themes",
+    appearanceTabText: "Font & language",
+    appearanceTabInterface: "Interface",
+    themeFilterAll: "All",
+    themeFilterMine: "Mine",
+    themeSearchPlaceholder: "Search a theme by name",
+    themeSearchEmpty: "Nothing found",
     searchPlaceholder: "Search settings",
     clearSearch: "Clear search",
     secProfileDesc: "Studio, placeholders, post look",
