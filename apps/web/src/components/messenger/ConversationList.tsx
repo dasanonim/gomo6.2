@@ -1,4 +1,4 @@
-import { memo, useCallback, useState, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { Gift, Link2, MessageCircle, NotebookPen, Search, UserPlus, X } from "lucide-react";
 import { PentagramLoader } from "@/components/PentagramLoader";
@@ -7,7 +7,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { useMessengerStore } from "@/stores/messengerStore";
 import { useLanguageStore } from "@/stores/languageStore";
 import { ConversationListSkeleton } from "@/components/skeletons/ContentSkeletons";
-import { STREAM_CASCADE_VARIANTS, STREAM_ITEM_VARIANTS } from "@/lib/motion";
+import { whisperRowVariants } from "@/lib/motion";
 import { formatConversationDate, formatPresence, getGroupInitials, getInitials } from "./utils";
 import { messengerConversationPreview } from "./messengerRichTextUtils";
 import { NewChatDialog } from "./NewChatDialog";
@@ -208,6 +208,56 @@ const NotesCard = memo(function NotesCard({
  * are outside the scrollport, which is all a virtualizer did here. The list
  * itself (`.conversation-list`) owns the scrolling.
  */
+interface EntranceRowProps {
+  /** One-shot entrance (the initial cascade only — later updates arrive as plain renders). */
+  animate: boolean;
+  /** Cascade slot: 0 = the pinned Notes card, conversation rows start at 1. */
+  index?: number;
+  /** Layout height hint for the scroll system's rows (px). */
+  intrinsicHeight?: number;
+  /** Scroll-system row classes (`.chat-native-row` contract in index.css). */
+  rowClass?: boolean;
+  children: React.ReactNode;
+}
+
+/**
+ * A whisper-quiet, self-driven entrance row: opacity plus a tiny lift, no
+ * scale. Self-driven (`initial`/`animate` claimed by the row itself) is the
+ * point — the old inherited variant tree froze at its hidden state whenever a
+ * re-render (selection change, ws update) landed while the cascade ran, which
+ * left every conversation invisible after exiting a chat.
+ *
+ * The animate/index decision is captured on first mount and frozen: the list
+ * flips its cascade gate constant, so rows already playing keep stable props
+ * and rows mounted later render plain forever, with no element-type flip.
+ */
+const EntranceRow = ({ animate, index = 0, intrinsicHeight, rowClass, children }: EntranceRowProps) => {
+  const frozen = useRef<{ animate: boolean; index: number } | null>(null);
+  if (!frozen.current) frozen.current = { animate, index };
+  const { animate: once, index: slot } = frozen.current;
+  const style = intrinsicHeight ? { containIntrinsicSize: `auto ${intrinsicHeight}px` } : undefined;
+  const className = rowClass ? "conversation-native-row chat-native-row" : undefined;
+
+  if (!once) {
+    return (
+      <div className={className} style={style}>
+        {children}
+      </div>
+    );
+  }
+  return (
+    <motion.div
+      className={className}
+      style={style}
+      initial="hidden"
+      animate="show"
+      variants={whisperRowVariants(slot)}
+    >
+      {children}
+    </motion.div>
+  );
+};
+
 const ConversationRows = memo(function ConversationRows({
   conversations,
   selectedId,
@@ -225,15 +275,8 @@ const ConversationRows = memo(function ConversationRows({
 }) {
   return (
     <>
-      {conversations.map((conv) => (
-        <motion.div
-          key={conv.id}
-          className="conversation-native-row chat-native-row"
-          // Conversation cards are 72px tall (see `.conversation-card`), so the
-          // intrinsic fallback matches instead of the generic 64px.
-          style={{ containIntrinsicSize: "auto 72px" }}
-          variants={motionEnabled ? STREAM_ITEM_VARIANTS : undefined}
-        >
+      {conversations.map((conv, index) => (
+        <EntranceRow key={conv.id} animate={motionEnabled} index={index + 1} intrinsicHeight={72} rowClass>
           <ConversationCard
             conversation={conv}
             isSelected={conv.id === selectedId}
@@ -241,7 +284,7 @@ const ConversationRows = memo(function ConversationRows({
             isCollapsed={isCollapsed}
             myUserId={myUserId}
           />
-        </motion.div>
+        </EntranceRow>
       ))}
     </>
   );
@@ -270,13 +313,23 @@ export const ConversationList = memo(function ConversationList({
 
   // Only run the entrance cascade the first time real conversations land.
   // Subsequent updates (new messages, reorder, search) must not re-cascade.
-  const didAnimateRef = useRef(false);
+  // State, not a ref: the gate must become false through a render so the latch
+  // is observable; rows that already mounted have frozen their decision inside
+  // EntranceRow, so flipping the gate is prop-stable for them.
+  const [cascadeDone, setCascadeDone] = useState(false);
   const runInitialCascade =
     animateEntrance &&
     !prefersReducedMotion &&
     conversations.length > 0 &&
     !initLoading &&
-    !didAnimateRef.current;
+    !cascadeDone;
+
+  // Latch the cascade off after one pass (~9 slots × 25ms + the spring tail).
+  useEffect(() => {
+    if (!runInitialCascade) return;
+    const timer = setTimeout(() => setCascadeDone(true), 900);
+    return () => clearTimeout(timer);
+  }, [runInitialCascade]);
 
   const notesConversation = useMemo(() => conversations.find((c) => c.is_notes) ?? null, [conversations]);
 
@@ -356,18 +409,18 @@ export const ConversationList = memo(function ConversationList({
       {initLoading && conversations.length === 0 ? (
         <ConversationListSkeleton isCollapsed={isCollapsed} />
       ) : (
-        <motion.div
+        // Plain container on purpose: every row below animates self-driven, so
+        // this list can no longer freeze at a half-played cascade (the old
+        // inherited variant tree froze rows at opacity 0 whenever a
+        // render landed mid-cascade — "exited the chat, the list vanished").
+        <div
           ref={listRef}
           className="conversation-list"
           role="navigation"
           aria-label="Диалоги"
           data-testid="conversation-list"
-          variants={STREAM_CASCADE_VARIANTS}
-          initial={runInitialCascade ? "hidden" : false}
-          animate={runInitialCascade ? "show" : undefined}
-          onAnimationComplete={() => { didAnimateRef.current = true; }}
         >
-          <motion.div variants={runInitialCascade ? STREAM_ITEM_VARIANTS : undefined}>
+          <EntranceRow animate={runInitialCascade}>
             <NotesCard
               notes={notesConversation}
               isSelected={Boolean(notesConversation && selectedId === notesConversation.id)}
@@ -376,7 +429,7 @@ export const ConversationList = memo(function ConversationList({
               myUserId={myUserId}
               onOpen={handleOpenNotes}
             />
-          </motion.div>
+          </EntranceRow>
 
           {conversations.length === 0 && !initLoading && (
             <div className="empty-card">
@@ -407,7 +460,7 @@ export const ConversationList = memo(function ConversationList({
             myUserId={myUserId}
             motionEnabled={runInitialCascade}
           />
-        </motion.div>
+        </div>
       )}
     </>
   );

@@ -15,11 +15,13 @@ import { storageUrl, uploadFile } from "@/utils/storage";
 import { apiErrorMessage } from "@/utils/apiErrors";
 import { GomoSubCreateWizard, type WizardResult } from "@/components/gomosub/GomoSubCreateWizard";
 import { cn } from "@/lib/utils";
-import { ChevronRight, Loader2, CheckCircle2, XCircle, Upload, Minus as MinusIcon, Globe, Lock } from "lucide-react";
+import { ChevronRight, Loader2, CheckCircle2, XCircle, Upload, Minus as MinusIcon, Globe, Lock, ArrowLeft } from "lucide-react";
 
 const RESERVED_SLUGS = [
   "b", "pol", "a", "v", "mu", "fit", "d", "tv", "co", "int",
-  "rules", "faq", "bugs", "g", "tech", "meta", "admin", "mod", "news"
+  "rules", "faq", "bugs", "g", "tech", "meta", "admin", "mod", "news",
+  // Известные название/инфраструктура проекта и служебные роуты:
+  "create", "test", "g6", "gomo6", "gomo", "dev", "docs", "help", "api",
 ];
 
 /** Круг-статус чек-листа: галочка, когда условие выполнено. */
@@ -365,6 +367,17 @@ const GomoSubCreate = () => {
 
   return (
     <div className="max-w-2xl mx-auto w-full px-3 sm:px-5 pb-32 md:pb-10">
+      {/* Exit hatch back to the catalog: the deep link /g/create has no
+          in-page way back, so every step carries its own up button. */}
+      <button
+        type="button"
+        onClick={() => navigate("/g")}
+        aria-label="Назад в каталог сообществ"
+        className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        В каталог
+      </button>
       {step === "requirements" && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}

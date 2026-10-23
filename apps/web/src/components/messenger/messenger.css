@@ -29,6 +29,22 @@ main.is-messenger-page {
   border: 1px solid oklch(var(--border));
   border-radius: var(--radius);
   background: oklch(var(--background));
+  /* Page entrance: opacity only. No transform on the shell — any ancestor
+     transform temporarily becomes a containing block for fixed elements
+     (hover-card portals, the floating date) and this surface scrolls itself;
+     a bare fade reads as the page arriving without risking the scroll system. */
+  animation: messenger-arrive 0.25s ease-out both;
+}
+
+@keyframes messenger-arrive {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .messenger-app {
+    animation: none;
+  }
 }
 
 .messenger-shell {
@@ -893,15 +909,17 @@ main.is-messenger-page {
    appended since the previous commit (rows mounted by a window slide are not new
    messages and must not animate). One keyframe animation rather than Telegram's
    `:not(.open)` → `.open` class flip, so nothing has to run a frame later.
-   Opacity/transform only: it cannot move the list. */
+   Opacity/transform only: it cannot move the list. Deliberately whisper-quiet:
+   a hair of lift, no scale — the message IS already there, the eye only needs
+   a fade to catch the newline. */
 .message-row[data-just-added="true"] .message-bubble {
-  animation: message-appear 0.22s ease-out;
+  animation: message-appear 0.2s ease-out both;
 }
 
 @keyframes message-appear {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.96);
+    transform: translateY(3px);
   }
 
   to {

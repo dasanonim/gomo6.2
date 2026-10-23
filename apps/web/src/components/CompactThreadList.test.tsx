@@ -32,11 +32,47 @@ const renderList = (ui: React.ReactElement) => render(<MemoryRouter>{ui}</Memory
 describe("CompactThreadList", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // jsdom's polyfill reports hover: none — the component then disables the
+    // hover preview. This suite exercises the desktop behaviour by default.
+    vi.stubGlobal(
+      "matchMedia",
+      ((query: string) => ({
+        matches: query.startsWith("(hover:"),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia,
+    );
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("does not show the preview on a touch device (hover: none), even on mouse events", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      ((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia,
+    );
+    renderList(<CompactThreadList rows={[row]} currentUserId="me" />);
+    fireEvent.mouseOver(screen.getByRole("link"));
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
   it("renders a dense row with replies, likes and the last poster", () => {

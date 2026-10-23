@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useState, useRef, useCallback, type FormEve
 import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
 import { NavigationLink } from "@/components/NavigationLink";
-import { motion, useScroll, useMotionValueEvent, useMotionValue, useTransform, animate } from "motion/react";
+import { motion, AnimatePresence, useScroll, useMotionValueEvent, useMotionValue, useTransform, animate } from "motion/react";
+import { SPRING } from "@/lib/motion";
 import { transitionEnterClass, isFeedRoute } from "@/lib/viewTransitions";
 import { useTransitionStyle } from "@/hooks/useTransitionStyle";
 import { useProfileCache } from "@/contexts/ProfileCacheContext";
@@ -117,8 +118,9 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
   const [desktopSearchExpanded, setDesktopSearchExpanded] = useState(false);
   const [searchResults, setSearchResults] = useState<GlobalSearchResult>({ users: [], boards: [], threads: [], posts: [], wall_posts: [] });
   const [hideMessengerChrome, setHideMessengerChrome] = useState(false);
-  const searchRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLElement | null>(null);
   const desktopSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const mobileSearchInputRef = useRef<HTMLInputElement | null>(null);
   const lastPlayEventRef = useRef<string | null>(null);
   const isBackgroundResumeRef = useRef(false);
   const { scrollY } = useScroll();
@@ -147,14 +149,25 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
   const suspendHeaderToggleUntilRef = useRef(0);
   const prefersReducedMotionRef = useRef(false);
   const headerProgress = useMotionValue(1); // 1 = fully visible, 0 = hidden
+  // Presence of the app chrome (header + bottom nav) for chrome-less surfaces
+  // (messenger mobile chat, full-bleed channel chat). Instead of unmounting the
+  // header/nav — an instant pop — the chrome slides away with one shared spring:
+  // the header travels up, the bottom nav travels down, and the content padding
+  // (also derived below from the same value) collapses in the very same frames,
+  // so nothing moves asynchronously.
+  const chromePresence = useMotionValue(1);
   const nowPlayingPadPx = nowPlaying && !nowPlayingHidden ? 52 : 0;
-  const headerY = useTransform(headerProgress, (p) => -headerHeight * (1 - p));
-  const contentPad = useTransform(headerProgress, (p) => 24 + (headerHeight - 24) * p + nowPlayingPadPx);
+  const headerY = useTransform([headerProgress, chromePresence], ([p, cp]: number[]) =>
+    headerHeight * p * cp - headerHeight);
+  const contentPad = useTransform([headerProgress, chromePresence], ([p, cp]: number[]) =>
+    cp * (24 + (headerHeight - 24) * p + nowPlayingPadPx));
   // Sticky elements (profile tab bar) offset by the header's visible bottom
   // edge: flush under the header when open, flush with the viewport top when
   // hidden — unlike contentPad, which keeps a 24px breathing gap at the top.
-  const stickyPad = useTransform(headerProgress, (p) => headerHeight * p + nowPlayingPadPx);
-  const nowPlayingTop = useTransform(headerProgress, (p) => 12 + headerHeight * p);
+  const stickyPad = useTransform([headerProgress, chromePresence], ([p, cp]: number[]) =>
+    cp * (headerHeight * p + nowPlayingPadPx));
+  const nowPlayingTop = useTransform([headerProgress, chromePresence], ([p, cp]: number[]) =>
+    12 + headerHeight * p * cp);
 
   useTabTitle();
 
@@ -1023,6 +1036,12 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
     return () => window.clearTimeout(id);
   }, [desktopSearchExpanded]);
 
+  useEffect(() => {
+    if (!mobileSearchOpen) return;
+    const id = window.setTimeout(() => mobileSearchInputRef.current?.focus(), 160);
+    return () => window.clearTimeout(id);
+  }, [mobileSearchOpen]);
+
   const totalSearchHits =
     searchResults.users.length +
     searchResults.boards.length +
@@ -1197,6 +1216,20 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
     };
   }, []);
 
+  // Slide the chrome with one spring whenever a chrome-less surface opens or
+  // closes (header → headerHeight up, bottom nav → off below, padding follows).
+  // `animate()` keeps the interrupted direction change reversible mid-flight.
+  useEffect(() => {
+    const reduce = typeof window !== "undefined"
+      && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const controls = animate(
+      chromePresence,
+      hideMessengerChrome ? 0 : 1,
+      reduce ? { duration: 0 } : SPRING.standard,
+    );
+    return () => controls.stop();
+  }, [hideMessengerChrome]);
+
   // Focus main content on route change for keyboard users
   useEffect(() => {
     const main = document.getElementById('main-content');
@@ -1253,7 +1286,10 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
       >
         {t('nav.skipToContent')}
       </a>
-      {!hideChrome ? (
+      {/* The header stays mounted for chrome-less surfaces (messenger mobile
+          chat, full-bleed channel chat) and slides up with the shared
+          chromePresence spring — an unmount here was an instant pop in the
+          middle of the chat's push animation. */}
       <motion.header
         ref={headerRef}
         data-app-layout-header="true"
@@ -1261,50 +1297,116 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
         style={{ y: headerY, willChange: "transform" }}
       >
         <div className="max-w-6xl mx-auto px-4">
-          <div className="flex items-center justify-between gap-2 sm:gap-3 min-h-[49px]">
+          {/* Mobile search: Telegram-style in-place swap — the header row
+              content dissolves and a single full-width field (one lens, Enter
+              submits) takes its place; no second row pushing the page down.
+              Esc = blur = collapse. */}
+          <AnimatePresence initial={false} mode="popLayout">
+            {mobileSearchOpen ? (
+              <motion.form
+                key="mobile-search"
+                ref={(el: HTMLFormElement | null) => { searchRef.current = el; }}
+                onSubmit={submitSearch}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                transition={SPRING.soft}
+                className="lg:hidden relative flex items-center gap-2.5 min-h-[49px]"
+              >
+                <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                <Input
+                  ref={mobileSearchInputRef}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  // Focus = open; blurred (clicked/tapped anywhere outside,
+                  // tabbed away, native "done") = collapsed. relatedTarget
+                  // guard keeps result clicks (inside the wrapper) alive.
+                  onBlur={(e) => {
+                    if (searchRef.current?.contains(e.relatedTarget as Node | null)) return;
+                    setMobileSearchOpen(false);
+                  }}
+                  placeholder={t('nav.searchPlaceholder')}
+                  className="h-9 flex-1 pl-0 pr-3 border-0 bg-transparent shadow-none rounded-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                  onFocus={() => {
+                    if (searchQuery.trim().length >= 2) setSearchOpen(true);
+                  }}
+                />
+                {searchOpen && (
+                  <div className="absolute top-[calc(100%-6px)] left-0 right-0 rounded-2xl border border-border bg-card/95 backdrop-blur shadow-lg p-3 z-50 space-y-3 max-h-[65vh] overflow-auto">
+                    {searchLoading ? (
+                      <div className="text-sm text-muted-foreground">{t('nav.searching')}</div>
+                    ) : totalSearchHits === 0 ? (
+                      <div className="text-sm text-muted-foreground">{t('nav.nothingFound')}</div>
+                    ) : (
+                      quickResultsContent
+                    )}
+                  </div>
+                )}
+              </motion.form>
+            ) : null}
+          </AnimatePresence>
+          <motion.div
+            className={`flex items-center justify-between gap-2 sm:gap-3 min-h-[49px]${mobileSearchOpen ? " hidden lg:flex" : ""}`}
+          >
           <NavigationLink to="/" aria-label="gomo6" className="shrink-0 inline-flex items-center group">
             <Gomo6Mark className="app-header-logo h-11 w-11 text-primary transition-transform duration-200 ease-out group-hover:scale-105" />
           </NavigationLink>
           <div className="flex gap-1 sm:gap-2 items-center shrink-0">
-            <div ref={searchRef} className="hidden lg:block relative">
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={t('nav.openSearch')}
-                className="h-8 w-8 p-0 rounded-full"
-                onClick={() => setDesktopSearchExpanded((prev) => !prev)}
-              >
-                <Search className="h-4 w-4" />
-              </Button>
-
-              <motion.div
+            {/* Desktop search: one element that morphs — the lens button IS
+                the pill's right end, and the field unrolls leftward out of it
+                with a spring (width via framer, colors via CSS transition).
+                Enter submits; Esc / outside click / navigation collapses it
+                back into the lens. */}
+            <div ref={(el: HTMLDivElement | null) => { searchRef.current = el; }} className="hidden lg:block relative">
+              <motion.form
+                onSubmit={submitSearch}
                 initial={false}
-                animate={{
-                  width: desktopSearchExpanded ? 520 : 0,
-                  opacity: desktopSearchExpanded ? 1 : 0,
-                }}
-                transition={{ duration: 0.22, ease: "easeOut" }}
-                className="absolute right-0 top-0 overflow-hidden"
+                animate={{ width: desktopSearchExpanded ? 520 : 36 }}
+                transition={SPRING.standard}
+                className={`relative flex items-center justify-end h-9 rounded-full transition-[border-color,background-color,box-shadow,backdrop-filter] duration-200 ease-out ${
+                  desktopSearchExpanded
+                    ? "border border-border/70 bg-background/90 backdrop-blur shadow-lg"
+                    : "border border-transparent bg-transparent"
+                }`}
               >
-                <form onSubmit={submitSearch} className="relative w-[520px]">
-                  <div className="h-10 rounded-full border border-border/70 bg-background/90 backdrop-blur px-2 pr-1 flex items-center shadow-lg">
-                    <Search className="w-4 h-4 ml-2 text-muted-foreground" />
-                    <Input
-                      ref={desktopSearchInputRef}
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder={t('nav.searchPlaceholder')}
-                      className="h-8 pl-3 pr-2 border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-                      onFocus={() => {
-                        if (searchQuery.trim().length >= 2) setSearchOpen(true);
-                      }}
-                    />
-                    <Button type="submit" size="sm" variant="ghost" className="h-8 px-3 rounded-full">
-                      {t('nav.find')}
-                    </Button>
-                  </div>
-                </form>
-              </motion.div>
+                <motion.div
+                  className="flex-1 min-w-0 pl-3 z-[1]"
+                  initial={false}
+                  animate={{ opacity: desktopSearchExpanded ? 1 : 0 }}
+                  transition={{ duration: 0.18, ease: "easeOut" }}
+                  style={{ pointerEvents: desktopSearchExpanded ? undefined : "none" }}
+                >
+                  <Input
+                    ref={desktopSearchInputRef}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    // Focus is the source of truth: blurred = collapsed. No
+                    // separate Esc ritual on desktop/mobile — click anywhere
+                    // outside (or tab away) just closes. relatedTarget guard
+                    // keeps a click inside the pill/results from collapsing
+                    // before the click lands (e.g. the lens toggle, a result).
+                    onBlur={(e) => {
+                      if (searchRef.current?.contains(e.relatedTarget as Node | null)) return;
+                      setDesktopSearchExpanded(false);
+                    }}
+                    placeholder={t('nav.searchPlaceholder')}
+                    className="h-9 w-full pl-0 pr-2 py-0 border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                    onFocus={() => {
+                      if (searchQuery.trim().length >= 2) setSearchOpen(true);
+                    }}
+                  />
+                </motion.div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={desktopSearchExpanded ? t('nav.closeSearch') : t('nav.openSearch')}
+                  className="absolute right-0 top-0 h-9 w-9 p-0 rounded-full shrink-0"
+                  onClick={() => setDesktopSearchExpanded((prev) => !prev)}
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
+              </motion.form>
 
               {searchOpen && desktopSearchExpanded && (
                 <div className="absolute top-12 right-0 w-[520px] rounded-2xl border border-border bg-card/95 backdrop-blur shadow-lg p-3 z-50 space-y-3">
@@ -1325,7 +1427,9 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
             >
               <Search className="h-4 w-4" />
             </Button>
-            <NavigationLink to="/settings">
+            {/* Настройки в хедере — только на десктопе; на мобилке пункт
+                переехал в бургер-панель (над дропсами). */}
+            <NavigationLink to="/settings" className="hidden lg:block">
               <Button variant="ghost" className="relative h-8 w-8 p-0 hover:bg-[oklch(var(--foreground)/0.12)] transition-colors group">
                 <Settings className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
                 <span className="absolute bottom-0 left-0 w-0 h-[1.5px] bg-current transition-all duration-300 ease-out group-hover:w-full"></span>
@@ -1348,39 +1452,10 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
                 get the hamburger instead of a separate header button. */}
             <MobileMenu user={user} isModerator={isModerator} />
           </div>
-        </div>
-        {mobileSearchOpen && (
-          <div ref={searchRef} className="lg:hidden mt-1.5 relative">
-            <form onSubmit={submitSearch}>
-              <Input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={t('nav.searchShort')}
-                className="h-9 pl-10 pr-20 rounded-xl border-border/70 bg-background/85 backdrop-blur"
-                onFocus={() => {
-                  if (searchQuery.trim().length >= 2) setSearchOpen(true);
-                }}
-              />
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
-              <Button type="submit" size="sm" className="absolute right-1 top-1 h-7 rounded-lg">{t('nav.find')}</Button>
-            </form>
-            {searchOpen && (
-              <div className="absolute top-12 left-0 right-0 rounded-2xl border border-border bg-card/95 backdrop-blur shadow-lg p-3 z-50 space-y-3 max-h-[65vh] overflow-auto">
-                {searchLoading ? (
-                  <div className="text-sm text-muted-foreground">{t('nav.searching')}</div>
-                ) : totalSearchHits === 0 ? (
-                  <div className="text-sm text-muted-foreground">{t('nav.nothingFound')}</div>
-                ) : (
-                  quickResultsContent
-                )}
-              </div>
-            )}
-          </div>
-        )}
+          </motion.div>
         </div>
         <TopLoadingBar />
       </motion.header>
-      ) : null}
 
       {!hideChrome && nowPlaying && !nowPlayingHidden && (
         <motion.div
@@ -1563,12 +1638,16 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
         id="main-content"
         tabIndex={-1}
         className={`flex-1 min-h-0 outline-none${isMessengerPage ? " is-messenger-page" : ""}${showBottomNavigation ? " has-mobile-bottom-nav" : ""}${hideMessengerChrome && !isMessengerPage ? " is-app-surface" : ""}${enterClass ? ` ${enterClass}` : ""}`}
-        style={{ paddingTop: hideChrome ? 0 : contentPad }}
+        style={{ paddingTop: contentPad }}
       >
         {children}
       </motion.main>
 
-      {showBottomNavigation && <MobileBottomNav user={user} />}
+      {/* Bottom nav: always mounted (mobile sizes), exits with its own slide
+          — no unmount pop when the messenger chat opens/closes. */}
+      {!isSpecialPage && (
+        <MobileBottomNav user={user} chromeHidden={hideMessengerChrome} />
+      )}
 
       {!hideChrome && !isMessengerPage ? (
       <div className="mt-auto" data-app-layout-footer="true">

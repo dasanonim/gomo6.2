@@ -21,12 +21,15 @@ type TabId = "feed" | "communities" | "chats" | "profile";
 
 interface MobileBottomNavProps {
   user: User | null | undefined;
+  /** A chrome-less surface (messenger mobile chat) is open — slide the nav off
+      down and drop it from the keyboard/tap path instead of the hard unmount. */
+  chromeHidden?: boolean;
 }
 
 const unreadCountSelector = (state: ReturnType<typeof useMessengerStore.getState>) =>
   state.conversations.reduce((total, conversation) => total + conversation.unread_count, 0);
 
-export function MobileBottomNav({ user }: MobileBottomNavProps) {
+export function MobileBottomNav({ user, chromeHidden = false }: MobileBottomNavProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const prefersReducedMotion = useReducedMotion();
@@ -188,7 +191,20 @@ export function MobileBottomNav({ user }: MobileBottomNavProps) {
   };
 
   return (
-    <nav className="mobile-bottom-nav" aria-label="Основная навигация">
+    <motion.nav
+      className={`mobile-bottom-nav${chromeHidden ? " is-chrome-hidden" : ""}`}
+      aria-label="Основная навигация"
+      aria-hidden={chromeHidden || undefined}
+      // Telegram-style chrome exit: the rail slides below the viewport with the
+      // same spring family as the header's slide up; opacity follows for the
+      // safe-area gap. No visibility gating — that used to freeze the element
+      // invisible until the return spring finished, which read as "the panel
+      // popped back in with no animation". aria-hidden + the `is-chrome-hidden`
+      // pointer cutout cover interaction while it is off-screen.
+      initial={false}
+      animate={chromeHidden ? { y: "112%", opacity: 0 } : { y: "0%", opacity: 1 }}
+      transition={springFor("standard", prefersReducedMotion)}
+    >
       <div
         ref={railRef}
         className={`mobile-bottom-nav__rail${dragging ? " is-dragging" : ""}`}
@@ -254,6 +270,6 @@ export function MobileBottomNav({ user }: MobileBottomNavProps) {
           );
         })}
       </div>
-    </nav>
+    </motion.nav>
   );
 }

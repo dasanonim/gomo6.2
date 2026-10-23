@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-import { runViewTransition, setTransitionDirection, transitionEnterClass, type TransitionStyle } from "@/lib/viewTransitions";
+import { runViewTransition, transitionEnterClass, type TransitionStyle } from "@/lib/viewTransitions";
 
 /**
  * Stale-view retention for URL-driven view switching.
@@ -24,8 +24,6 @@ export const pendingViewClass = (
   style: TransitionStyle = "fade",
 ): string => {
   if (!visible) return "hidden";
-  // Styles the browser animates itself (or "none") get no extra CSS entrance —
-  // an inner fade would double up with the browser's swap.
   return transitionEnterClass(style);
 };
 
@@ -46,20 +44,13 @@ export interface PendingView<K extends string> {
 export const usePendingView = <K extends string>(
   target: K,
   initial: K,
-  /**
-   * Navigation depth per view (feed = 0, раздел = 1, …). Used only to give the
-   * slide transition its direction, computed at swap time — an effect would race
-   * the child that reports ready. Must be referentially stable.
-   */
-  depthOf?: Record<K, number>,
 ): PendingView<K> => {
   const [shown, setShownState] = useState<K>(initial);
   const readyCache = useRef(new Map<K, () => void>());
   // Mirrors `shown` so the stable onReady callbacks can tell that their view is
   // already on screen. Swapping to the view that is already shown changes no
-  // DOM, but the View Transitions API would still animate an empty old→new pair
-  // — and the content of that view (e.g. another раздел in the same component)
-  // may already have been swapped underneath by its own fetch.
+  // DOM — and the content of that view (e.g. another раздел in the same
+  // component) may already have been swapped underneath by its own fetch.
   const shownRef = useRef<K>(initial);
 
   const setShown = useCallback((view: K) => {
@@ -73,18 +64,13 @@ export const usePendingView = <K extends string>(
       if (!fn) {
         fn = () => {
           if (shownRef.current === view) return;
-          if (depthOf) {
-            const from = depthOf[shownRef.current] ?? 0;
-            const to = depthOf[view] ?? 0;
-            setTransitionDirection(to >= from ? "forward" : "back");
-          }
           runViewTransition(() => setShown(view));
         };
         readyCache.current.set(view, fn);
       }
       return fn;
     },
-    [depthOf, setShown],
+    [setShown],
   );
 
   return {

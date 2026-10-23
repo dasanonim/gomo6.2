@@ -9,7 +9,10 @@ vi.mock("@/integrations/api/compat", () => ({
 
 // The sections have their own tests — this one is about the shell: which layout
 // the window gets and which section the URL selects.
-vi.mock("@/components/settings/AppearanceSection", () => ({ AppearanceSection: () => <div>APPEARANCE</div> }));
+vi.mock("@/components/settings/AppearanceSection", () => ({
+  AppearanceSection: () => <div>APPEARANCE</div>,
+  resolveAppearanceSubView: () => "themes",
+}));
 vi.mock("@/components/settings/PrivacySection", () => ({ PrivacySection: () => <div>PRIVACY</div> }));
 vi.mock("@/components/settings/SecuritySection", () => ({ SecuritySection: () => <div>SECURITY</div> }));
 vi.mock("@/components/settings/ProfileSection", () => ({ ProfileSection: () => <div>PROFILE</div> }));

@@ -183,7 +183,13 @@ export const ProfileHoverCard = ({ userId, children, disabled = false, showDrops
     return () => mq.removeEventListener("change", update);
   }, []);
 
-  const handleTriggerMouseEnter = useCallback(() => {
+  const handleTriggerMouseEnter = useCallback((event?: React.PointerEvent) => {
+    // Open on real mouse hovers only. A tap on a touch screen synthesizes a
+    // mouseenter right before the click (that was the flicker of the hover
+    // panel on phones) — synthetic/touch pointers are filtered out by
+    // pointerType, and devices that report no hover capability at all are
+    // filtered out by the media query.
+    if (event && event.pointerType && event.pointerType !== "mouse") return;
     if (!canHover) return;
     clearTimeout(closeTimeoutRef.current);
     openTimeoutRef.current = setTimeout(() => setShowCard(true), 200);
@@ -204,8 +210,8 @@ export const ProfileHoverCard = ({ userId, children, disabled = false, showDrops
   }, []);
 
   const childrenWithHover = cloneElement(children as React.ReactElement, disabled ? {} : {
-    onMouseEnter: handleTriggerMouseEnter,
-    onMouseLeave: handleTriggerMouseLeave,
+    onPointerEnter: handleTriggerMouseEnter,
+    onPointerLeave: handleTriggerMouseLeave,
   });
 
   if (disabled || !showCard || !data) {

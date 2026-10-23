@@ -1149,12 +1149,13 @@ const Profile = () => {
             narrow screens it falls back to a normal corner FAB. */}
         {canPostOnWall && (
           <motion.div
-            className="fixed z-40"
+            className="profile-wall-fab fixed z-40"
             style={{
               // `right` is the distance from the viewport's right edge, so a
-              // LARGER constant moves the button further right.
+              // LARGER constant moves the button further right. `bottom` lives
+              // in MobileBottomNav.css: the bottom nav must never cover the
+              // button on a phone.
               right: fabRight,
-              bottom: "calc(1.5rem + env(safe-area-inset-bottom))",
             }}
             {...hoverLift(prefersReducedMotion, 1.04)}
             {...pressFeedback(prefersReducedMotion, 0.9)}

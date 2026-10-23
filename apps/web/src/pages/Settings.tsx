@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
+import { motion } from "motion/react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api } from "@/integrations/api/compat";
 import { PentagramLoader } from "@/components/PentagramLoader";
-import { AppearanceSection } from "@/components/settings/AppearanceSection";
+import { AppearanceSection, resolveAppearanceSubView } from "@/components/settings/AppearanceSection";
 import { PrivacySection } from "@/components/settings/PrivacySection";
 import { SecuritySection } from "@/components/settings/SecuritySection";
 import { ProfileSection } from "@/components/settings/ProfileSection";
@@ -14,6 +15,7 @@ import { LivePreview } from "@/components/settings/LivePreview";
 import { useAppearanceSettings } from "@/components/settings/useAppearanceSettings";
 import { SETTINGS_SECTIONS, getSettingsSection, SettingsSearch, type SearchEntry } from "@/components/settings/SettingsNav";
 import { handleNavArrowKeys } from "@/components/settings/navKeyboard";
+import { SPATIAL_OFFSET, whisperRowVariants, EASE_OUT_EXPO, SPRING } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 /**
@@ -101,7 +103,10 @@ const Settings = () => {
   const activeSection = getSettingsSection(section);
 
   const goToEntry = (entry: SearchEntry) => {
-    const target = `/settings/${entry.section}${location.search}`;
+    const params = new URLSearchParams(location.search);
+    if (entry.view) params.set("view", entry.view);
+    const search = params.toString() ? `?${params.toString()}` : "";
+    const target = `/settings/${entry.section}${search}`;
     if (location.pathname !== `/settings/${entry.section}`) navigate(target);
     if (entry.anchor) {
       window.setTimeout(() => {
@@ -138,21 +143,23 @@ const Settings = () => {
   if (!section && isMobile) {
     return (
       <main className="mx-auto w-full max-w-2xl px-4 py-6">
-        <header className="mb-5 text-center">
-          <h1 className="text-2xl font-bold">{t("settings.title")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{t("settings.subtitle")}</p>
-        </header>
-
         <SettingsSearch className="mb-4" onNavigate={goToEntry} />
 
+        {/* Rows arrive with the app-wide whisper entrance: a breath of lift,
+            ~25ms stagger. Self-driven per row (no inherited variant tree), so
+            a re-render mid-cascade can't strand them at opacity 0; with the
+            motion-off switch framer collapses it to an instant show. */}
         <div className="space-y-2.5" onKeyDown={handleNavArrowKeys}>
-          {SETTINGS_SECTIONS.map((item) => {
+          {SETTINGS_SECTIONS.map((item, index) => {
             const Icon = item.icon;
             return (
-              <button
+              <motion.button
                 key={item.id}
                 type="button"
                 data-nav-item
+                initial="hidden"
+                animate="show"
+                variants={whisperRowVariants(index)}
                 onClick={() => navigate(`/settings/${item.id}${location.search}`)}
                 className="group flex w-full items-center gap-3.5 rounded-2xl border border-border/60 bg-card/60 px-4 py-4 text-left backdrop-blur-xl transition-colors hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
               >
@@ -166,7 +173,7 @@ const Settings = () => {
                   <span className="mt-0.5 block text-xs text-muted-foreground">{t(item.descriptionKey)}</span>
                 </span>
                 <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-              </button>
+              </motion.button>
             );
           })}
         </div>
@@ -232,12 +239,35 @@ const Settings = () => {
           </nav>
         )}
 
-        {/* Content */}
-        <div className="min-w-0">
+        {/* Content. A keyed remount per section plays a light entrance — a
+            small lift matching the page motion language. Self-driven with
+            initial/animate so it always plays; when the user's motion-off
+            switch or the OS asks, framer collapses it to an instant show. */}
+        <motion.div
+          key={activeSection?.id ?? "hub"}
+          className="min-w-0"
+          initial={{ opacity: 0, y: SPATIAL_OFFSET.tab / 2 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{
+            ...SPRING.soft,
+            opacity: { duration: 0.16, ease: EASE_OUT_EXPO },
+          }}
+        >
           {isMobile && activeSection && <h1 className="mb-4 text-xl font-bold">{t(activeSection.labelKey)}</h1>}
 
           {activeSection?.id === "appearance" ? (
-            <AppearanceSection appearance={appearance} />
+            <AppearanceSection
+              appearance={appearance}
+              view={resolveAppearanceSubView(new URLSearchParams(location.search).get("view"))}
+              onViewChange={(next) => {
+                const params = new URLSearchParams(location.search);
+                // «Темы» — дефолт: держим URL чистым, остальные — в ?view=.
+                if (next === "themes") params.delete("view");
+                else params.set("view", next);
+                const search = params.toString() ? `?${params.toString()}` : "";
+                navigate(`/settings/appearance${search}`, { replace: true });
+              }}
+            />
           ) : activeSection?.id === "privacy" ? (
             <PrivacySection userId={userId} />
           ) : activeSection?.id === "security" ? (
@@ -249,7 +279,7 @@ const Settings = () => {
           ) : activeSection?.id === "integrations" ? (
             <IntegrationsSection userId={userId} />
           ) : null}
-        </div>
+        </motion.div>
 
         {/* Live preview — appearance on wide screens only */}
         {showPreview && activeSection?.id === "appearance" && (

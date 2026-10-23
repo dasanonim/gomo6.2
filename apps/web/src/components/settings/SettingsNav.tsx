@@ -26,8 +26,8 @@ export interface SettingsSection {
 }
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
-  { id: "profile", labelKey: "settings.profile", descriptionKey: "settings2.secProfileDesc", icon: UserRound },
   { id: "appearance", labelKey: "settings.appearance", descriptionKey: "settings2.secAppearanceDesc", icon: Palette },
+  { id: "profile", labelKey: "settings.profile", descriptionKey: "settings2.secProfileDesc", icon: UserRound },
   { id: "notifications", labelKey: "settings.notifications", descriptionKey: "settings2.secNotificationsDesc", icon: Bell },
   { id: "privacy", labelKey: "settings.privacy", descriptionKey: "settings2.secPrivacyDesc", icon: Lock },
   { id: "security", labelKey: "settings.security", descriptionKey: "settings2.secSecurityDesc", icon: ShieldCheck },
@@ -40,20 +40,23 @@ export const getSettingsSection = (id?: string) =>
 /** Individual searchable entries (a section, or a row inside a section). */
 export interface SearchEntry {
   section: SettingsSectionId;
+  /** Sub-view inside the section (§Appearance), when it has one. */
+  view?: string;
   anchor?: string;
   labelKey: string;
   keywords: string;
 }
 
 const APPEARANCE_ENTRIES: SearchEntry[] = [
-  { section: "appearance", anchor: "set-theme", labelKey: "settings.themes", keywords: "тема тёмный режим dark theme оформление цвет" },
-  { section: "appearance", anchor: "set-font", labelKey: "settings.font", keywords: "шрифт шрифты font google fonts текст" },
-  { section: "appearance", anchor: "set-language", labelKey: "settings.language", keywords: "язык language locale" },
-  { section: "appearance", anchor: "set-autoplay", labelKey: "settings.autoplayMedia", keywords: "автовоспроизведение gif видео медиа" },
-  { section: "appearance", anchor: "set-header", labelKey: "settings2.headerBehavior", keywords: "хедер шапка header скролл" },
-  { section: "appearance", anchor: "set-transitions", labelKey: "settings2.transitions", keywords: "анимация переходы transition" },
-  { section: "appearance", anchor: "set-mrrandom", labelKey: "settings2.mrRandom", keywords: "рандом сайдбар записи random" },
-  { section: "appearance", anchor: "set-publish", labelKey: "settings2.publishButton", keywords: "кнопка публикации publish" },
+  { section: "appearance", anchor: "set-mode", view: "themes", labelKey: "settings.darkMode", keywords: "режим светлый тёмный тема dark light system режим" },
+  { section: "appearance", anchor: "set-theme", view: "themes", labelKey: "settings.themes", keywords: "тема тёмный режим dark theme оформление цвет галерея" },
+  { section: "appearance", anchor: "set-font", view: "text", labelKey: "settings.font", keywords: "шрифт шрифты font google fonts текст" },
+  { section: "appearance", anchor: "set-language", view: "text", labelKey: "settings.language", keywords: "язык language locale" },
+  { section: "appearance", anchor: "set-autoplay", view: "interface", labelKey: "settings.autoplayMedia", keywords: "автовоспроизведение gif видео медиа" },
+  { section: "appearance", anchor: "set-header", view: "interface", labelKey: "settings2.headerBehavior", keywords: "хедер шапка header скролл" },
+  { section: "appearance", anchor: "set-transitions", view: "interface", labelKey: "settings2.transitions", keywords: "анимация переходы transition" },
+  { section: "appearance", anchor: "set-mrrandom", view: "interface", labelKey: "settings2.mrRandom", keywords: "рандом сайдбар записи random" },
+  { section: "appearance", anchor: "set-publish", view: "interface", labelKey: "settings2.publishButton", keywords: "кнопка публикации publish" },
 ];
 
 const PRIVACY_ENTRIES: SearchEntry[] = [

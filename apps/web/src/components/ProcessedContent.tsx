@@ -37,11 +37,27 @@ export const ProcessedContent = ({
   showHiddenIndicators = true
 }: ProcessedContentProps) => {
   const [visibilityResult, setVisibilityResult] = useState<VisibilityResult | null>(null);
-  const [isProcessing, setIsProcessing] = useState(true);
+  // No fake loading phase: the common post (no visibility tags) renders its
+  // text on the very first paint — the «Загрузка...» placeholder used to
+  // blink on every feed card before the real text swapped in.
+  const [isProcessing, setIsProcessing] = useState(false);
   const [visibleUsernames, setVisibleUsernames] = useState<string[]>([]);
   const [hiddenUsernames, setHiddenUsernames] = useState<string[]>([]);
 
+  // Cheap synchronous gate: only content that actually carries visibility
+  // tags needs async processing (and, while it runs, a tagged-out block).
+  const hasVisibilityTags =
+    content.includes("[seeusers=") ||
+    content.includes("[nousers=") ||
+    content.includes("[adm]") ||
+    content.includes("[dude]") ||
+    content.includes("[me]");
+
   useEffect(() => {
+    if (!hasVisibilityTags) {
+      // Raw render is already final for this content — nothing to compute.
+      return;
+    }
     const processContent = async () => {
       setIsProcessing(true);
       try {
@@ -102,7 +118,7 @@ export const ProcessedContent = ({
     };
 
     processContent();
-  }, [content, currentUserId, isAdmin, currentUsername, postAuthorId, authorUsername]);
+  }, [hasVisibilityTags, content, currentUserId, isAdmin, currentUsername, postAuthorId, authorUsername]);
 
   const renderContent = (text: string) => {
     if (contentJson) {
@@ -250,7 +266,9 @@ export const ProcessedContent = ({
   };
 
   if (isProcessing) {
-    return <span className="text-muted-foreground">Загрузка...</span>;
+    // Tagged content only: stay blank for the split-second the tags are being
+    // resolved instead of flashing a fake «Загрузка...».
+    return <span className="sr-only">Загрузка</span>;
   }
 
   if (!visibilityResult) {

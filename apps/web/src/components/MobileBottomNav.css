@@ -144,6 +144,18 @@
   main.has-mobile-bottom-nav {
     padding-bottom: var(--mobile-bottom-nav-space, calc(5rem + env(safe-area-inset-bottom, 0px))) !important;
   }
+
+  /* Profile page «+» — sits above the bottom nav rail, not under it. */
+  .profile-wall-fab {
+    bottom: calc(var(--mobile-bottom-nav-space, calc(5rem + env(safe-area-inset-bottom, 0px))) + 0.75rem);
+  }
+}
+
+@media (min-width: 1024px) {
+  /* No bottom rail on desktop — normal corner distance. */
+  .profile-wall-fab {
+    bottom: 1.5rem;
+  }
 }
 
 @media (min-width: 1024px) {
@@ -156,4 +168,18 @@
   .mobile-bottom-nav__item {
     transition: none;
   }
+
+  /* Chrome-less surfaces (messenger chat): no slide, just hide. */
+  .mobile-bottom-nav.is-chrome-hidden {
+    display: none;
+  }
+}
+
+/* The nav stays mounted; when a chrome-less surface (messenger mobile chat,
+   full-bleed channel chat) is open framer slides it below the viewport and
+   drops it with opacity (the translate lives in the component so it shares the
+   same spring as the header). Here only the pointer cutout follows, applied
+   while the slide is still visible so a stray tap can't catch a leaving rail. */
+.mobile-bottom-nav.is-chrome-hidden {
+  pointer-events: none;
 }

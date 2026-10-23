@@ -1,6 +1,8 @@
-import type { KeyboardEvent, ReactNode } from "react";
+import { useId, type KeyboardEvent, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Check, ChevronRight } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
+import { springFor } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 /**
@@ -152,6 +154,8 @@ interface SegmentedProps<T extends string | number> {
   onChange: (value: T) => void;
   options: readonly SegmentedOption<T>[];
   className?: string;
+  /** On narrow screens render icons only; the label stays available via sr-only. */
+  compactMobile?: boolean;
   "aria-label"?: string;
 }
 
@@ -160,8 +164,13 @@ export const Segmented = <T extends string | number>({
   onChange,
   options,
   className,
+  compactMobile,
   "aria-label": ariaLabel,
 }: SegmentedProps<T>) => {
+  const reduceMotion = useReducedMotion();
+  // One sliding thumb per instance — Telegram-style element that glides and
+  // settles across the options on the shared spring, not a per-button fade.
+  const thumbId = useId();
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
     const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("[role=radio]"));
@@ -189,18 +198,36 @@ export const Segmented = <T extends string | number>({
             type="button"
             role="radio"
             aria-checked={active}
+            aria-label={typeof option.label === "string" ? option.label : undefined}
             tabIndex={active ? 0 : -1}
             onClick={() => onChange(option.value)}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all duration-200",
+              // The thumb is absolutely positioned within each button.
+              "relative inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-              active
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
+              active ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {Icon && <Icon className="h-3.5 w-3.5" />}
-            {option.label}
+            {active && (
+              <motion.span
+                aria-hidden="true"
+                layoutId={thumbId}
+                transition={springFor("snappy", reduceMotion)}
+                className="absolute inset-0 rounded-full bg-primary shadow-sm"
+              />
+            )}
+            {Icon && <Icon className="relative h-3.5 w-3.5 shrink-0" />}
+            <span
+              className={cn(
+                "relative whitespace-nowrap",
+                // Icon-less options collapse to an sr-only label (still read);
+                // iconed ones hide the label visually on a phone only.
+                compactMobile && !Icon && "sr-only",
+                compactMobile && Icon && "max-[439px]:sr-only",
+              )}
+            >
+              {option.label}
+            </span>
           </button>
         );
       })}

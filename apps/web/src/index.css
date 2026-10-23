@@ -893,117 +893,12 @@ html.perf-lite .profile-tabbar--stuck .profile-tabbar__bg {
   }
 }
 
-/* ── View Transitions (Settings → Внешний вид → Анимация переходов) ──────────
-   Only the content column animates, not the whole chrome: the root transition
-   is disabled and the main column carries `view-transition-name: view-content`
-   (see hooks/usePendingView + pages/Index). Two browser-animated styles share
-   this machinery and pick their choreography from html[data-transition-style]:
-   "view-transition" (fade through) and "slide" (direction-aware push). */
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-}
-
-.view-transition-target {
-  view-transition-name: view-content;
-}
-
-::view-transition-group(view-content) {
-  animation-duration: 320ms;
-}
-
-/* NOTE: selectors for `::view-transition-*` pseudo-elements may only be a
-   compound selector built around the pseudo-element itself, optionally prefixed
-   with `:root` — a descendant combinator (`html[attr] ::view-transition-…`)
-   silently matches nothing. Hence `:root[data-transition-style=…]::…`. */
-
-/* Fade through, not a crossfade: the outgoing view fades out first, then the
-   incoming one fades in. A crossfade ghosts two different layouts (the old list
-   shows through the new one), which reads as «double content». */
-:root[data-transition-style="view-transition"]::view-transition-old(view-content) {
-  animation: 120ms cubic-bezier(0.4, 0, 1, 1) both gomo-vt-out;
-}
-
-:root[data-transition-style="view-transition"]::view-transition-new(view-content) {
-  animation: 200ms cubic-bezier(0, 0, 0.2, 1) 110ms both gomo-vt-in;
-}
-
-/* Slide: the old view is pushed out and the new one arrives from the other
-   side. Direction comes from data-vt-direction (set by pages/Index from the
-   route depth) — opening a раздел slides left, going back slides right. */
-:root[data-transition-style="slide"]::view-transition-group(view-content) {
-  animation-duration: 300ms;
-}
-
-:root[data-transition-style="slide"]::view-transition-old(view-content) {
-  animation: 260ms cubic-bezier(0.4, 0, 0.2, 1) both gomo-vt-slide-out;
-}
-
-:root[data-transition-style="slide"]::view-transition-new(view-content) {
-  animation: 260ms cubic-bezier(0.4, 0, 0.2, 1) both gomo-vt-slide-in;
-}
-
-:root[data-transition-style="slide"][data-vt-direction="back"]::view-transition-old(view-content) {
-  animation-name: gomo-vt-slide-out-back;
-}
-
-:root[data-transition-style="slide"][data-vt-direction="back"]::view-transition-new(view-content) {
-  animation-name: gomo-vt-slide-in-back;
-}
-
-@keyframes gomo-vt-out {
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes gomo-vt-in {
-  from {
-    opacity: 0;
-  }
-}
-
-@keyframes gomo-vt-slide-out {
-  to {
-    opacity: 0;
-    transform: translateX(-16%);
-  }
-}
-
-@keyframes gomo-vt-slide-in {
-  from {
-    opacity: 0;
-    transform: translateX(16%);
-  }
-}
-
-@keyframes gomo-vt-slide-out-back {
-  to {
-    opacity: 0;
-    transform: translateX(16%);
-  }
-}
-
-@keyframes gomo-vt-slide-in-back {
-  from {
-    opacity: 0;
-    transform: translateX(-16%);
-  }
-}
-
 /* ── View content entrance animations ─────────────────────────────────────────
    Used by the pending-view containers (hooks/usePendingView) and by individual
    views when THEIR content changes (a раздел swapping its list, infinite scroll
-   refreshes, …). Disabled for the styles where the browser animates the swap
-   itself — an inner fade would double up, and the "new" snapshot can be captured
-   mid-fade (which reads as a double flash). `rise` keeps it: it only animates
-   mode switches, so the inner fade is what covers same-component swaps. */
+   refreshes, …). The single remaining entrance: a plain 200ms fade. */
 .view-fade-in {
   animation: gomo-view-fade-in 200ms ease-out both;
-}
-
-.view-rise-in {
-  animation: gomo-view-rise-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @keyframes gomo-view-fade-in {
@@ -1015,198 +910,21 @@ html.perf-lite .profile-tabbar--stuck .profile-tabbar__bg {
   }
 }
 
-@keyframes gomo-view-rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .view-fade-in,
-  .view-rise-in {
+  .view-fade-in {
     animation: none;
   }
 }
 
-html[data-transition-style="view-transition"] .view-fade-in,
-html[data-transition-style="slide"] .view-fade-in,
-html[data-transition-style="none"] .view-fade-in,
-html.perf-lite .view-fade-in,
-html.perf-lite .view-rise-in {
-  animation: none;
-}
-
-/* ── Transition previews (Settings → «Анимация переходов», expand a style) ────
-   A tiny two-layer mock of the content swap so the user can see a style before
-   picking it. It reuses the SAME keyframes as the real thing and scopes them by
-   data-style / data-direction — no View Transitions API needed, so it also
-   demonstrates styles the current browser cannot actually run. */
-.vt-preview {
-  position: relative;
-  height: 9.5rem;
-  overflow: hidden;
-  border-radius: 0.75rem;
-  border: 1px solid oklch(var(--border));
-  background: oklch(var(--background));
-}
-
-.vt-preview-scene {
-  position: absolute;
-  inset: 0;
-}
-
-.vt-preview-layer {
-  position: absolute;
-  inset: 0;
-  padding: 0.75rem;
-}
-
-/* CSS-only styles animate the incoming screen alone — the old one is gone. */
-.vt-preview-scene[data-style="fade"] .vt-preview-layer--old,
-.vt-preview-scene[data-style="rise"] .vt-preview-layer--old,
-.vt-preview-scene[data-style="none"] .vt-preview-layer--old {
-  display: none;
-}
-
-.vt-preview-scene[data-style="fade"] .vt-preview-layer--new {
-  animation: gomo-view-fade-in 200ms ease-out both;
-}
-
-.vt-preview-scene[data-style="rise"] .vt-preview-layer--new {
-  animation: gomo-view-rise-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-.vt-preview-scene[data-style="none"] .vt-preview-layer--new {
-  animation: none;
-}
-
-.vt-preview-scene[data-style="view-transition"] .vt-preview-layer--old {
-  animation: 120ms cubic-bezier(0.4, 0, 1, 1) both gomo-vt-out;
-}
-
-.vt-preview-scene[data-style="view-transition"] .vt-preview-layer--new {
-  animation: 200ms cubic-bezier(0, 0, 0.2, 1) 110ms both gomo-vt-in;
-}
-
-.vt-preview-scene[data-style="slide"] .vt-preview-layer--old {
-  animation: 260ms cubic-bezier(0.4, 0, 0.2, 1) both gomo-vt-slide-out;
-}
-
-.vt-preview-scene[data-style="slide"] .vt-preview-layer--new {
-  animation: 260ms cubic-bezier(0.4, 0, 0.2, 1) both gomo-vt-slide-in;
-}
-
-.vt-preview-scene[data-style="slide"][data-direction="back"] .vt-preview-layer--old {
-  animation-name: gomo-vt-slide-out-back;
-}
-
-.vt-preview-scene[data-style="slide"][data-direction="back"] .vt-preview-layer--new {
-  animation-name: gomo-vt-slide-in-back;
-}
-
-/* Timeline rail under the mock: a page dot at each end, the animation moment in
-   the CENTRE, and a head that travels page 1 ↔ page 2. The head crosses the
-   centre exactly when the scene swaps (the JS timer fires there), so the
-   durations are set inline from the same constant. */
-.vt-preview-track {
-  position: relative;
-  height: 2px;
-  margin: 0 5px;
-  border-radius: 999px;
-  background: oklch(var(--border));
-}
-
-/* page 1 / page 2 */
-.vt-preview-track-dot {
-  position: absolute;
-  top: 50%;
-  left: -4px;
-  width: 8px;
-  height: 8px;
-  margin-top: -4px;
-  border-radius: 999px;
-  background: oklch(var(--muted-foreground));
-  opacity: 0.45;
-}
-
-.vt-preview-track-dot--end {
-  left: auto;
-  right: -4px;
-}
-
-/* the moment the animation plays — the centre of the strip */
-.vt-preview-track-center {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 8px;
-  height: 8px;
-  margin: -4px 0 0 -4px;
-  border-radius: 2px;
-  background: oklch(var(--primary));
-  transform: rotate(45deg);
-}
-
-.vt-preview-track-center::after {
-  content: "";
-  position: absolute;
-  inset: -3px;
-  border-radius: 3px;
-  border: 1px solid oklch(var(--primary));
-  animation: vt-preview-center-pulse 2.2s linear infinite;
-}
-
-/* head travelling between the two pages */
-.vt-preview-track-head {
-  position: absolute;
-  top: 50%;
-  left: -4.5px;
-  width: 9px;
-  height: 9px;
-  margin-top: -4.5px;
-  border-radius: 999px;
-  background: oklch(var(--primary));
-  box-shadow: 0 0 8px oklch(var(--primary) / 0.6);
-  animation: vt-preview-head 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
-}
-
-@keyframes vt-preview-head {
-  from {
-    left: -4.5px;
-  }
-  to {
-    left: calc(100% - 4.5px);
-  }
-}
-
-@keyframes vt-preview-center-pulse {
-  0%,
-  45% {
-    transform: scale(1);
-    opacity: 0.35;
-  }
-  50% {
-    transform: scale(2.6);
-    opacity: 0;
-  }
-  55%,
-  100% {
-    transform: scale(1);
-    opacity: 0.35;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .vt-preview-layer,
-  .vt-preview-track-head,
-  .vt-preview-track-center::after {
-    animation: none !important;
-  }
+/* «Без анимации» — HARD OFF for the entire site: every CSS animation and
+   transition stops, exactly like prefers-reduced-motion but forced by the
+   user. Framer springs are handled by MotionConfig (hooks/useTransitionStyle). */
+html[data-transition-style="none"] *,
+html[data-transition-style="none"] *::before,
+html[data-transition-style="none"] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
 }
 
 /* Generic character hooks — used by custom (user-built) themes, which have no

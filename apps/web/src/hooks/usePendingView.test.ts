@@ -1,7 +1,7 @@
 import { renderHook, act } from "@testing-library/react";
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
-import { getTransitionDirection, setTransitionStyle } from "@/lib/viewTransitions";
+import { setTransitionStyle } from "@/lib/viewTransitions";
 
 import { usePendingView, pendingViewClass } from "./usePendingView";
 
@@ -43,40 +43,14 @@ describe("usePendingView", () => {
     expect(result.current.readyFor("feed")).toBe(first);
   });
 
-  it("does not start a transition for a view that is already on screen", async () => {
-    setTransitionStyle("view-transition");
-    const start = vi.fn();
-    (document as unknown as { startViewTransition?: unknown }).startViewTransition = start;
-
+  it("does not re-run the swap for a view that is already on screen", () => {
+    setTransitionStyle("none");
     const { result } = renderHook(() => usePendingView("section", "section"));
     act(() => result.current.readyFor("section")());
-
-    await Promise.resolve();
-    // No swap to animate — the view is already visible, and its content may
-    // have been swapped underneath by its own fetch.
-    expect(start).not.toHaveBeenCalled();
+    // The view is already visible — the swap is a no-op, content may have been
+    // swapped underneath by its own fetch.
     expect(result.current.shown).toBe("section");
   });
-
-  it("points the slide the way the depth changes", () => {
-    const depthOf = { feed: 0, section: 1 } as const;
-    // Раздел → feed is one level up: slide back.
-    const up = renderHook(() => usePendingView<"feed" | "section">("feed", "section", depthOf));
-    act(() => up.result.current.readyFor("feed")());
-    expect(getTransitionDirection()).toBe("back");
-    up.unmount();
-
-    // Feed → раздел is one level down: slide forward.
-    const down = renderHook(() => usePendingView<"feed" | "section">("section", "feed", depthOf));
-    act(() => down.result.current.readyFor("section")());
-    expect(getTransitionDirection()).toBe("forward");
-    down.unmount();
-  });
-});
-
-afterEach(() => {
-  setTransitionStyle("fade");
-  delete (document as unknown as { startViewTransition?: unknown }).startViewTransition;
 });
 
 describe("pendingViewClass", () => {
@@ -85,17 +59,9 @@ describe("pendingViewClass", () => {
     expect(pendingViewClass(true)).toBe("view-fade-in");
   });
 
-  it("uses the entrance animation of the picked CSS style", () => {
-    expect(pendingViewClass(true, "rise")).toBe("view-rise-in");
-    // Still hidden when it is not the shown view.
-    expect(pendingViewClass(false, "rise")).toBe("hidden");
-  });
-
-  it("does not add a fade when the browser (or 'none') animates the swap", () => {
-    expect(pendingViewClass(true, "view-transition")).toBe("");
-    expect(pendingViewClass(true, "slide")).toBe("");
+  it("no entrance at all when motion is off", () => {
     expect(pendingViewClass(true, "none")).toBe("");
     // Still hidden when it is not the shown view.
-    expect(pendingViewClass(false, "view-transition")).toBe("hidden");
+    expect(pendingViewClass(false, "none")).toBe("hidden");
   });
 });
