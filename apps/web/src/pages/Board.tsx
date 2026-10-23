@@ -43,7 +43,7 @@ import {
   type ChannelRow as Channel,
 } from "@/routes/data/boardData";
 import { getDirectoryMemberCount } from "@/routes/data/gomosubData";
-import { STREAM_ITEM_VARIANTS, streamRowVariants } from "@/lib/motion";
+import { STREAM_ITEM_VARIANTS, springFor, streamRowVariants } from "@/lib/motion";
 import { GomoSubHeader } from "@/components/gomosub/GomoSubHeader";
 import { GomoSubChannelsList } from "@/components/gomosub/GomoSubChannelsList";
 import { useGomoSubUnread } from "@/hooks/useGomoSubUnread";
@@ -1076,12 +1076,18 @@ const Board = () => {
           )}
 
           {board.is_gomosub && (
-            <BoardStoriesBar
-              boardId={board.id}
-              boardName={board.name}
-              avatarUrl={board.gomosub_avatar_url}
-              canPost={Boolean(isBoardOwner || boardPermissions.can_post_stories)}
-            />
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={springFor("soft", prefersReducedMotion)}
+            >
+              <BoardStoriesBar
+                boardId={board.id}
+                boardName={board.name}
+                avatarUrl={board.gomosub_avatar_url}
+                canPost={Boolean(isBoardOwner || boardPermissions.can_post_stories)}
+              />
+            </motion.div>
           )}
 
           {!isGomoRoute && (
@@ -1554,7 +1560,12 @@ const Board = () => {
                   </div>
               </div>
               ) : (
-              <div className="mb-3 sm:mb-4">
+              <motion.div
+                className="mb-3 sm:mb-4"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={springFor("soft", prefersReducedMotion)}
+              >
                 <div className="flex items-center gap-2 sm:flex-row sm:items-center sm:justify-between">
                   {/* Mobile channel switcher — opens the channel sheet (bottom, Discord-style) */}
                   <button
@@ -1580,24 +1591,31 @@ const Board = () => {
                     <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground ml-auto" />
                   </button>
                   {canCreateThread && !isTextChannel && (
-                    <Button
-                      onClick={() =>
-                        navigate(
-                          isGomoRoute
-                            ? activeChannelSlug
-                              ? `/g/${slug}/c/${activeChannelSlug}/create`
-                              : `/g/${slug}/create`
-                            : `/create?board=${slug}`
-                        )
-                      }
-                      className="h-8 w-8 p-0 rounded-lg sm:h-10 sm:w-auto sm:px-4 sm:text-sm"
+                    <motion.div
+                      className="shrink-0"
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={springFor("standard", prefersReducedMotion)}
                     >
-                      <Plus className="h-4 w-4 sm:mr-2" />
-                      <span className="hidden sm:inline">{t("board.createThread")}</span>
-                    </Button>
+                      <Button
+                        onClick={() =>
+                          navigate(
+                            isGomoRoute
+                              ? activeChannelSlug
+                                ? `/g/${slug}/c/${activeChannelSlug}/create`
+                                : `/g/${slug}/create`
+                              : `/create?board=${slug}`
+                          )
+                        }
+                        className="h-8 w-8 p-0 rounded-lg sm:h-10 sm:w-auto sm:px-4 sm:text-sm"
+                      >
+                        <Plus className="h-4 w-4 sm:mr-2" />
+                        <span className="hidden sm:inline">{t("board.createThread")}</span>
+                      </Button>
+                    </motion.div>
                   )}
                 </div>
-              </div>
+              </motion.div>
               )}
 
               <div className={`relative flex-1 ${isTextChannel ? "flex flex-col min-h-0" : "space-y-2"}`}>

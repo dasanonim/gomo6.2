@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { Lock, Share2, UserCheck, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -6,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { PostActionsMenu } from "@/components/PostActionsMenu";
 import { storageUrl } from "@/utils/storage";
 import { formatCompactCount } from "@/utils/formatCount";
+import { springFor } from "@/lib/motion";
 
 interface BoardLike {
   id: string;
@@ -65,6 +67,7 @@ export const GomoSubHeader = memo(
     const cover = board.cover_image_url ? storageUrl("post-images", board.cover_image_url) : null;
     const avatar = board.gomosub_avatar_url ? storageUrl("post-images", board.gomosub_avatar_url) : null;
     const letter = board.name?.[0] || board.slug[0] || "g";
+    const prefersReducedMotion = useReducedMotion();
 
     const share = () => {
       const url = `${window.location.origin}/g/${board.slug}`;
@@ -75,6 +78,11 @@ export const GomoSubHeader = memo(
     };
 
     return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={springFor("soft", prefersReducedMotion)}
+      >
       <Card className="overflow-hidden rounded-2xl border-border/70 bg-surface">
         <div className="relative">
           <div className="h-24 sm:h-32">
@@ -130,7 +138,10 @@ export const GomoSubHeader = memo(
                   disabled={membershipPending || membershipLoading || checkingRules}
                   aria-busy={membershipPending}
                 >
-                  {isJoined ? (
+                  {/* Ghost shows the JOINED content: only then does the slot's
+                      real width match the settled state, and "Поделиться" to
+                      its left never reflows when membership lands. */}
+                  {(membershipPending || isJoined) ? (
                     <>
                       <UserCheck className="w-4 h-4 mr-2" />
                       {joinedLabel}
@@ -163,12 +174,17 @@ export const GomoSubHeader = memo(
                 className="flex items-center gap-1 text-xs text-muted-foreground min-w-[3.5rem]"
                 data-testid="gomosub-member-count"
               >
-                {memberCount != null ? (
-                  <>
+                {memberCount != null && (
+                  <motion.span
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                    className="flex items-center gap-1"
+                  >
                     <Users className="h-3 w-3" />
                     {formatCompactCount(memberCount)}
-                  </>
-                ) : null}
+                  </motion.span>
+                )}
               </span>
               {board.visibility === "private" && <Lock className="h-3.5 w-3.5 text-amber-500" />}
             </div>
@@ -192,6 +208,7 @@ export const GomoSubHeader = memo(
           </div>
         </div>
       </Card>
+      </motion.div>
     );
   },
 );
