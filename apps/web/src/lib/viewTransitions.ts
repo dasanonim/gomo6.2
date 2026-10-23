@@ -1,26 +1,21 @@
 /**
- * Transition style for URL-driven view switching (Settings → Appearance).
+ * The motion-off switch for URL-driven view switching (Settings → Внешний вид).
  *
- * Every style is a different way of swapping the content column when the URL
- * changes. Two of them are animated by the browser (View Transitions API), the
- * rest are plain CSS entrance animations, and one turns animation off entirely:
+ * Redesigned: exactly TWO modes, no custom choreography to pick:
  *
- *   "fade"            — the incoming view fades in (default, works everywhere).
- *   "view-transition" — the browser fade-through: old fades out, new fades in.
- *   "rise"            — the incoming view fades in while sliding up a few px.
- *   "slide"           — the browser pushes the old view out and the new one in,
- *                       direction-aware (forward into a раздел, back to the feed).
- *   "none"            — instant swap, no animation.
- * The order here is the order shown in Settings: the default first.
+ *   "fade" — the app is animated (default). View swaps resolve plainly and let
+ *            the containers' shared `.view-fade-in` entrance play.
+ *   "none" — HARD OFF. Behaves like `prefers-reduced-motion: reduce` for the
+ *            whole site: every CSS animation/transition (see the blanket rule
+ *            in index.css) and every framer spring (`MotionConfig
+ *            reducedMotion="always"` in App) stop. No half-measures.
  *
- * Stored in localStorage like the other appearance preferences.
+ * Stored in localStorage like the other appearance preferences. Legacy saved
+ * values from the old five style picker ("rise" / "slide" / "view-transition")
+ * map to "fade".
  */
-import { flushSync } from "react-dom";
 
-export type TransitionStyle = "fade" | "rise" | "slide" | "view-transition" | "none";
-
-/** Direction of a slide, derived from where the user is navigating. */
-export type TransitionDirection = "forward" | "back";
+export type TransitionStyle = "fade" | "none";
 
 export const TRANSITION_STYLE_KEY = "transition-style";
 
@@ -29,40 +24,25 @@ export const DEFAULT_TRANSITION_STYLE: TransitionStyle = "fade";
 export const TRANSITION_STYLES: { id: TransitionStyle; label: string; description: string }[] = [
   {
     id: "fade",
-    label: "Плавное затухание",
-    description: "Новый экран мягко проявляется. Работает везде",
-  },
-  {
-    id: "view-transition",
-    label: "Наплыв (View Transitions API)",
-    description: "Браузер плавно наплывает новый экран вместо старого",
-  },
-  {
-    id: "rise",
-    label: "Появление снизу",
-    description: "Экран проявляется, чуть поднимаясь — мягче плоского затухания",
-  },
-  {
-    id: "slide",
-    label: "Слайд вперёд/назад",
-    description: "В раздел — влево, обратно — вправо. Читается как навигация",
+    label: "Есть анимации",
+    description: "Экраны сменяются мягко — стандартное поведение сайта",
   },
   {
     id: "none",
     label: "Без анимации",
-    description: "Мгновенная смена экрана — для слабых устройств",
+    description: "Движение выключено на весь сайт, мгновенно и статично",
   },
 ];
 
 /** Broadcast so the main page picks up a change made on the Settings page. */
 export const TRANSITION_STYLE_EVENT = "gomo6:transition-style";
 
+const normalizeStyle = (saved: string | null): TransitionStyle =>
+  saved === "none" ? "none" : "fade";
+
 export const getTransitionStyle = (): TransitionStyle => {
   try {
-    const saved = localStorage.getItem(TRANSITION_STYLE_KEY);
-    return TRANSITION_STYLES.some((s) => s.id === saved)
-      ? (saved as TransitionStyle)
-      : DEFAULT_TRANSITION_STYLE;
+    return normalizeStyle(localStorage.getItem(TRANSITION_STYLE_KEY));
   } catch {
     return DEFAULT_TRANSITION_STYLE;
   }
@@ -77,38 +57,19 @@ export const setTransitionStyle = (style: TransitionStyle): void => {
   window.dispatchEvent(new CustomEvent(TRANSITION_STYLE_EVENT, { detail: { style } }));
 };
 
-/** Whether this style is animated by the browser's View Transitions API. */
-export const isViewTransitionStyle = (style: TransitionStyle): boolean =>
-  style === "view-transition" || style === "slide";
+/**
+ * The class the incoming view carries while the swap plays. Empty for "none":
+ * an inner fade on a motion-off site would itself be an animation.
+ */
+export const transitionEnterClass = (style: TransitionStyle): string =>
+  style === "fade" ? "view-fade-in" : "";
 
 /**
- * The class the incoming view carries while WE animate the swap (see
- * hooks/usePendingView). Empty for styles the browser animates itself, or none.
+ * True when motion must not run: the OS asks for it — or the user switched the
+ * site's own «Без анимации» on, which means the same thing app-wide.
  */
-export const transitionEnterClass = (style: TransitionStyle): string => {
-  switch (style) {
-    case "fade":
-      return "view-fade-in";
-    case "rise":
-      return "view-rise-in";
-    default:
-      return "";
-  }
-};
-
-/** Whether the browser can run a view transition right now. */
-export const supportsViewTransitions = (): boolean =>
-  typeof document !== "undefined" && typeof document.startViewTransition === "function";
-
-/**
- * Shared-element name for a раздел's title. The sidebar label and the раздел
- * header both use `section-<slug>` — but never at the same time (see Index and
- * SectionThreads), so the browser can morph one into the other.
- */
-export const sectionTransitionName = (slug: string): string =>
-  `section-${slug.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-
 export const prefersReducedMotion = (): boolean => {
+  if (getTransitionStyle() === "none") return true;
   try {
     return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
   } catch {
@@ -117,9 +78,9 @@ export const prefersReducedMotion = (): boolean => {
 };
 
 /**
- * The feed and раздел routes all render the Index page, which animates its OWN
- * view switches (hooks/usePendingView). Page-level transitions must skip these
- * so the two systems don't animate the same navigation twice.
+ * The feed and раздел routes animate their own view switches
+ * (hooks/usePendingView). Page-level transitions must skip these so the two
+ * systems don't animate the same navigation twice.
  */
 export const isFeedRoute = (pathname: string): boolean =>
   pathname === "/" || /^\/(feed|mine|history|favorites|c)(\/|$)/.test(pathname);
@@ -132,119 +93,11 @@ export const isFeedRoute = (pathname: string): boolean =>
 export const isPerfLite = (): boolean =>
   typeof document !== "undefined" && document.documentElement.classList.contains("perf-lite");
 
-// ── Direction ────────────────────────────────────────────────────────────────
-// Read by the slide choreography. Set by the main page from the route depth
-// (feed → раздел → подраздел is forward, the reverse is back) and the history
-// action for same-depth hops (browser "back" slides back).
-export const setTransitionDirection = (direction: TransitionDirection): void => {
-  if (typeof document === "undefined") return;
-  document.documentElement.dataset.vtDirection = direction;
+/**
+ * Alias kept for the formerly View-Transitions-aware call sites (pending view,
+ * section swaps): applies the update immediately — the plain `.view-fade-in`
+ * entrance on the incoming container is the only animation left.
+ */
+export const runViewTransition = (update: () => void): void => {
+  update();
 };
-
-export const getTransitionDirection = (): TransitionDirection =>
-  typeof document !== "undefined" && document.documentElement.dataset.vtDirection === "back"
-    ? "back"
-    : "forward";
-
-/**
- * At most one swap animates at a time. The pending-view pattern can report two
- * views ready in the same tick — a view mounts from cache and the network then
- * revalidates it — and a second `startViewTransition` while one is running
- * aborts the first with `AbortError: Transition was skipped` (which also
- * surfaced as an unhandled rejection). Instead of racing, hold the latest
- * superseded update and apply it once the running swap is done.
- */
-let activeTransition = false;
-let queuedUpdate: (() => void) | null = null;
-
-export interface RunTransitionOptions {
-  /**
-   * Run the View Transitions API even on weak hardware / when the user picked a
-   * non-VT style. Used by the Settings previews, which must demonstrate a style
-   * regardless of the saved one.
-   */
-  force?: boolean;
-}
-
-/**
- * The single-flight wrapper both kinds of transition go through. At most one
- * DOM swap animates at a time; a second request made while one runs is held and
- * applied once the first finishes. See the note on `activeTransition`.
- */
-const scheduleTransition = (
-  update: () => void,
-  hooks?: { before?: () => void; afterCommit?: () => void; after?: () => void },
-): void => {
-  if (activeTransition) {
-    // A swap is already animating; remember this one and run it after, so the
-    // final state is never stranded on the wrong view.
-    queuedUpdate = update;
-    return;
-  }
-
-  // Start on the next task: views report ready from React effects, and
-  // flushSync called inside a lifecycle method warns.
-  queueMicrotask(() => {
-    if (activeTransition) {
-      queuedUpdate = update;
-      return;
-    }
-    activeTransition = true;
-    hooks?.before?.();
-    const transition = document.startViewTransition!(() => {
-      flushSync(update);
-      // Still inside the capture callback: the DOM is committed and the "after"
-      // snapshot has not been taken yet.
-      hooks?.afterCommit?.();
-    });
-    // A skipped transition rejects `ready`/`finished`; that is expected when a
-    // swap is superseded and must never surface as an unhandled rejection. The
-    // update callback itself still runs, so the DOM always reaches the target.
-    void transition.finished
-      .catch(() => {})
-      .finally(() => {
-        activeTransition = false;
-        hooks?.after?.();
-        const next = queuedUpdate;
-        queuedUpdate = null;
-        // The superseded update is stale by a whole animation; apply it plainly.
-        next?.();
-      });
-  });
-};
-
-
-/**
- * Run `update` through the View Transitions API (or apply it directly).
- *
- * `style` decides whether the browser animates at all: a plain CSS-entrance
- * style never reaches this function's happy path.
- */
-export const runTransition = (
-  style: TransitionStyle,
-  update: () => void,
-  options: RunTransitionOptions = {},
-): void => {
-  if (
-    !isViewTransitionStyle(style) ||
-    !supportsViewTransitions() ||
-    prefersReducedMotion() ||
-    (!options.force && isPerfLite())
-  ) {
-    update();
-    return;
-  }
-
-  scheduleTransition(update);
-};
-
-/**
- * Run a DOM update through a view transition when the user picked that style
- * (and the browser + motion preferences + hardware allow it), otherwise just
- * apply it.
- *
- * The update MUST flush synchronously inside the callback — React batches state
- * updates, and the browser has to see the new DOM before it can snapshot it.
- */
-export const runViewTransition = (update: () => void): void =>
-  runTransition(getTransitionStyle(), update);

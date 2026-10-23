@@ -7,7 +7,6 @@ import { Lightbox, type LightboxItem } from "@/components/Lightbox";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { QuietLoading } from "@/components/QuietLoading";
 import type { SectionWithSubsections, ThreadSubsection } from "@/hooks/useThreadSections";
-import { runViewTransition, sectionTransitionName, setTransitionDirection } from "@/lib/viewTransitions";
 import { useLoadingBarStore } from "@/stores/loadingBarStore";
 import { fetchThreadLikesBatch, toFeedThread, type ThreadApiRow } from "@/utils/threadFeedItem";
 
@@ -178,20 +177,7 @@ export const SectionThreads = ({
         // animates, instead of the content popping in and an empty transition
         // playing afterwards. The key compares подраздел too: two подразделы of
         // one раздел share the section id.
-        const shownKey = displayed
-          ? cacheKey(displayed.section.id, displayed.subsection?.id)
-          : null;
-        const swapping = shownKey !== null && shownKey !== targetKey;
-        if (swapping) {
-          // Подраздел is one level deeper than its раздел, so the slide points
-          // the way the user is moving.
-          setTransitionDirection(
-            (subsection ? 2 : 1) >= (displayed?.subsection ? 2 : 1) ? "forward" : "back",
-          );
-          runViewTransition(commit);
-        } else {
-          commit();
-        }
+        commit();
       } catch (error) {
         if (cancelled) return;
         console.error("Error loading section threads:", error);
@@ -309,10 +295,6 @@ export const SectionThreads = ({
         <div className="min-w-0">
           <h2
             className="truncate text-lg font-semibold leading-tight"
-            // Shared element with the sidebar label: the sidebar drops this name
-            // once a раздел is on screen, so exactly one element owns it and the
-            // label can morph into this title (see Index).
-            style={{ viewTransitionName: sectionTransitionName(headSection.slug) }}
           >
             {headSection.name}
           </h2>

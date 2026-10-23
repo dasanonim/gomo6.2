@@ -26,7 +26,6 @@ import { Spotlight } from "@/components/Spotlight";
 import { useSidebarTabsStore } from "@/stores/sidebarTabsStore";
 import { usePendingView, pendingViewClass } from "@/hooks/usePendingView";
 import { useTransitionStyle } from "@/hooks/useTransitionStyle";
-import { isViewTransitionStyle, sectionTransitionName } from "@/lib/viewTransitions";
 
 interface GomoSub {
   id: string;
@@ -38,17 +37,6 @@ interface GomoSub {
 /** The mutually-exclusive views the main page can show. */
 type MainView = "feed" | "section" | "mine" | "history" | "favorites";
 
-/**
- * Navigation depth per view. The slide transition turns a depth change into a
- * direction (deeper = forward, shallower = back); see usePendingView.
- */
-const MAIN_VIEW_DEPTH: Record<MainView, number> = {
-  feed: 0,
-  section: 1,
-  mine: 0,
-  history: 0,
-  favorites: 0,
-};
 
 const Index = () => {
   const { loadProfile } = useProfileCache();
@@ -153,9 +141,8 @@ const Index = () => {
   // The target is known synchronously from the path, so it is the initial view:
   // the feed never mounts (and never fetches) when landing straight on a раздел.
   const initialMode: MainView = isSectionRoute ? "section" : explicitView ?? "feed";
-  const view = usePendingView<MainView>(targetMode, initialMode, MAIN_VIEW_DEPTH);
+  const view = usePendingView<MainView>(targetMode, initialMode);
   const transitionStyle = useTransitionStyle();
-  const viewTransitionTarget = isViewTransitionStyle(transitionStyle);
   const navigate = useNavigate();
 
   // Remember the last resolved раздел so it stays on screen while the feed
@@ -353,7 +340,7 @@ const Index = () => {
           {/* Main Feed — recommendations only: the «Рекомендации / Подписки»
               toggle and the subscriptions view behind it were removed. */}
           <div
-            className={`lg:col-span-3 ${viewTransitionTarget ? "view-transition-target" : ""}`}
+            className="lg:col-span-3"
           >
             {/* The feed is mounted only for feed-ish views — on a раздел path it
                 is not fetched at all. During the feed→раздел transition it stays
@@ -371,7 +358,7 @@ const Index = () => {
                   currentUserId={user?.id}
                   currentUsername={currentUserUsername}
                   currentUserColor={currentUserColor}
-                  animateEntrance={!viewTransitionTarget && transitionStyle !== "none"}
+                  animateEntrance={transitionStyle !== "none"}
                   onReady={view.readyFor("feed")}
                 />
               </div>
@@ -568,11 +555,6 @@ const Index = () => {
                                 // (see SectionThreads). Once a раздел IS shown the
                                 // header owns it — two elements with one name would
                                 // abort the whole transition.
-                                style={
-                                  view.isShown("section")
-                                    ? undefined
-                                    : { viewTransitionName: sectionTransitionName(section.slug) }
-                                }
                               >
                                 {section.name}
                               </span>

@@ -3,7 +3,7 @@ import { Toaster as Sonner, toast } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/integrations/api/queryClient";
-import { BrowserRouter, Routes, Route, Outlet, Navigate, useLocation, useNavigationType, type Location } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Outlet, Navigate, useLocation, type Location } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { LazyPage } from "@/components/LazyPage";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -11,13 +11,12 @@ import { VideoEditorHost } from "@/components/VideoEditorHost";
 import { StoryComposer } from "@/components/stories/StoryComposer";
 import { StoryViewer } from "@/components/stories/StoryViewer";
 import { ThemeSync } from "@/components/ThemeSync";
-import { MotionConfig } from "motion/react";
 import { applyTheme, getStoredPrefs, syncSharedAppearanceCookies, watchSystemMode } from "@/theme";
 import { applyCustomFont, getStoredCustomFont } from "@/lib/customFont";
-import { runTransition, setTransitionDirection, isFeedRoute } from "@/lib/viewTransitions";
+import { isFeedRoute } from "@/lib/viewTransitions";
 import { preloadRoute } from "@/lib/routeData";
 import { loadRouteChunk } from "@/lib/routeChunks";
-import { useTransitionStyle } from "@/hooks/useTransitionStyle";
+import { MotionGate } from "@/hooks/MotionGate";
 // Registers the per-route data preloaders (stale-view retention).
 import "@/routes/data";
 import { wsService } from "./services/websocket";
@@ -218,12 +217,10 @@ const App = () => {
 
   return (
     <AppErrorBoundary>
-      {/* One motion contract for the whole app: when the OS asks for reduced
-          motion, framer drops every transform/layout animation and keeps the
-          opacity ones. Components may still check `useReducedMotion()` for
-          their own choreography, but a component that forgets can no longer
-          animate against the user's wishes. */}
-      <MotionConfig reducedMotion="user">
+      {/* One motion contract for the whole app. Two layers: when the OS asks
+          for reduced motion framer keeps opacity and drops the rest; when the
+          user picks «Без анимации» in Settings the springs stop entirely. */}
+      <MotionGate>
       <QueryClientProvider client={queryClient}>
         <ProfileCacheProvider>
           <LikesCacheProvider>
@@ -244,7 +241,7 @@ const App = () => {
           </LikesCacheProvider>
         </ProfileCacheProvider>
       </QueryClientProvider>
-      </MotionConfig>
+      </MotionGate>
     </AppErrorBoundary>
   );
 };
@@ -255,14 +252,12 @@ const App = () => {
 // away over it. A direct link falls back to the plain in-layout page.
 function AppRoutes() {
   const location = useLocation();
-  const navigationType = useNavigationType();
   const backgroundLocation = (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation ?? null;
 
-  // Page-level transitions (Settings → «Анимация переходов»). The router keeps
-  // rendering the previous location until the selected style has had a chance to
-  // animate the swap: View-Transitions styles run through the browser API, the
-  // CSS styles (fade/rise) swap immediately and let AppLayout's enter class play.
-  const transitionStyle = useTransitionStyle();
+  // Page-level transitions keep stale-view retention: the router keeps
+  // rendering the previous location until the target route's chunk AND data
+  // resolve, then swaps plainly and lets the shared `.view-fade-in` entrance
+  // play (Settings can switch animations off entirely).
   const [displayLocation, setDisplayLocation] = useState(location);
 
   useEffect(() => {
@@ -277,16 +272,11 @@ function AppRoutes() {
       setDisplayLocation(location);
       return;
     }
-    // Slide is direction-aware: a history pop goes back, a push goes forward.
-    setTransitionDirection(navigationType === "POP" ? "back" : "forward");
 
-    // Stale-view retention: keep the previous page on screen while the target
-    // route's chunk AND data load, then swap through the chosen transition.
-    // Routes with no preloader resolve immediately and behave as before.
     let cancelled = false;
     Promise.all([preloadRoute(location), loadRouteChunk(location.pathname)]).then(() => {
       if (cancelled) return;
-      runTransition(transitionStyle, () => setDisplayLocation(location));
+      setDisplayLocation(location);
     });
     return () => {
       cancelled = true;

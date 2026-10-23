@@ -20,6 +20,7 @@ import {
   Search,
   Send,
   Shuffle,
+  Sparkles,
   Star,
   Sun,
   Type,
@@ -31,12 +32,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { TransitionPreview } from "@/components/TransitionPreview";
 import { PublishButton } from "@/components/PublishButton";
 import { LANGUAGES } from "@/i18n/languages";
 import { HEADER_BEHAVIORS, type HeaderBehavior } from "@/lib/headerBehavior";
 import { PUBLISH_BUTTON_STYLES, type PublishButtonStyle } from "@/lib/publishButtonStyle";
-import { TRANSITION_STYLES, isPerfLite, supportsViewTransitions, type TransitionStyle } from "@/lib/viewTransitions";
+import { TRANSITION_STYLES } from "@/lib/viewTransitions";
 import { MR_RANDOM_COUNT_OPTIONS } from "@/lib/mrRandom";
 import { springFor, whisperRowVariants } from "@/lib/motion";
 import {
@@ -154,13 +154,6 @@ const HEADER_KEYS: Record<HeaderBehavior, { label: string; desc: string }> = {
   "auto-hide": { label: "settings2.headerAutoHide", desc: "settings2.headerAutoHideDesc" },
 };
 
-const TRANSITION_KEYS: Record<TransitionStyle, { label: string; desc: string }> = {
-  fade: { label: "settings2.transFade", desc: "settings2.transFadeDesc" },
-  "view-transition": { label: "settings2.transView", desc: "settings2.transViewDesc" },
-  rise: { label: "settings2.transRise", desc: "settings2.transRiseDesc" },
-  slide: { label: "settings2.transSlide", desc: "settings2.transSlideDesc" },
-  none: { label: "settings2.transNone", desc: "settings2.transNoneDesc" },
-};
 
 const PUBLISH_KEYS: Record<PublishButtonStyle, { label: string; desc: string }> = {
   "gradient-pill": { label: "settings2.pubGradient", desc: "settings2.pubGradientDesc" },
@@ -642,25 +635,23 @@ function InterfaceView({ appearance }: { appearance: AppearanceSettings }) {
           </div>
         </SettingBlock>
 
+        {/* Exactly two positions: animated (default) or a hard motion-off
+            that behaves like prefers-reduced-motion for the whole site. Old
+            saved styles map to «Есть анимации», so no one loses the setting. */}
         <SettingBlock id="set-transitions" title={t("settings2.transitions")} description={t("settings2.transitionsDesc")} icon={Blend}>
-          <div className="grid gap-3 sm:grid-cols-2" onKeyDown={handleNavArrowKeys}>
-            {TRANSITION_STYLES.map((style) => (
-              <OptionCard
-                key={style.id}
-                selected={transitionStyle === style.id}
-                title={t(TRANSITION_KEYS[style.id].label)}
-                description={t(TRANSITION_KEYS[style.id].desc)}
-                onClick={() => setTransitionStyle(style.id)}
-              />
-            ))}
-          </div>
-          <div className="mt-3">
-            <TransitionPreview style={transitionStyle} />
-          </div>
-          {!supportsViewTransitions() && (
-            <p className="mt-2 text-xs text-muted-foreground">{t("settings2.transitionsUnsupported")}</p>
-          )}
-          {isPerfLite() && <p className="mt-1 text-xs text-muted-foreground">{t("settings2.transitionsPerfLite")}</p>}
+          <Segmented
+            aria-label={t("settings2.transitions")}
+            value={transitionStyle}
+            onChange={setTransitionStyle}
+            options={TRANSITION_STYLES.map((style) => ({
+              value: style.id,
+              label: style.label,
+              icon: style.id === "fade" ? Sparkles : CircleSlash,
+            }))}
+          />
+          <p className="mt-2 text-xs text-muted-foreground" role="note">
+            {TRANSITION_STYLES.find((style) => style.id === transitionStyle)?.description}
+          </p>
         </SettingBlock>
       </SettingGroup>
 
