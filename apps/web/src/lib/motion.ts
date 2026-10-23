@@ -23,7 +23,7 @@
  * Signed-off taste and locked parameters live in docs/wiki/MOTION_TASTE.md —
  * read it before adding or retuning a preset.
  */
-import type { Transition, Variants } from "motion/react";
+import type { TargetAndTransition, Transition, Variants } from "motion/react";
 
 /**
  * Telegram-grade physics. These four constants are the whole vocabulary of
@@ -165,6 +165,25 @@ export const STREAM_CASCADE_VARIANTS: Variants = {
   show: { transition: { staggerChildren: 0.055, delayChildren: 0.02 } },
 };
 
+/**
+ * Keeps the same entrance language as the stream cascade, but this is explicitly
+ * set on **each row** with `initial` + `animate` instead of being inherited from
+ * a parent. Inherited variant trees can be muffled by a re-render that happens
+ * between mounting and the animation (the channel load race silenced "show" and
+ * made rows stay at opacity 0 forever); a self-driven row plays to the end no
+ * matter what happens around it.
+ */
+export const streamRowVariants = (index: number): Variants => {
+  const show = STREAM_ITEM_VARIANTS.show as TargetAndTransition;
+  return {
+    hidden: STREAM_ITEM_VARIANTS.hidden,
+    show: {
+      ...show,
+      transition: { ...show.transition, delay: Math.max(0, Math.min(index, 5)) * 0.055 },
+    },
+  };
+};
+
 /** Restrained card landing: lift + tiny scale settle, never a flat opacity-only reveal. */
 export const STREAM_ITEM_VARIANTS: Variants = {
   hidden: { opacity: 0, y: SPATIAL_OFFSET.row, scale: 0.975 },
@@ -177,6 +196,27 @@ export const STREAM_ITEM_VARIANTS: Variants = {
       opacity: { duration: 0.16, ease: EASE_OUT_EXPO },
     },
   },
+};
+
+/**
+ * Whisper-level row entrance: a breath of lift (no scale), fast fade, tight
+ * ~25ms stagger across up to 9 rows. For lists that should ARRIVE, not
+ * perform — the notification inbox uses this instead of the card landing.
+ */
+export const whisperRowVariants = (index: number): Variants => {
+  const slot = Math.max(0, Math.min(index, 8)) * 0.025;
+  return {
+    hidden: { opacity: 0, y: SPATIAL_OFFSET.row / 2 },
+    show: {
+      opacity: 1,
+      y: 0,
+      transition: {
+        ...SPRING.soft,
+        delay: slot,
+        opacity: { duration: 0.14, ease: EASE_OUT_EXPO, delay: slot },
+      },
+    },
+  };
 };
 
 export interface MorphOrigin {

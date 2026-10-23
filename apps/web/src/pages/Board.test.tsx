@@ -422,11 +422,15 @@ describe("Board (wall)", () => {
     expect(joinCall).toBeTruthy();
   });
 
-  it("shows a loader while the board is loading", async () => {
+  it("paints the bare background on a cold board — no fake post skeleton", async () => {
     mockFetch.mockImplementation(() => new Promise(() => {}));
-    render(<BoardComponent />);
+    const { container } = render(<BoardComponent />);
 
-    expect(screen.getByTestId("pentagram-loader")).toBeInTheDocument();
+    // Cold board: nothing renders (no skeleton, no loaders, no empty state) —
+    // the page waits for real data instead of flashing placeholders.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(container.querySelector("[data-testid='feed-skeleton']")).toBeNull();
+    expect(screen.queryByText("Записей пока нет")).not.toBeInTheDocument();
   });
 
   it("opens the mobile channel drawer and keeps it open after picking a channel", async () => {

@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { motion, useReducedMotion } from "motion/react";
 import { apiClient, type Notification } from "@/integrations/api/client";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { Button } from "@/components/ui/button";
-import { PentagramLoader } from "@/components/PentagramLoader";
+import { Skeleton } from "@/components/ui/skeleton";
 import { NotificationItem } from "@/components/NotificationItem";
 import { ArrowLeft, CheckCheck } from "lucide-react";
 import { normalizeLanguage } from "@/i18n/languages";
 import { groupByDay, type NotifWithSlug } from "@/utils/notificationGroups";
+import { springFor, whisperRowVariants } from "@/lib/motion";
 
 /**
  * A row that marks its notification read once it has actually been on screen
@@ -57,21 +59,6 @@ const ReadOnViewRow = ({
     </div>
   );
 };
-
-/** Placeholder rows shown while the first page (or a tab switch) is loading. */
-const NotificationListSkeleton = () => (
-  <div className="divide-y divide-border/60">
-    {Array.from({ length: 6 }).map((_, i) => (
-      <div key={i} className="flex items-start gap-3 px-4 py-3">
-        <div className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-muted" />
-        <div className="flex-1 space-y-2 pt-0.5">
-          <div className="h-3 w-3/4 animate-pulse rounded bg-muted" />
-          <div className="h-2.5 w-1/4 animate-pulse rounded bg-muted" />
-        </div>
-      </div>
-    ))}
-  </div>
-);
 
 const Notify = () => {
   const { t, i18n } = useTranslation();
@@ -164,6 +151,7 @@ const Notify = () => {
   }, [notifications, attachSlugs]);
 
   const dateLocale = normalizeLanguage(i18n.language) === "en" ? "en-US" : "ru-RU";
+  const prefersReducedMotion = useReducedMotion();
   const groups = useMemo(
     () => groupByDay(slugifiedNotifs, new Date(), t, dateLocale),
     [slugifiedNotifs, t, dateLocale],
@@ -199,11 +187,7 @@ const Notify = () => {
   }, [hasMore, isLoadingMore, fetchMore, slugifiedNotifs.length]);
 
   if (loading) {
-    return (
-      <div className="bg-background min-h-screen flex items-center justify-center">
-        <PentagramLoader size="lg" />
-      </div>
-    );
+    return <div className="bg-background min-h-screen" />;
   }
 
   if (!user) {
@@ -218,7 +202,17 @@ const Notify = () => {
           <Button variant="ghost" size="icon" onClick={() => navigate(-1)} className="h-9 w-9" title={t("common.back")}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="flex-1 text-lg font-bold">{t("nav.notifications")}</h1>
+          {/* Page-load settlement: light soft spring on the title, then the
+              mark-all control follows it in. The sticky header element itself
+              stays un-transformed (sticky + transformed ancestors don't mix). */}
+          <motion.h1
+            className="flex-1 text-lg font-bold"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={springFor("soft", prefersReducedMotion)}
+          >
+            {t("nav.notifications")}
+          </motion.h1>
           {unreadCount > 0 && (
             <Button
               variant="ghost"
@@ -245,49 +239,90 @@ const Notify = () => {
                 }`}
               >
                 {tabKey === "all" ? t("notif.all") : t("notif.unread")}
-                {active && <span className="absolute inset-x-6 bottom-0 h-0.5 rounded-full bg-primary" />}
+                {active && (
+                  <motion.span
+                    layoutId="notify-tab-underline"
+                    transition={springFor("snappy", prefersReducedMotion)}
+                    className="absolute inset-x-6 bottom-0 h-0.5 rounded-full bg-primary"
+                  />
+                )}
               </button>
             );
           })}
         </div>
       </header>
 
-      {groups.length === 0 && listPending ? (
-        <NotificationListSkeleton />
-      ) : groups.length === 0 ? (
-        <div className="px-4 py-16 text-center">
+      {/* No skeleton rows, ever: the page stays quiet until the first page
+          resolves, then the rows cascade in on the shared spring. Blocking a
+          real page behind placeholder rows reads as flicker. */}
+      {groups.length === 0 && listPending ? null : groups.length === 0 ? (
+        <motion.div
+          className="px-4 py-16 text-center"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+        >
           <p className="text-sm text-muted-foreground">
             {tab === "unread" ? t("notif.noUnreadNotifications") : t("notif.noNotifications")}
           </p>
-        </div>
+        </motion.div>
       ) : (
         <div>
-          {groups.map((group) => (
+          {groups.map((group, groupIndex) => {
+            // Cascade index across the flattened list: only the first handful
+            // of rows get the entrance spring, like the feed.
+            let runningIndex = 0;
+            for (let i = 0; i < groupIndex; i++) runningIndex += groups[i].items.length;
+            return (
             <section key={group.key}>
-              <h2 className="border-b border-border/60 bg-muted/30 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <motion.h2
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
+                className="border-b border-border/60 bg-muted/30 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+              >
                 {group.label}
-              </h2>
+              </motion.h2>
               <div className="divide-y divide-border/60">
-                {group.items.map((notif) => (
-                  <ReadOnViewRow
-                    key={notif.id}
-                    notification={notif}
-                    threadSlug={notif.thread_slug}
-                    onSeen={markAsRead}
-                    onOpen={(id) => {
-                      if (!notif.is_read) markAsRead(id);
-                    }}
-                  />
-                ))}
+                {group.items.map((notif, i) => {
+                  const row = (
+                    <ReadOnViewRow
+                      notification={notif}
+                      threadSlug={notif.thread_slug}
+                      onSeen={markAsRead}
+                      onOpen={(id) => {
+                        if (!notif.is_read) markAsRead(id);
+                      }}
+                    />
+                  );
+                  const flatIndex = runningIndex + i;
+                  // Every row rides the whisper entrance (its delay slots cap
+                  // at 8), so labels and cards of EVERY group settle together —
+                  // no instant-pop tail after the cascaded head.
+                  if (!prefersReducedMotion) {
+                    return (
+                      <motion.div
+                        key={notif.id}
+                        variants={whisperRowVariants(flatIndex)}
+                        initial="hidden"
+                        animate="show"
+                      >
+                        {row}
+                      </motion.div>
+                    );
+                  }
+                  return <div key={notif.id}>{row}</div>;
+                })}
               </div>
             </section>
-          ))}
+            );
+          })}
 
           <div ref={sentinelRef} data-testid="notify-sentinel" className="h-4" />
 
           {isLoadingMore && (
             <div className="flex justify-center py-4">
-              <PentagramLoader size="sm" />
+              <Skeleton className="h-5 w-28 rounded-full" />
             </div>
           )}
 

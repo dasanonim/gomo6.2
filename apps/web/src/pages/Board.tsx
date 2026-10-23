@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useParams, useNavigate, useSearchParams, Navigate, useLocation } from "react-router-dom";
+import { motion, useReducedMotion } from "motion/react";
 import { NavigationLink } from "@/components/NavigationLink";
 import { api } from "@/integrations/api/compat";
 import { apiClient } from "@/integrations/api/client";
 import { invalidateByPrefix, peekCached } from "@/integrations/api/queryCache";
 import { Button } from "@/components/ui/button";
-import { PostActionsMenu } from "@/components/PostActionsMenu";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -20,11 +20,11 @@ import { storageUrl } from "@/utils/storage";
 import { CONTENT_TAGS, FORMAT_TAGS, ATMOSPHERE_TAGS, FLAG_TAGS } from "@/constants/tags";
 import { UserBadge } from "@/components/UserBadge";
 import { AgeVerification } from "@/components/AgeVerification";
-import { Filter, X, MessageCircle, ArrowUpRight, BookOpenText, UserPlus, UserCheck, Plus, Share2, ChevronLeft, ChevronRight, ChevronDown, Hash, Lock, MessageSquare, Settings } from "lucide-react";
+import { Filter, X, MessageCircle, ArrowUpRight, BookOpenText, UserPlus, UserCheck, Plus, Share2, ChevronLeft, ChevronRight, ChevronDown, Hash, Lock, Settings } from "lucide-react";
 import { useSessionTime } from "@/hooks/useSessionTime";
 import { useProfileInvalidation } from "@/hooks/useProfileInvalidation";
 import { getCurrentUserMeta } from "@/utils/currentUserMeta";
-import { PentagramLoader } from "@/components/PentagramLoader";
+import { Skeleton } from "@/components/ui/skeleton";
 import { renderPreviewContent } from "@/utils/emojiUtils.tsx";
 import { renderTags } from "@/components/ThreadCard";
 import { LikeButton } from "@/components/LikeButton";
@@ -41,6 +41,11 @@ import {
   type BoardRow as Board,
   type ChannelRow as Channel,
 } from "@/routes/data/boardData";
+import { getDirectoryMemberCount } from "@/routes/data/gomosubData";
+import { STREAM_ITEM_VARIANTS, springFor, streamRowVariants } from "@/lib/motion";
+import { GomoSubHeader } from "@/components/gomosub/GomoSubHeader";
+import { GomoSubChannelsList } from "@/components/gomosub/GomoSubChannelsList";
+import { useGomoSubUnread } from "@/hooks/useGomoSubUnread";
 
 // Mobile channel sheet grab zone: bottom-left corner of the screen.
 // Used both for the swipe-up-to-open and swipe-down-to-close.
@@ -116,6 +121,11 @@ const Board = () => {
   const [authResolved, setAuthResolved] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [threadsLoading, setThreadsLoading] = useState(false);
+  // True only after the thread list actually returned for this board. The
+  // «Записей пока нет» empty state is gated on it: an intermediate commit
+  // (threads=[] while the fetch is still spinning up) must never paint the
+  // empty state — that was one of the entry races.
+  const [threadsSettled, setThreadsSettled] = useState(false);
   const [showAgeVerification, setShowAgeVerification] = useState(false);
   const [ageVerified, setAgeVerified] = useState(false);
   const [searchParams] = useSearchParams();
@@ -125,6 +135,7 @@ const Board = () => {
   const [rulesConfirmed, setRulesConfirmed] = useState(false);
   const [checkingRules, setCheckingRules] = useState(false);
   const [isJoined, setIsJoined] = useState(false);
+  const [memberCount, setMemberCount] = useState<number | null>(null);
   const [privateAccessDenied, setPrivateAccessDenied] = useState(false);
   const [membershipLoading, setMembershipLoading] = useState(false);
   
@@ -244,13 +255,11 @@ const Board = () => {
 
     // Build URL with cursor-based pagination
     let threadsUrl = `/api/v1/threads?board_id=eq.${boardId}`;
-    // Filter by channel if active
+    // Filter by channel if active. Bare slug = «Общий»: no channel filter at
+    // all, so the community feed shows every record, from every channel.
     const effectiveChannelId = channelId !== undefined ? channelId : null;
     if (effectiveChannelId) {
       threadsUrl += `&channel_id=eq.${effectiveChannelId}`;
-    } else if (isGomoRoute && !channelSlug) {
-      // Default gomosub view: show only threads without a channel (general feed)
-      threadsUrl += `&channel_id=is.null`;
     }
     threadsUrl += `&order=updated_at.desc&limit=${isLoadMore ? 21 : 20}`;
     if (isLoadMore && threadsCursor) {
@@ -391,6 +400,9 @@ const Board = () => {
   loadThreadsRef.current = loadThreads;
   const activeChannelIdRef = useRef(activeChannelId);
   activeChannelIdRef.current = activeChannelId;
+  // Tracks which board the loaded thread list belongs to, so a channel switch
+  // can keep the old list on screen instead of flashing empty content.
+  const prevBoardIdRef = useRef<string | null>(null);
   const fetchIdRef = useRef(0);
 
   // Sync activeChannelId from URL channelSlug when channels are loaded
@@ -413,6 +425,7 @@ const Board = () => {
       setPageLoading(true);
       // Show a warm row for this slug if we have one (SWR), otherwise clear.
       setBoard(slug ? peekCached<Board>(boardBySlugUrl(slug)) ?? null : null);
+      setThreadsSettled(false);
       setThreads([]);
       setThreadsCursor(null);
       setHasMoreThreads(true);
@@ -462,6 +475,15 @@ const Board = () => {
         }
 
         setBoard(boardData);
+
+        // Compact-header member count through the shared (warm) directory
+        // cache — one request total, works for guests too.
+        if (boardData.is_gomosub) {
+          setMemberCount(null);
+          getDirectoryMemberCount(boardData.id).then((count) => {
+            if (count != null) setMemberCount(count);
+          });
+        }
 
         // Load user's permissions for gomosub management
         if (boardData.is_gomosub && user?.id) {
@@ -521,17 +543,34 @@ const Board = () => {
     loadBoard();
   }, [slug, user, isGomoRoute, authResolved]);
 
+  // gomosub entry lands on the bare slug = «Общий» feed — ALL board records,
+  // from every channel. No auto-redirect, no channel-less filter trick: both
+  // produced "empty until you click a channel" confusion (see history).
+
   // Thread load: runs when board is ready and channelSlug/board.id changes
   // This is SEPARATE from board load so switching channels is instant
   useEffect(() => {
     if (!board) return;
     if (board.slug === 'd' && !ageVerified && !isGomoRoute) return;
-    // Don't load threads until channels are resolved (avoids double fetch)
+    // Wait for a gomosub board's channels to settle before the first fetch
+    // (avoids a double fetch when the channel list arrives mid-flight).
     if (isGomoRoute && channels.length === 0) return;
 
-    setThreads([]);
-    setThreadsCursor(null);
-    setHasMoreThreads(true);
+    // Telegram-style channel switch: the previous list STAYS on screen until
+    // the new one arrives (loadThreads replaces it in place). Clearing here
+    // flashed an empty feed on every channel tap. Only a genuine board
+    // change (different sub, cold entry) gets a real skeleton.
+    const boardChanged = prevBoardIdRef.current !== board.id;
+    prevBoardIdRef.current = board.id;
+    if (boardChanged) {
+      setThreadsSettled(false);
+      setThreads([]);
+      setThreadsCursor(null);
+      setHasMoreThreads(true);
+    } else {
+      setThreadsCursor(null);
+      setHasMoreThreads(true);
+    }
 
     // Resolve channel ID directly from URL slug (not from async state)
     const resolvedChannelId = isGomoRoute && channelSlug
@@ -541,6 +580,7 @@ const Board = () => {
     const loadChannelThreads = async () => {
       setThreadsLoading(true);
       await loadThreadsRef.current(board.id, false, resolvedChannelId);
+      setThreadsSettled(true);
       setThreadsLoading(false);
     };
     loadChannelThreads();
@@ -559,13 +599,20 @@ const Board = () => {
     loadThreadsRef.current(board.id, false, resolvedChannelId);
   });
 
+  // Membership is resolved asynchronously per board; until the response lands
+  // the join button renders a stable ghost, not a wrong "Вступить".
+  const [membershipKnown, setMembershipKnown] = useState(false);
+
   useEffect(() => {
     const loadMembership = async () => {
+      const needsFetch = Boolean(board?.is_gomosub && user?.id);
+      // Ghost-button state ONLY while a real fetch is in flight; guests and
+      // non-gomosub boards know "not joined" immediately.
+      setMembershipKnown(!needsFetch);
       if (!board?.is_gomosub) {
         setIsJoined(false);
         return;
       }
-
       if (!user?.id) {
         setIsJoined(false);
         return;
@@ -574,6 +621,7 @@ const Board = () => {
       const membershipResponse = await fetch(`/api/v1/gomosub_memberships?board_id=eq.${board.id}&user_id=eq.${user.id}`);
       const membershipResult = await membershipResponse.json();
       setIsJoined((membershipResult.data || []).length > 0);
+      setMembershipKnown(true);
     };
 
     loadMembership();
@@ -643,8 +691,13 @@ const Board = () => {
     return result;
   }, [channels]);
 
-  const activeChannelSlug = useMemo(() => {
-    if (!activeChannelId) return null;
+  // gomosub header tags (from the board row's gomosub_tags array)
+  const gomosubTags = useMemo(() => {
+    const tags = board?.gomosub_tags;
+    return Array.isArray(tags) ? tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0) : [];
+  }, [board?.gomosub_tags]);
+
+  const activeChannelSlug = useMemo(() => {    if (!activeChannelId) return null;
     return channels.find((ch) => ch.id === activeChannelId)?.slug || null;
   }, [activeChannelId, channels]);
 
@@ -784,52 +837,28 @@ const Board = () => {
     };
   }, []);
 
-  // The channel drawer (mobile) and the desktop sidebar share this list markup.
+  const { unread, markSeen } = useGomoSubUnread(user?.id ?? null, board?.id ?? null, channels);
+
+  // Per-row entrance motion needs the reduced-motion gate (no parent cascade
+  // anymore — see the thread list below).
+  const prefersReducedMotion = useReducedMotion();
+
+  // Opened a channel → its unread dot clears at once.
+  useEffect(() => {
+    if (!isGomoRoute) return;
+    markSeen(activeChannelId);
+  }, [isGomoRoute, activeChannelId, markSeen]);
+
+  // The channel drawer (mobile) and the desktop sidebar share GomoSubChannelsList.
   const renderChannelList = (onSelect: () => void) => (
-    <>
-      <NavigationLink
-        to={`/g/${slug}`}
-        onClick={() => { setActiveChannelId(null); onSelect(); }}
-        className={`flex items-center gap-2 px-2 py-2 rounded-lg text-sm transition-colors ${
-          !activeChannelId
-            ? "bg-primary/10 text-primary font-medium"
-            : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-        }`}
-      >
-        <Hash className="w-4 h-4 shrink-0" />
-        <span className="truncate">{t("board.general")}</span>
-      </NavigationLink>
-      {channelCategories.map((group) => (
-        <div key={group.category || "__uncategorized"} className="mt-1.5">
-          {group.category && (
-            <div className="px-2 py-0.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider truncate">
-              {group.category}
-            </div>
-          )}
-          {group.channels.map((ch) => (
-            <NavigationLink
-              key={ch.id}
-              to={`/g/${slug}/c/${ch.slug}`}
-              onClick={onSelect}
-              className={`flex items-center gap-2 px-2 py-2 rounded-lg text-sm transition-colors ${
-                activeChannelSlug === ch.slug
-                  ? "bg-primary/10 text-primary font-medium"
-                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-              }`}
-            >
-              {ch.is_private && ch.kind !== "text" ? (
-                <Lock className="w-4 h-4 shrink-0 text-amber-500" />
-              ) : ch.kind === "text" ? (
-                <MessageSquare className="w-4 h-4 shrink-0 text-sky-400" />
-              ) : (
-                <Hash className="w-4 h-4 shrink-0" />
-              )}
-              <span className="truncate">{ch.name}</span>
-            </NavigationLink>
-          ))}
-        </div>
-      ))}
-    </>
+    <GomoSubChannelsList
+      boardSlug={slug ?? ""}
+      groups={channelCategories}
+      activeChannelSlug={activeChannelSlug}
+      generalLabel={t("board.general")}
+      onNavigate={onSelect}
+      unread={unread}
+    />
   );
 
   const canCreateThread = user && (!board?.is_rules_board || isModerator);
@@ -949,6 +978,7 @@ const Board = () => {
       }
       setIsJoined(false);
       toast.success(t("board.left"));
+      if (memberCount != null) setMemberCount(Math.max(0, memberCount - 1));
       // Raw write bypasses query-builder — drop memberships/boards GET cache.
       invalidateByPrefix('/api/v1/gomosub_memberships');
       invalidateByPrefix('/api/v1/boards');
@@ -975,15 +1005,11 @@ const Board = () => {
     invalidateByPrefix('/api/v1/boards');
   };
 
-  // Full-screen loader only on a genuinely cold board (no cached row). When the
-  // route preloader warmed it, the page paints immediately; the rules check
-  // (checkingRules) resolves behind the modal instead of blocking the page.
+  // Cold board (no cached row): paint the bare background — no fake post
+  // skeleton, no loaders. The route preloader makes this state rare; a blank
+  // frame is quieter than skeleton → empty → pills → posts churn.
   if (!board) {
-    return (
-      <div className="bg-background flex items-center justify-center min-h-screen">
-        <PentagramLoader size="lg" />
-      </div>
-    );
+    return <div className="bg-background min-h-screen" />;
   }
 
   if (privateAccessDenied) {
@@ -1012,7 +1038,10 @@ const Board = () => {
     );
   }
 
-  const hasChannels = isGomoRoute && channels.length > 0;
+  // Layout target must be known on the FIRST paint: a gomosub board will
+  // always draw the channels sidebar, so it takes the wide container before
+  // the channel list arrives (no max-w reflow on entry).
+  const hasChannels = isGomoRoute && (channels.length > 0 || Boolean(board?.is_gomosub));
 
   return (
     <>
@@ -1026,86 +1055,20 @@ const Board = () => {
             Discord-style channel bar above the chat carries name + actions) */}
         {!isTextChannel && (<div className="mb-3 sm:mb-4 space-y-3">
           {board.is_gomosub ? (
-            <Card className="overflow-hidden border-primary/20 bg-surface">
-              <div className="relative">
-                <div className="h-40 sm:h-52">
-                  {board.cover_image_url ? (
-                    <img
-                      src={storageUrl("post-images", board.cover_image_url) || board.cover_image_url}
-                      alt={t("board.coverAlt", { slug: board.slug })}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="h-full w-full bg-gradient-to-br from-primary/15 to-muted" />
-                  )}
-                </div>
-                <div className="absolute left-0 right-0 -bottom-10 sm:-bottom-12">
-                  <div className="flex items-end gap-3 px-4 sm:px-6 py-2">
-                    <div className="flex items-end gap-3 min-w-0">
-                      <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-lg border-2 border-background bg-muted overflow-hidden flex items-center justify-center text-2xl font-bold text-muted-foreground shrink-0">
-                        {board.gomosub_avatar_url ? (
-                          <img src={storageUrl("post-images", board.gomosub_avatar_url) || board.gomosub_avatar_url} alt={board.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <span>{(board.name?.[0] || "g").toUpperCase()}</span>
-                        )}
-                      </div>
-                      <div className="text-xl sm:text-2xl font-bold text-primary pb-1 truncate">g/{board.slug}</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="relative px-4 sm:px-6 pt-12 sm:pt-14 pb-4 sm:pb-5">
-                {board.is_gomosub && (
-                  <div className="absolute right-4 sm:right-6 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-9 w-9 p-0 sm:h-10 sm:w-10"
-                      onClick={() => {
-                        const url = `${window.location.origin}/g/${board.slug}`;
-                        navigator.clipboard.writeText(url).then(() => {
-                          toast.success(t("board.linkCopied"));
-                        }).catch(() => {
-                          toast.error(t("board.linkCopyError"));
-                        });
-                      }}
-                      title={t("board.share")}
-                    >
-                      <Share2 className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant={isJoined ? "secondary" : "default"}
-                      onClick={handleToggleJoin}
-                      className={`h-9 w-9 p-0 sm:h-10 sm:w-auto sm:px-4 sm:text-sm ${isJoined ? "bg-primary/12 text-primary hover:bg-primary/20 border border-primary/35" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
-                      disabled={membershipLoading || checkingRules}
-                    >
-                      {isJoined ? (
-                        <>
-                          <UserCheck className="w-4 h-4 sm:mr-2" />
-                          <span className="hidden sm:inline">{t("board.member")}</span>
-                        </>
-                      ) : (
-                        <>
-                          <UserPlus className="w-4 h-4 sm:mr-2" />
-                          <span className="hidden sm:inline">{t("board.join")}</span>
-                        </>
-                      )}
-                    </Button>
-                    {user && board.owner_id !== user.id && (
-                      <PostActionsMenu
-                        targetType="gomosub"
-                        targetId={board.id}
-                        reportLabel="Пожаловаться на саб"
-                        reportTargetLabel="на саб"
-                        triggerTitle="Действия"
-                      />
-                    )}
-                  </div>
-                )}
-                <p className="mt-2 text-sm sm:text-base text-muted-foreground sm:pr-44">{board.description}</p>
-              </div>
-            </Card>
+            <GomoSubHeader
+              board={board}
+              tags={gomosubTags}
+              viewerId={user?.id ?? null}
+              isJoined={isJoined}
+              membershipPending={!membershipKnown}
+              memberCount={memberCount}
+              membershipLoading={membershipLoading}
+              checkingRules={checkingRules}
+              onToggleJoin={handleToggleJoin}
+              joinLabel={t("board.join")}
+              joinedLabel={t("board.member")}
+              shareTitle={t("board.share")}
+            />
           ) : (
             <div className="text-center">
               <p className="text-sm sm:text-base text-muted-foreground">{board.description}</p>
@@ -1113,12 +1076,18 @@ const Board = () => {
           )}
 
           {board.is_gomosub && (
-            <BoardStoriesBar
-              boardId={board.id}
-              boardName={board.name}
-              avatarUrl={board.gomosub_avatar_url}
-              canPost={Boolean(isBoardOwner || boardPermissions.can_post_stories)}
-            />
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={springFor("soft", prefersReducedMotion)}
+            >
+              <BoardStoriesBar
+                boardId={board.id}
+                boardName={board.name}
+                avatarUrl={board.gomosub_avatar_url}
+                canPost={Boolean(isBoardOwner || boardPermissions.can_post_stories)}
+              />
+            </motion.div>
           )}
 
           {!isGomoRoute && (
@@ -1457,7 +1426,7 @@ const Board = () => {
             className={`flex gap-0 ${isTextChannel ? "w-full" : "flex-1 min-h-0 -mx-2 sm:-mx-4 md:-mx-5"}`}
           >
             <aside className={`hidden md:block shrink-0 transition-all duration-300 z-20 sticky top-2 self-start ${sidebarCollapsed ? 'w-0' : 'w-[220px] sm:w-[240px]'}`}>
-              <div className={`mx-2 rounded-xl border border-border/40 bg-card/85 backdrop-blur-md shadow-lg transition-shadow hover:shadow-xl flex flex-col max-h-[calc(100dvh-1.5rem)] overflow-hidden ${sidebarCollapsed ? 'hidden' : ''}`}>
+              <div className={`mx-2 rounded-2xl border border-border/50 bg-surface/60 backdrop-blur-md shadow-sm flex flex-col max-h-[calc(100dvh-1.5rem)] overflow-hidden ${sidebarCollapsed ? 'hidden' : ''}`}>
                 {/* Sidebar header with collapse button */}
                 <div className="flex items-center justify-between px-3 pt-3 pb-2">
                   <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest select-none">{t("board.channels")}</h3>
@@ -1591,7 +1560,12 @@ const Board = () => {
                   </div>
               </div>
               ) : (
-              <div className="mb-3 sm:mb-4">
+              <motion.div
+                className="mb-3 sm:mb-4"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={springFor("soft", prefersReducedMotion)}
+              >
                 <div className="flex items-center gap-2 sm:flex-row sm:items-center sm:justify-between">
                   {/* Mobile channel switcher — opens the channel sheet (bottom, Discord-style) */}
                   <button
@@ -1617,24 +1591,31 @@ const Board = () => {
                     <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground ml-auto" />
                   </button>
                   {canCreateThread && !isTextChannel && (
-                    <Button
-                      onClick={() =>
-                        navigate(
-                          isGomoRoute
-                            ? activeChannelSlug
-                              ? `/g/${slug}/c/${activeChannelSlug}/create`
-                              : `/g/${slug}/create`
-                            : `/create?board=${slug}`
-                        )
-                      }
-                      className="h-8 w-8 p-0 rounded-lg sm:h-10 sm:w-auto sm:px-4 sm:text-sm"
+                    <motion.div
+                      className="shrink-0"
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={springFor("standard", prefersReducedMotion)}
                     >
-                      <Plus className="h-4 w-4 sm:mr-2" />
-                      <span className="hidden sm:inline">{t("board.createThread")}</span>
-                    </Button>
+                      <Button
+                        onClick={() =>
+                          navigate(
+                            isGomoRoute
+                              ? activeChannelSlug
+                                ? `/g/${slug}/c/${activeChannelSlug}/create`
+                                : `/g/${slug}/create`
+                              : `/create?board=${slug}`
+                          )
+                        }
+                        className="h-8 w-8 p-0 rounded-lg sm:h-10 sm:w-auto sm:px-4 sm:text-sm"
+                      >
+                        <Plus className="h-4 w-4 sm:mr-2" />
+                        <span className="hidden sm:inline">{t("board.createThread")}</span>
+                      </Button>
+                    </motion.div>
                   )}
                 </div>
-              </div>
+              </motion.div>
               )}
 
               <div className={`relative flex-1 ${isTextChannel ? "flex flex-col min-h-0" : "space-y-2"}`}>
@@ -1649,65 +1630,58 @@ const Board = () => {
                   />
                 ) : (
                 <>
-                {/* Thread content — same as non-gomosub version below */}
-                {pageLoading ? (
+                {/* Thread content — same as non-gomosub version below.
+                    Warm entry shows NOTHING while loading: no fake-post
+                    skeleton, no loading pills, no mid-flight empty state.
+                    The list simply appears (cascade) when ready. */}
+                {pageLoading ? null : (
                   <>
-                    {[1, 2, 3, 4, 5].map((i) => (
-                      <div
-                        key={`placeholder-${i}`}
-                        className="block border border-border bg-surface p-2 sm:p-3 opacity-60 blur-sm pointer-events-none"
-                      >
-                        <div className="relative flex items-start gap-3 min-h-[80px] sm:min-h-[100px]">
-                          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-muted rounded flex-shrink-0" />
-                          <div className="flex-shrink-0 max-w-[200px] sm:max-w-[250px]">
-                            <div className="h-5 bg-muted rounded mb-2 w-full" />
-                            <div className="h-3 bg-muted rounded w-1/2" />
-                          </div>
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="h-3 bg-muted rounded w-1/2" />
-                          </div>
-                          <div className="absolute bottom-2 right-2">
-                            <div className="h-3 bg-muted rounded w-8" />
-                          </div>
-                          <div className="absolute top-2 right-2">
-                            <div className="w-6 h-6 bg-muted rounded-full" />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    <div className="fixed left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20">
-                      <PentagramLoader size="lg" />
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    {threadsLoading && (
-                      <div className="flex justify-center py-4">
-                        <PentagramLoader size="sm" />
-                      </div>
-                    )}
-                    {threads.map((thread) => (
-                      <GomoThreadCard
-                        key={thread.id}
-                        thread={thread}
-                        currentUserId={user?.id ?? null}
-                        currentUsername={currentUsername}
-                        currentUserColor={currentUserColor}
-                        boardPath={`${pathPrefix}/${slug}${channelSlug ? `/c/${channelSlug}` : ""}`}
-                        sourceLabel={activeChannelName || board?.name || undefined}
-                        onImageClick={(items, idx) => {
-                          setGalleryItems(items);
-                          setGalleryIndex(idx);
-                        }}
-                      />
-                    ))}
+                {!isTextChannel && (
+                  <div className={isTextChannel ? undefined : "space-y-2"}>
+                    {threads.map((thread, index) => {
+                      const card = (
+                        <GomoThreadCard
+                          thread={thread}
+                          currentUserId={user?.id ?? null}
+                          currentUsername={currentUsername}
+                          currentUserColor={currentUserColor}
+                          boardPath={`${pathPrefix}/${slug}${channelSlug ? `/c/${channelSlug}` : ""}`}
+                          sourceLabel={activeChannelName || board?.name || undefined}
+                          onImageClick={(items, idx) => {
+                            setGalleryItems(items);
+                            setGalleryIndex(idx);
+                          }}
+                        />
+                      );
+                      // Per-row entrance: self-driven initial/animate, NOT variant
+                      // propagation from a parent. A re-render (channel load race,
+                      // WS update) between mount and animation used to swallow the
+                      // parent's "show" and leave rows permanently opacity-0 —
+                      // that was the invisible-records bug on gomosub channels.
+                      if (index < 6 && !prefersReducedMotion) {
+                        return (
+                          <motion.div
+                            key={thread.id}
+                            data-motion="cascade-row"
+                            variants={streamRowVariants(index)}
+                            initial="hidden"
+                            animate="show"
+                          >
+                            {card}
+                          </motion.div>
+                        );
+                      }
+                      return <div key={thread.id}>{card}</div>;
+                    })}
+                  </div>
+                )}
                   </>
                 )}
                 </>
                 )}
               </div>
 
-              {!isTextChannel && threads.length === 0 && !pageLoading && !threadsLoading && (
+              {!isTextChannel && threads.length === 0 && threadsSettled && !pageLoading && !threadsLoading && (
                 <div className="text-center text-muted-foreground p-8">
                   Записей пока нет. Будьте первым!
                 </div>
@@ -1716,7 +1690,7 @@ const Board = () => {
               <div ref={threadsSentinelRef} className={isTextChannel ? "hidden" : "py-4"}>
                 {loadingMoreThreads && (
                   <div className="flex justify-center">
-                    <PentagramLoader size="md" />
+                    <Skeleton className="h-5 w-28 rounded-full" />
                   </div>
                 )}
                 {!hasMoreThreads && threads.length > 0 && (
@@ -1902,40 +1876,8 @@ const Board = () => {
 
 
         <div className="space-y-2 relative">
-          {pageLoading ? (
+          {pageLoading ? null : (
             <>
-              {/* Placeholder threads with blur */}
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div
-                  key={`placeholder-${i}`}
-                  className="block border border-border bg-surface p-2 sm:p-3 opacity-60 blur-sm pointer-events-none"
-                >
-                  <div className="relative flex items-start gap-3 min-h-[80px] sm:min-h-[100px]">
-                    <div className="w-16 h-16 sm:w-20 sm:h-20 bg-muted rounded flex-shrink-0" />
-                    <div className="flex-shrink-0 max-w-[200px] sm:max-w-[250px]">
-                      <div className="h-5 bg-muted rounded mb-2 w-full" />
-                      <div className="h-3 bg-muted rounded w-1/2" />
-                    </div>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="h-3 bg-muted rounded w-1/2" />
-                    </div>
-                    <div className="absolute bottom-2 right-2">
-                      <div className="h-3 bg-muted rounded w-8" />
-                    </div>
-                    <div className="absolute top-2 right-2">
-                      <div className="w-6 h-6 bg-muted rounded-full" />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </>
-          ) : (
-            <>
-            {threadsLoading && (
-              <div className="flex justify-center py-4">
-                <PentagramLoader size="sm" />
-              </div>
-            )}
                     {threads.map((thread) => (
                       isGomoRoute ? (
                 <Card key={thread.id} className="border-border/70 bg-card/95 p-0 overflow-hidden hover:border-primary/35 transition-colors rounded-xl">
@@ -2183,7 +2125,7 @@ const Board = () => {
           )}
         </div>
 
-        {threads.length === 0 && !pageLoading && !threadsLoading && (
+        {threads.length === 0 && threadsSettled && !pageLoading && !threadsLoading && (
           <div className="text-center text-muted-foreground p-8">
             Записей пока нет. Будьте первым!
           </div>
@@ -2193,7 +2135,7 @@ const Board = () => {
         <div ref={threadsSentinelRef} className="py-4">
           {loadingMoreThreads && (
             <div className="flex justify-center">
-              <PentagramLoader size="md" />
+              <Skeleton className="h-5 w-28 rounded-full" />
             </div>
           )}
           {!hasMoreThreads && threads.length > 0 && (

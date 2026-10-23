@@ -910,7 +910,6 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 		// GomoSub directory (public — drives the /g catalog; with a token the
 		// rows carry the viewer's joined flag)
 		rpc.GET("/gomosubs_directory", rpcHandler.GetGomoSubsDirectory)
-
 		// Wall-post views (public — guests scroll walls too; the handler
 		// dedupes per viewer and gates private walls itself)
 		rpc.POST("/record_wall_views", rpcHandler.RecordWallViews)
@@ -934,6 +933,10 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 			// GomoSub RPC functions
 			protected.POST("/create_gomosub", rpcHandler.CreateGomoSub)
 			protected.GET("/get_board_user_permissions", rpcHandler.GetBoardUserPermissions)
+
+			// Sidebar unread markers: last activity per readable channel (auth
+			// required — private channels are filtered by read access)
+			protected.GET("/get_gomosub_channel_activity", rpcHandler.GetGomoSubChannelActivity)
 
 			// Thread/Post RPC functions
 			protected.POST("/create_thread", rpcHandler.CreateThreadRPC)

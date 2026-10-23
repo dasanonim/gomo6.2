@@ -111,13 +111,15 @@ describe("Notify", () => {
     expect(mockStore.fetchMore).toHaveBeenCalled();
   });
 
-  it("shows a skeleton, not «нет уведомлений», while the first page loads", async () => {
+  it("stays quiet while the first page loads — no skeleton, no empty state", async () => {
     mockStore.notifications = [];
     mockStore.isLoading = true;
     render(<Notify />);
 
     await waitFor(() => expect(screen.getByText("Все")).toBeInTheDocument());
+    // No placeholder rows and no «нет уведомлений» flash: the list area simply
+    // stays empty until real data (or a genuine empty result) arrives.
+    expect(document.querySelector(".animate-pulse")).toBeNull();
     expect(screen.queryByText("Нет уведомлений")).not.toBeInTheDocument();
-    expect(document.querySelector(".animate-pulse")).toBeInTheDocument();
   });
 });
