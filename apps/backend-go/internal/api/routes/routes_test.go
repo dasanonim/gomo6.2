@@ -464,6 +464,7 @@ var expectedRoutes = []string{
 	"POST /api/rpc/record_wall_views",
 	"POST /api/rpc/delete_avatar_from_history",
 	"POST /api/rpc/create_gomosub",
+	"GET /api/rpc/get_gomosub_channel_activity",
 	"GET /api/rpc/get_board_user_permissions",
 	"POST /api/rpc/create_thread",
 	"POST /api/rpc/create_post",

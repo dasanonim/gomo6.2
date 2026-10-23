@@ -2,14 +2,104 @@ package rpc
 
 import (
 	"net/http"
+	"time"
 
+	"github.com/gomo6/backend/internal/channelaccess"
 	"github.com/gomo6/backend/internal/httpx"
 	"github.com/gomo6/backend/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // ─── GomoSub directory ──────────────────────────────────────────────────────
+
+// ChannelActivityItem is one accessible channel's last activity timestamp —
+// feeds the sidebar unread dots (localStorage last-seen vs server time).
+type ChannelActivityItem struct {
+	ChannelID      string `json:"channel_id"`
+	LastActivityAt string `json:"last_activity_at"`
+}
+
+// GetGomoSubChannelActivity returns the last activity time of every channel in
+// a board the viewer can READ (private channels without read access are
+// omitted — the sidebar must not leak activity it cannot open).
+//
+// GetGomoSubChannelActivity godoc
+// @Summary      GomoSub channel activity
+// @Description  Last activity timestamp per readable channel of a board
+// @Tags         RPC
+// @Produce      json
+// @Param        _board_id query string true "Board ID"
+// @Success      200 {object} models.APIResponse
+// @Router       /rpc/get_gomosub_channel_activity [get]
+func (h *RPCHandler) GetGomoSubChannelActivity(c *gin.Context) {
+	claims, ok := httpx.BearerClaims(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Authorization required"))
+		return
+	}
+	boardID := c.Query("_board_id")
+	if boardID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("_board_id parameter required"))
+		return
+	}
+	if _, err := uuid.Parse(boardID); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid board ID"))
+		return
+	}
+
+	const query = `
+		SELECT ch.id,
+		       NULLIF(GREATEST(
+		         COALESCE((SELECT max(m.created_at) FROM channel_messages m WHERE m.channel_id = ch.id AND m.deleted_at IS NULL), to_timestamp(0)),
+		         COALESCE((SELECT max(t.updated_at) FROM threads t WHERE t.channel_id = ch.id), to_timestamp(0))
+		       ), to_timestamp(0)) AS last_activity_at
+		FROM channels ch
+		WHERE ch.board_id = $1
+	`
+
+	rows, err := h.db.Query(query, boardID)
+	if err != nil {
+		httpx.ServerError(c, "handler error", err)
+		return
+	}
+	defer rows.Close()
+
+	items := []ChannelActivityItem{}
+	type rowTS struct {
+		id string
+		at *time.Time
+	}
+	var rowsBuf []rowTS
+	for rows.Next() {
+		var r rowTS
+		if err := rows.Scan(&r.id, &r.at); err != nil {
+			httpx.ServerError(c, "handler error", err)
+			return
+		}
+		rowsBuf = append(rowsBuf, r)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.ServerError(c, "handler error", err)
+		return
+	}
+
+	for _, r := range rowsBuf {
+		canRead, err := channelaccess.CanReadChannel(h.db, claims.UserID, r.id)
+		if err != nil {
+			// Fail closed for this channel: skip the row rather than 500.
+			continue
+		}
+		if !canRead || r.at == nil {
+			// Unreadable or content-free → never unread.
+			continue
+		}
+		items = append(items, ChannelActivityItem{ChannelID: r.id, LastActivityAt: r.at.UTC().Format(time.RFC3339)})
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(items))
+}
 
 // GomoSubDirectoryItem is one public community in the /g catalog. Member and
 // channel counts come from correlated subqueries so the whole catalog is a

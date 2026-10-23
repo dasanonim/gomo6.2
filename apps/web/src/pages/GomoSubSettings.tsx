@@ -3,16 +3,16 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api } from "@/integrations/api/compat";
 import { apiClient } from "@/integrations/api/client";
 import { storageUrl, uploadFile } from "@/utils/storage";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Loader2, Save, Settings, Plus, Trash2, GripVertical, Hash, MessageSquare, Shield, Lock, Eye, EyeOff, Users, Link, Copy, Calendar, Infinity as InfinityIcon, Clock, Download } from "lucide-react";
+import { Loader2, Save, Plus, Trash2, GripVertical, Hash, MessageSquare, Shield, Lock, Eye, EyeOff, Users, Link, Copy, Calendar, Infinity as InfinityIcon, Clock, Download, PenLine, type LucideIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { renderPreviewContent } from "@/utils/emojiUtils";
 
@@ -44,6 +44,20 @@ const buildRulesMarkdown = (s: string, a: string[], f: string[]) => {
 };
 
 const PERMISSION_LABELS: Record<string, string> = { can_manage_roles: "Управление ролями", can_manage_channels: "Управление каналами", can_manage_members: "Управление участниками", can_delete_threads: "Удаление записей", can_pin_threads: "Закрепление записей", can_post_stories: "Публикация историй" };
+
+// Settings sections: pills on mobile, sticky rail on desktop. `invites` is
+// only meaningful for private subs (public ones have no invite links).
+const buildTabItems = (visibility: string): { value: TabValue; label: string; icon: LucideIcon }[] => {
+  const items: { value: TabValue; label: string; icon: LucideIcon }[] = [
+    { value: "general", label: "Основное", icon: PenLine },
+    { value: "channels", label: "Каналы", icon: Hash },
+    { value: "roles", label: "Роли", icon: Shield },
+  ];
+  if (visibility === "private") {
+    items.push({ value: "invites", label: "Приглашения", icon: Link });
+  }
+  return items;
+};
 
 const GomoSubSettings = () => {
   const { slug } = useParams();
@@ -255,23 +269,78 @@ const GomoSubSettings = () => {
   };
 
   if (loading) return <div className="max-w-4xl mx-auto p-6 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+  const tabItems = buildTabItems(boardVisibility);
 
   return (
-    <div className="max-w-4xl mx-auto p-3 sm:p-6 space-y-4">
-      <Card className="overflow-hidden border-primary/30">
-        <div className="h-36 sm:h-44 bg-muted/30 border-b border-border relative">
-          <input ref={coverInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp,image/gif" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadSingleImage(file, "cover"); e.target.value = ""; }} />
-          <button type="button" onClick={() => coverInputRef.current?.click()} className="group relative w-full h-full text-left">{form.cover_image_url ? <img src={storageUrl("post-images", form.cover_image_url) || form.cover_image_url} alt="cover" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-sm text-muted-foreground">{uploadingCover ? "Загрузка..." : "Нажми сюда, чтобы обновить фон"}</div>}<div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors" /></button>
-          <div className="absolute -bottom-10 left-4 w-20 h-20 rounded-full border-4 border-background bg-surface overflow-hidden flex items-center justify-center text-xl font-bold text-muted-foreground">
-            <input ref={avatarInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp,image/gif" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadSingleImage(file, "avatar"); e.target.value = ""; }} />
-            <button type="button" onClick={() => avatarInputRef.current?.click()} className="group relative w-full h-full">{form.gomosub_avatar_url ? <img src={storageUrl("post-images", form.gomosub_avatar_url) || form.gomosub_avatar_url} alt="avatar" className="w-full h-full object-cover" /> : <span>{uploadingAvatar ? "..." : (form.name.trim()[0] || "g").toUpperCase()}</span>}<div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors" /></button>
-          </div>
+    <div className="max-w-5xl mx-auto w-full px-3 sm:px-5 pb-32 md:pb-10">
+      <header className="pt-1 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold tracking-tight">Настройки</h1>
+          <p className="text-sm text-muted-foreground truncate">g/{slug}</p>
         </div>
-        <CardHeader className="pt-12"><CardTitle className="flex items-center gap-2"><Settings className="w-5 h-5 text-primary" />Настройки g/{slug}</CardTitle>
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)} className="mt-3"><TabsList className={`grid w-full ${boardVisibility === "private" ? 'grid-cols-4' : 'grid-cols-3'}`}><TabsTrigger value="general">Основное</TabsTrigger><TabsTrigger value="channels">Каналы</TabsTrigger><TabsTrigger value="roles">Роли</TabsTrigger>{boardVisibility === "private" && <TabsTrigger value="invites"><Link className="w-3.5 h-3.5 mr-1 inline" />Приглашения</TabsTrigger>}</TabsList></Tabs>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {activeTab === "general" && (<><div className="text-xs text-muted-foreground">Для смены фото нажми прямо на аватар или фоновый прямоугольник в шапке.</div><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><label className="text-sm font-medium">Название</label><Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} maxLength={80} /></div><div className="space-y-2"><label className="text-sm font-medium">Описание</label><Input value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} maxLength={240} /></div></div>{boardVisibility === "public" && <><div className="space-y-2"><label className="text-sm font-medium">Базовые правила</label><Textarea value={standardRules} onChange={(e) => setStandardRules(e.target.value)} rows={3} /></div><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><div className="flex items-center justify-between"><label className="text-sm font-medium">Можно</label><Button size="sm" variant="outline" onClick={() => addRuleItem("allowed")}><Plus className="w-4 h-4" /></Button></div>{allowedRules.map((r, i) => (<div key={`a${i}`} className="flex gap-2"><Input value={r} onChange={(e) => updateRuleItem("allowed", i, e.target.value)} placeholder="Добавить разрешение" /><Button size="sm" variant="outline" onClick={() => removeRuleItem("allowed", i)}>x</Button></div>))}</div><div className="space-y-2"><div className="flex items-center justify-between"><label className="text-sm font-medium">Нельзя</label><Button size="sm" variant="outline" onClick={() => addRuleItem("forbidden")}><Plus className="w-4 h-4" /></Button></div>{forbiddenRules.map((r, i) => (<div key={`f${i}`} className="flex gap-2"><Input value={r} onChange={(e) => updateRuleItem("forbidden", i, e.target.value)} placeholder="Добавить ограничение" /><Button size="sm" variant="outline" onClick={() => removeRuleItem("forbidden", i)}>x</Button></div>))}</div></div></>}{boardVisibility === "private" && <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4"><p className="text-sm text-muted-foreground">Приватный g-саб — доступ только по приглашениям. Управляй приглашениями во вкладке «Приглашения».</p></div>}<div className="space-y-2"><label className="text-sm font-medium">Кастомные теги</label><div className="flex flex-col sm:flex-row gap-2"><Input value={tagInput} onChange={(e) => setTagInput(e.target.value)} placeholder="новости, гайды, драмa..." maxLength={24} /><Button type="button" variant="outline" onClick={addTag} className="w-full sm:w-auto">Добавить</Button></div><div className="flex flex-wrap gap-2">{form.gomosub_tags.map((tag) => (<Badge key={tag} variant="secondary" className="cursor-pointer" onClick={() => removeTag(tag)} title="Нажми, чтобы удалить">#{tag}</Badge>))}</div></div></>)}
+        <Button variant="outline" size="sm" className="h-9 rounded-full shrink-0" onClick={() => navigate(`/g/${slug}`)}>
+          К сабу
+        </Button>
+      </header>
+
+      <div className="mt-4 flex flex-col md:flex-row md:gap-7">
+        {/* Settings nav — pills row on mobile, sticky rail on desktop */}
+        <nav className="md:w-48 md:shrink-0 md:sticky md:top-24 md:self-start" aria-label={`Настройки g/${slug}`}>
+          <div className="flex gap-1.5 overflow-x-auto scrollbar-hide md:hidden -mx-3 px-3 pb-1">
+            {tabItems.map((item) => (
+              <button
+                key={item.value}
+                onClick={() => setActiveTab(item.value)}
+                className={cn(
+                  "shrink-0 rounded-full border px-3.5 py-1.5 text-sm transition-colors",
+                  activeTab === item.value
+                    ? "border-primary/40 bg-primary/10 font-medium text-primary"
+                    : "border-border/60 bg-surface text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div className="hidden md:block space-y-0.5">
+            {tabItems.map((item) => (
+              <button
+                key={item.value}
+                onClick={() => setActiveTab(item.value)}
+                aria-current={activeTab === item.value ? "true" : undefined}
+                className={cn(
+                  "flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-sm transition-colors",
+                  activeTab === item.value
+                    ? "bg-primary/10 font-medium text-primary"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                )}
+              >
+                <item.icon className="w-4 h-4 shrink-0" />
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+
+        <div className="min-w-0 flex-1 mt-4 md:mt-0 space-y-4">
+        {/* Cover + avatar editing — «Основное» section identity card */}
+        {activeTab === "general" && (
+        <Card className="overflow-hidden rounded-2xl border-border/70">
+          <div className="h-24 sm:h-32 bg-muted/30 border-b border-border relative">
+            <input ref={coverInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp,image/gif" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadSingleImage(file, "cover"); e.target.value = ""; }} />
+            <button type="button" onClick={() => coverInputRef.current?.click()} className="group relative w-full h-full text-left">{form.cover_image_url ? <img src={storageUrl("post-images", form.cover_image_url) || form.cover_image_url} alt="cover" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-sm text-muted-foreground">{uploadingCover ? "Загрузка..." : "Нажми на область, чтобы загрузить обложку"}</div>}<div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors" /></button>
+            <div className="absolute -bottom-8 left-4 w-16 h-16 sm:w-20 sm:h-20 rounded-2xl border-[3px] border-background bg-surface shadow-md overflow-hidden flex items-center justify-center text-xl font-bold text-muted-foreground">
+              <input ref={avatarInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp,image/gif" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadSingleImage(file, "avatar"); e.target.value = ""; }} />
+              <button type="button" onClick={() => avatarInputRef.current?.click()} className="group relative w-full h-full">{form.gomosub_avatar_url ? <img src={storageUrl("post-images", form.gomosub_avatar_url) || form.gomosub_avatar_url} alt="avatar" className="w-full h-full object-cover" /> : <span>{uploadingAvatar ? "..." : (form.name.trim()[0] || "g").toUpperCase()}</span>}<div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors" /></button>
+            </div>
+          </div>
+          <div className="px-4 pt-10 pb-3">
+            <div className="text-[13px] text-muted-foreground">Для смены фото нажми прямо на аватар или обложку в шапке.</div>
+          </div>
+        </Card>
+        )}
+        <div className="space-y-5">
+          {activeTab === "general" && (<><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><label className="text-sm font-medium">Название</label><Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} maxLength={80} /></div><div className="space-y-2"><label className="text-sm font-medium">Описание</label><Input value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} maxLength={240} /></div></div>{boardVisibility === "public" && <><div className="space-y-2"><label className="text-sm font-medium">Базовые правила</label><Textarea value={standardRules} onChange={(e) => setStandardRules(e.target.value)} rows={3} /></div><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><div className="flex items-center justify-between"><label className="text-sm font-medium">Можно</label><Button size="sm" variant="outline" onClick={() => addRuleItem("allowed")}><Plus className="w-4 h-4" /></Button></div>{allowedRules.map((r, i) => (<div key={`a${i}`} className="flex gap-2"><Input value={r} onChange={(e) => updateRuleItem("allowed", i, e.target.value)} placeholder="Добавить разрешение" /><Button size="sm" variant="outline" onClick={() => removeRuleItem("allowed", i)}>x</Button></div>))}</div><div className="space-y-2"><div className="flex items-center justify-between"><label className="text-sm font-medium">Нельзя</label><Button size="sm" variant="outline" onClick={() => addRuleItem("forbidden")}><Plus className="w-4 h-4" /></Button></div>{forbiddenRules.map((r, i) => (<div key={`f${i}`} className="flex gap-2"><Input value={r} onChange={(e) => updateRuleItem("forbidden", i, e.target.value)} placeholder="Добавить ограничение" /><Button size="sm" variant="outline" onClick={() => removeRuleItem("forbidden", i)}>x</Button></div>))}</div></div></>}{boardVisibility === "private" && <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4"><p className="text-sm text-muted-foreground">Приватный g-саб — доступ только по приглашениям. Управляй приглашениями во вкладке «Приглашения».</p></div>}<div className="space-y-2"><label className="text-sm font-medium">Кастомные теги</label><div className="flex flex-col sm:flex-row gap-2"><Input value={tagInput} onChange={(e) => setTagInput(e.target.value)} placeholder="новости, гайды, драмa..." maxLength={24} /><Button type="button" variant="outline" onClick={addTag} className="w-full sm:w-auto">Добавить</Button></div><div className="flex flex-wrap gap-2">{form.gomosub_tags.map((tag) => (<Badge key={tag} variant="secondary" className="cursor-pointer" onClick={() => removeTag(tag)} title="Нажми, чтобы удалить">#{tag}</Badge>))}</div></div></>)}
           {activeTab === "channels" && (
             <div className="space-y-4">
               <div className="text-sm text-muted-foreground">Каналы — как в Discord. Перетаскивай за <GripVertical className="w-3.5 h-3.5 inline text-muted-foreground" /> чтобы менять порядок.</div>
@@ -280,7 +349,7 @@ const GomoSubSettings = () => {
                   draggable={!reordering} onDragStart={(e) => handleDragStart(e, idx)} onDragOver={(e) => handleDragOver(e, idx)} onDrop={() => handleDrop(idx)} onDragEnd={() => setDragIndex(null)}>
                   <div className="cursor-grab active:cursor-grabbing" title="Перетащить"><GripVertical className="w-4 h-4 text-muted-foreground shrink-0 hover:text-primary transition-colors" /></div>
                   {ch.kind === "text" ? <MessageSquare className="w-4 h-4 text-sky-400 shrink-0" /> : ch.is_private ? <Lock className="w-4 h-4 text-amber-500 shrink-0" /> : <Hash className="w-4 h-4 text-muted-foreground shrink-0" />}
-                  {editingChannelId === ch.id ? (<div className="flex-1 flex items-center gap-2"><Input defaultValue={ch.name} className="h-7 text-sm" maxLength={50} onKeyDown={(e) => { if (e.key === "Enter") handleUpdateChannel(ch.id, { name: (e.target as HTMLInputElement).value }); }} autoFocus /><Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditingChannelId(null)}>Отмена</Button></div>) : (<div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{ch.is_private ? "🔒 " : "# "}{ch.name}</div><div className="text-xs text-muted-foreground">/c/{ch.slug}{ch.category && <span className="ml-2">· {ch.category}</span>}{ch.is_private && <span className="ml-2 text-amber-500">· приватный</span>}</div></div>)}
+                  {editingChannelId === ch.id ? (<div className="flex-1 flex items-center gap-2"><Input defaultValue={ch.name} className="h-7 text-sm" maxLength={50} onKeyDown={(e) => { if (e.key === "Enter") handleUpdateChannel(ch.id, { name: (e.target as HTMLInputElement).value }); }} autoFocus /><Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditingChannelId(null)}>Отмена</Button></div>) : (<div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{ch.name}</div><div className="text-xs text-muted-foreground">/c/{ch.slug}{ch.category && <span className="ml-2">· {ch.category}</span>}{ch.kind === "text" && <span className="ml-2 text-sky-400">· чат</span>}{ch.is_private && <span className="ml-2 text-amber-500">· приватный</span>}</div></div>)}
                   <div className="flex items-center gap-1"><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditingChannelId(ch.id)} title="Переименовать">✎</Button><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={async () => { await handleToggleChannelPrivacy(ch.id, !ch.is_private); }} title={ch.is_private ? "Сделать публичным" : "Сделать приватным"}>{ch.is_private ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}</Button><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleOpenChannelPerms(ch.id)} title="Права доступа"><Shield className="w-3.5 h-3.5" /></Button><Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive hover:text-destructive" onClick={() => handleDeleteChannel(ch.id)} title="Удалить канал"><Trash2 className="w-4 h-4" /></Button></div></div>
                   {managingPermsChannelId === ch.id && (<div className="mt-2 ml-8 rounded-lg border border-border/60 bg-muted/30 p-3 space-y-2"><div className="flex items-center justify-between"><span className="text-sm font-medium">Права доступа: {ch.name}</span><Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setManagingPermsChannelId(null)}>✕</Button></div>{!ch.is_private ? <p className="text-xs text-muted-foreground">Канал публичный — права ролей не применяются.</p> : ch.is_private && channelPermsLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : ch.is_private && roles.length === 0 ? <p className="text-xs text-muted-foreground">Создай роли во вкладке «Роли»</p> : ch.is_private ? <div className="space-y-1.5">{roles.map((role) => { const perm = channelPerms.find((p) => p.role_id === role.id); const cr = perm?.can_read ?? false; const cw = perm?.can_write ?? false; return (<div key={role.id} className="flex items-center gap-3 py-1"><div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: role.color }} /><span className="text-sm flex-1 min-w-0 truncate">{role.name}</span><Label className="text-xs flex items-center gap-1 cursor-pointer"><Switch checked={cr} onCheckedChange={(v) => handleTogglePermRole(ch.id, role.id, v, cw)} />Чтение</Label><Label className="text-xs flex items-center gap-1 cursor-pointer"><Switch checked={cw} onCheckedChange={(v) => handleTogglePermRole(ch.id, role.id, cr, v)} />Запись</Label></div>); })}</div> : null}</div>)}</div>))}</div>}
             </div>
@@ -338,9 +407,10 @@ const GomoSubSettings = () => {
             </div>
           )}
           {activeTab === "general" && boardVisibility === "public" && (<div className="rounded-lg border border-border p-3 bg-muted/30"><div className="text-xs text-muted-foreground mb-2">Превью правил</div>{renderPreviewContent(rulesPreview, "g-settings-rules")}</div>)}
-          <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-between"><Button variant="outline" onClick={() => navigate(`/g/${slug}`)}>К g-сабу</Button><div className="flex gap-2">{isOwner && <Button variant="outline" onClick={handleExport} disabled={exporting}>{exporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}Экспорт</Button>}<Button onClick={handleSave} disabled={saving}>{saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}<Save className="w-4 h-4 mr-2" />Сохранить</Button></div></div>
-        </CardContent>
-      </Card>
+          <div className="flex justify-end gap-2 pt-1">{isOwner && <Button variant="outline" onClick={handleExport} disabled={exporting}>{exporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}Экспорт</Button>}<Button onClick={handleSave} disabled={saving}>{saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}<Save className="w-4 h-4 mr-2" />Сохранить</Button></div>
+        </div>
+        </div>
+      </div>
     </div>
   );
 };

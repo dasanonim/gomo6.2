@@ -5,7 +5,6 @@ import { api } from "@/integrations/api/compat";
 import { apiClient } from "@/integrations/api/client";
 import { invalidateByPrefix, peekCached } from "@/integrations/api/queryCache";
 import { Button } from "@/components/ui/button";
-import { PostActionsMenu } from "@/components/PostActionsMenu";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -20,7 +19,7 @@ import { storageUrl } from "@/utils/storage";
 import { CONTENT_TAGS, FORMAT_TAGS, ATMOSPHERE_TAGS, FLAG_TAGS } from "@/constants/tags";
 import { UserBadge } from "@/components/UserBadge";
 import { AgeVerification } from "@/components/AgeVerification";
-import { Filter, X, MessageCircle, ArrowUpRight, BookOpenText, UserPlus, UserCheck, Plus, Share2, ChevronLeft, ChevronRight, ChevronDown, Hash, Lock, MessageSquare, Settings, Users } from "lucide-react";
+import { Filter, X, MessageCircle, ArrowUpRight, BookOpenText, UserPlus, UserCheck, Plus, Share2, ChevronLeft, ChevronRight, ChevronDown, Hash, Lock, MessageSquare, Settings } from "lucide-react";
 import { useSessionTime } from "@/hooks/useSessionTime";
 import { useProfileInvalidation } from "@/hooks/useProfileInvalidation";
 import { getCurrentUserMeta } from "@/utils/currentUserMeta";
@@ -42,7 +41,9 @@ import {
   type ChannelRow as Channel,
 } from "@/routes/data/boardData";
 import { getDirectoryMemberCount } from "@/routes/data/gomosubData";
-import { formatCompactCount } from "@/utils/formatCount";
+import { GomoSubHeader } from "@/components/gomosub/GomoSubHeader";
+import { GomoSubChannelsList } from "@/components/gomosub/GomoSubChannelsList";
+import { useGomoSubUnread } from "@/hooks/useGomoSubUnread";
 
 // Mobile channel sheet grab zone: bottom-left corner of the screen.
 // Used both for the swipe-up-to-open and swipe-down-to-close.
@@ -801,54 +802,24 @@ const Board = () => {
     };
   }, []);
 
-  // The channel drawer (mobile) and the desktop sidebar share this list markup.
+  const { unread, markSeen } = useGomoSubUnread(user?.id ?? null, board?.id ?? null, channels);
+
+  // Opened a channel → its unread dot clears at once.
+  useEffect(() => {
+    if (!isGomoRoute) return;
+    markSeen(activeChannelId);
+  }, [isGomoRoute, activeChannelId, markSeen]);
+
+  // The channel drawer (mobile) and the desktop sidebar share GomoSubChannelsList.
   const renderChannelList = (onSelect: () => void) => (
-    <>
-      <NavigationLink
-        to={`/g/${slug}`}
-        onClick={() => { setActiveChannelId(null); onSelect(); }}
-        aria-current={!activeChannelId ? "page" : undefined}
-        className={`group flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm transition-colors ${
-          !activeChannelId
-            ? "bg-primary/10 text-primary font-medium"
-            : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-        }`}
-      >
-        <Hash className={`w-4 h-4 shrink-0 ${!activeChannelId ? "" : "text-muted-foreground/80 group-hover:text-foreground"}`} />
-        <span className="truncate">{t("board.general")}</span>
-      </NavigationLink>
-      {channelCategories.map((group) => (
-        <div key={group.category || "__uncategorized"} className="mt-2">
-          {group.category && (
-            <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/70 truncate">
-              {group.category}
-            </div>
-          )}
-          {group.channels.map((ch) => (
-            <NavigationLink
-              key={ch.id}
-              to={`/g/${slug}/c/${ch.slug}`}
-              onClick={onSelect}
-              aria-current={activeChannelSlug === ch.slug ? "page" : undefined}
-              className={`group flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm transition-colors ${
-                activeChannelSlug === ch.slug
-                  ? "bg-primary/10 text-primary font-medium"
-                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-              }`}
-            >
-              {ch.is_private && ch.kind !== "text" ? (
-                <Lock className="w-4 h-4 shrink-0 text-amber-500" />
-              ) : ch.kind === "text" ? (
-                <MessageSquare className={`w-4 h-4 shrink-0 ${activeChannelSlug === ch.slug ? "text-primary" : "text-sky-400"}`} />
-              ) : (
-                <Hash className={`w-4 h-4 shrink-0 ${activeChannelSlug === ch.slug ? "" : "text-muted-foreground/80 group-hover:text-foreground"}`} />
-              )}
-              <span className="truncate">{ch.name}</span>
-            </NavigationLink>
-          ))}
-        </div>
-      ))}
-    </>
+    <GomoSubChannelsList
+      boardSlug={slug ?? ""}
+      groups={channelCategories}
+      activeChannelSlug={activeChannelSlug}
+      generalLabel={t("board.general")}
+      onNavigate={onSelect}
+      unread={unread}
+    />
   );
 
   const canCreateThread = user && (!board?.is_rules_board || isModerator);
@@ -1046,114 +1017,19 @@ const Board = () => {
             Discord-style channel bar above the chat carries name + actions) */}
         {!isTextChannel && (<div className="mb-3 sm:mb-4 space-y-3">
           {board.is_gomosub ? (
-            <Card className="overflow-hidden rounded-2xl border-border/70 bg-surface">
-              <div className="relative">
-                {/* Cover band — compact backdrop; the identity lives in the
-                    avatar row below, not in a half-screen hero. */}
-                <div className="h-24 sm:h-32">
-                  {board.cover_image_url ? (
-                    <img
-                      src={storageUrl("post-images", board.cover_image_url) || board.cover_image_url}
-                      alt={t("board.coverAlt", { slug: board.slug })}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="h-full w-full bg-gradient-to-br from-primary/20 via-primary/10 to-muted" />
-                  )}
-                </div>
-
-                <div className="relative -mt-8 sm:-mt-10 px-4 sm:px-5 pb-4 sm:pb-5">
-                  <div className="flex items-end justify-between gap-3">
-                    <div className="h-16 w-16 sm:h-20 sm:w-20 shrink-0 overflow-hidden rounded-2xl border-[3px] border-background bg-muted shadow-md">
-                      {board.gomosub_avatar_url ? (
-                        <img
-                          src={storageUrl("post-images", board.gomosub_avatar_url) || board.gomosub_avatar_url}
-                          alt={board.name}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary/30 to-muted text-xl sm:text-2xl font-bold text-primary">
-                          {(board.name?.[0] || board.slug[0] || "g").toUpperCase()}
-                        </div>
-                      )}
-                    </div>
-                    {board.is_gomosub && (
-                      <div className="flex items-center gap-2 pb-0.5">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-9 w-9 p-0"
-                          onClick={() => {
-                            const url = `${window.location.origin}/g/${board.slug}`;
-                            navigator.clipboard.writeText(url).then(() => {
-                              toast.success(t("board.linkCopied"));
-                            }).catch(() => {
-                              toast.error(t("board.linkCopyError"));
-                            });
-                          }}
-                          title={t("board.share")}
-                        >
-                          <Share2 className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant={isJoined ? "secondary" : "default"}
-                          onClick={handleToggleJoin}
-                          className={`h-9 px-4 text-sm ${isJoined ? "bg-primary/12 text-primary hover:bg-primary/20 border border-primary/35" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
-                          disabled={membershipLoading || checkingRules}
-                        >
-                          {isJoined ? (
-                            <>
-                              <UserCheck className="w-4 h-4 mr-2" />
-                              {t("board.member")}
-                            </>
-                          ) : (
-                            <>
-                              <UserPlus className="w-4 h-4 mr-2" />
-                              {t("board.join")}
-                            </>
-                          )}
-                        </Button>
-                        {user && board.owner_id !== user.id && (
-                          <PostActionsMenu
-                            targetType="gomosub"
-                            targetId={board.id}
-                            reportLabel="Пожаловаться на саб"
-                            reportTargetLabel="на саб"
-                            triggerTitle="Действия"
-                          />
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                    <h1 className="text-lg sm:text-xl font-bold tracking-tight">{board.name}</h1>
-                    <span className="text-sm font-semibold text-primary">g/{board.slug}</span>
-                    {memberCount != null && (
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Users className="h-3 w-3" />
-                        {formatCompactCount(memberCount)}
-                      </span>
-                    )}
-                    {board.visibility === "private" && (
-                      <Lock className="h-3.5 w-3.5 text-amber-500" />
-                    )}
-                  </div>
-                  {board.description && (
-                    <p className="mt-1 text-sm text-muted-foreground max-w-[720px]">{board.description}</p>
-                  )}
-                  {(gomosubTags.length > 0) && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {gomosubTags.slice(0, 6).map((tag) => (
-                        <span key={tag} className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </Card>
+            <GomoSubHeader
+              board={board}
+              tags={gomosubTags}
+              viewerId={user?.id ?? null}
+              isJoined={isJoined}
+              memberCount={memberCount}
+              membershipLoading={membershipLoading}
+              checkingRules={checkingRules}
+              onToggleJoin={handleToggleJoin}
+              joinLabel={t("board.join")}
+              joinedLabel={t("board.member")}
+              shareTitle={t("board.share")}
+            />
           ) : (
             <div className="text-center">
               <p className="text-sm sm:text-base text-muted-foreground">{board.description}</p>
