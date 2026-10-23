@@ -422,11 +422,11 @@ describe("Board (wall)", () => {
     expect(joinCall).toBeTruthy();
   });
 
-  it("shows a loader while the board is loading", async () => {
+  it("shows a skeleton while the board is loading", async () => {
     mockFetch.mockImplementation(() => new Promise(() => {}));
     render(<BoardComponent />);
 
-    expect(screen.getByTestId("pentagram-loader")).toBeInTheDocument();
+    expect(await screen.findByTestId("feed-skeleton")).toBeInTheDocument();
   });
 
   it("opens the mobile channel drawer and keeps it open after picking a channel", async () => {

@@ -24,7 +24,8 @@ import { Filter, X, MessageCircle, ArrowUpRight, BookOpenText, UserPlus, UserChe
 import { useSessionTime } from "@/hooks/useSessionTime";
 import { useProfileInvalidation } from "@/hooks/useProfileInvalidation";
 import { getCurrentUserMeta } from "@/utils/currentUserMeta";
-import { PentagramLoader } from "@/components/PentagramLoader";
+import { ThreadFeedSkeleton } from "@/components/skeletons/ContentSkeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 import { renderPreviewContent } from "@/utils/emojiUtils.tsx";
 import { renderTags } from "@/components/ThreadCard";
 import { LikeButton } from "@/components/LikeButton";
@@ -395,6 +396,9 @@ const Board = () => {
   loadThreadsRef.current = loadThreads;
   const activeChannelIdRef = useRef(activeChannelId);
   activeChannelIdRef.current = activeChannelId;
+  // Tracks which board the loaded thread list belongs to, so a channel switch
+  // can keep the old list on screen instead of flashing empty content.
+  const prevBoardIdRef = useRef<string | null>(null);
   const fetchIdRef = useRef(0);
 
   // Sync activeChannelId from URL channelSlug when channels are loaded
@@ -547,9 +551,20 @@ const Board = () => {
     // (avoids a double fetch when the channel list arrives mid-flight).
     if (isGomoRoute && channels.length === 0) return;
 
-    setThreads([]);
-    setThreadsCursor(null);
-    setHasMoreThreads(true);
+    // Telegram-style channel switch: the previous list STAYS on screen until
+    // the new one arrives (loadThreads replaces it in place). Clearing here
+    // flashed an empty feed on every channel tap. Only a genuine board
+    // change (different sub, cold entry) gets a real skeleton.
+    const boardChanged = prevBoardIdRef.current !== board.id;
+    prevBoardIdRef.current = board.id;
+    if (boardChanged) {
+      setThreads([]);
+      setThreadsCursor(null);
+      setHasMoreThreads(true);
+    } else {
+      setThreadsCursor(null);
+      setHasMoreThreads(true);
+    }
 
     // Resolve channel ID directly from URL slug (not from async state)
     const resolvedChannelId = isGomoRoute && channelSlug
@@ -978,10 +993,13 @@ const Board = () => {
   // Full-screen loader only on a genuinely cold board (no cached row). When the
   // route preloader warmed it, the page paints immediately; the rules check
   // (checkingRules) resolves behind the modal instead of blocking the page.
+  // Full-screen state only on a genuinely cold board (no cached row): the
+  // same skeleton as the feed, no spinner — the page paints into its final
+  // layout instead of flashing a loader first.
   if (!board) {
     return (
-      <div className="bg-background flex items-center justify-center min-h-screen">
-        <PentagramLoader size="lg" />
+      <div className="bg-background min-h-screen px-3 pt-6 sm:px-5">
+        <ThreadFeedSkeleton count={4} />
       </div>
     );
   }
@@ -1584,39 +1602,12 @@ const Board = () => {
                 <>
                 {/* Thread content — same as non-gomosub version below */}
                 {pageLoading ? (
-                  <>
-                    {[1, 2, 3, 4, 5].map((i) => (
-                      <div
-                        key={`placeholder-${i}`}
-                        className="block border border-border bg-surface p-2 sm:p-3 opacity-60 blur-sm pointer-events-none"
-                      >
-                        <div className="relative flex items-start gap-3 min-h-[80px] sm:min-h-[100px]">
-                          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-muted rounded flex-shrink-0" />
-                          <div className="flex-shrink-0 max-w-[200px] sm:max-w-[250px]">
-                            <div className="h-5 bg-muted rounded mb-2 w-full" />
-                            <div className="h-3 bg-muted rounded w-1/2" />
-                          </div>
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="h-3 bg-muted rounded w-1/2" />
-                          </div>
-                          <div className="absolute bottom-2 right-2">
-                            <div className="h-3 bg-muted rounded w-8" />
-                          </div>
-                          <div className="absolute top-2 right-2">
-                            <div className="w-6 h-6 bg-muted rounded-full" />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    <div className="fixed left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20">
-                      <PentagramLoader size="lg" />
-                    </div>
-                  </>
+                  <ThreadFeedSkeleton count={5} />
                 ) : (
                   <>
                     {threadsLoading && (
-                      <div className="flex justify-center py-4">
-                        <PentagramLoader size="sm" />
+                      <div className="flex justify-center py-2">
+                        <Skeleton className="h-5 w-28 rounded-full" />
                       </div>
                     )}
                 {!isTextChannel && (
@@ -1673,7 +1664,7 @@ const Board = () => {
               <div ref={threadsSentinelRef} className={isTextChannel ? "hidden" : "py-4"}>
                 {loadingMoreThreads && (
                   <div className="flex justify-center">
-                    <PentagramLoader size="md" />
+                    <Skeleton className="h-5 w-28 rounded-full" />
                   </div>
                 )}
                 {!hasMoreThreads && threads.length > 0 && (
@@ -1889,8 +1880,8 @@ const Board = () => {
           ) : (
             <>
             {threadsLoading && (
-              <div className="flex justify-center py-4">
-                <PentagramLoader size="sm" />
+              <div className="flex justify-center py-2">
+                <Skeleton className="h-5 w-28 rounded-full" />
               </div>
             )}
                     {threads.map((thread) => (
@@ -2150,7 +2141,7 @@ const Board = () => {
         <div ref={threadsSentinelRef} className="py-4">
           {loadingMoreThreads && (
             <div className="flex justify-center">
-              <PentagramLoader size="md" />
+              <Skeleton className="h-5 w-28 rounded-full" />
             </div>
           )}
           {!hasMoreThreads && threads.length > 0 && (
