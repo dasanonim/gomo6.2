@@ -109,6 +109,10 @@ const ThemeSwatch = ({ theme, dark, compact }: { theme: ThemeDef; dark: boolean;
   );
 };
 
+const HEADER_PILL = "rounded-full bg-surface border-border/60 hover:bg-surface/80";
+/** Inputs / selects in the settings shell — site style: pill, surface, soft border. */
+const SITE_INPUT = "h-10 rounded-[1.25rem] border-border/60 bg-surface";
+
 const MODE_OPTIONS: Array<{ value: ThemeModePref; labelKey: string; icon: typeof Sun }> = [
   { value: "light", labelKey: "settings2.modeLight", icon: Sun },
   { value: "dark", labelKey: "settings2.modeDark", icon: Moon },
@@ -242,7 +246,11 @@ export const AppearanceSection = ({ appearance, view, onViewChange }: Appearance
               <p className="text-xs text-muted-foreground">{t("settings2.resetDesc")}</p>
             </div>
           </div>
-          <Button variant="outline" className="shrink-0 gap-2" onClick={resetAppearance}>
+          <Button
+            variant="outline"
+            className={cn("shrink-0 gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive", HEADER_PILL)}
+            onClick={resetAppearance}
+          >
             <RotateCcw className="h-4 w-4" />
             {t("settings2.resetAction")}
           </Button>
@@ -408,7 +416,7 @@ function ThemesView({
             </div>
           </div>
           <div className="flex shrink-0 gap-2">
-            <Button variant="outline" size="sm" className="gap-2" onClick={randomTheme}>
+            <Button variant="outline" size="sm" className={cn("shrink-0 gap-2 h-9", HEADER_PILL)} onClick={randomTheme}>
               <Shuffle className="h-4 w-4" />
               {t("settings2.themeRandom")}
             </Button>
@@ -449,14 +457,14 @@ function ThemesView({
             onChange={(event) => setNameQuery(event.target.value)}
             placeholder={t("settings2.themeSearchPlaceholder")}
             aria-label={t("settings2.themeSearchPlaceholder")}
-            className="pl-9 pr-9"
+            className="pl-9 pr-9 h-9 rounded-full border-border/60 bg-surface text-sm focus-visible:border-primary/50"
           />
           {nameQuery && (
             <button
               type="button"
               aria-label={t("settings2.clearSearch")}
               onClick={() => setNameQuery("")}
-              className="absolute right-2.5 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+              className="absolute right-3 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -522,6 +530,7 @@ function TextView({ appearance }: { appearance: AppearanceSettings }) {
             onChange={(event) => setFont(event.target.value)}
             placeholder={t("settings.googleFontPlaceholder")}
             aria-label={t("settings.googleFont")}
+            className={SITE_INPUT}
           />
           <p className="mt-2 text-xs text-muted-foreground">
             {t("settings.googleFontHint")}{" "}
@@ -546,7 +555,7 @@ function TextView({ appearance }: { appearance: AppearanceSettings }) {
           description={t("settings.languageDescription")}
         >
           <Select value={language} onValueChange={setLanguage}>
-            <SelectTrigger className="w-[180px]" aria-label={t("settings.language")}>
+            <SelectTrigger className={cn(SITE_INPUT, "w-[min(220px,55vw)]")} aria-label={t("settings.language")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -586,26 +595,6 @@ function InterfaceView({ appearance }: { appearance: AppearanceSettings }) {
 
   return (
     <div className="space-y-5">
-      <SettingGroup divided={false}>
-        <SettingRow
-          className={rowClass}
-          id="set-profile-view"
-          icon={LayoutGrid}
-          title={t("settings2.profileDefaultView")}
-          description={t("settings2.profileDefaultViewDesc")}
-        >
-          <Segmented
-            aria-label={t("settings2.profileDefaultView")}
-            value={profileViewMode}
-            onChange={setProfileViewMode}
-            options={[
-              { value: "social", label: t("settings2.profileViewSocial") },
-              { value: "forum", label: t("settings2.profileViewForum") },
-            ]}
-          />
-        </SettingRow>
-      </SettingGroup>
-
       <SettingGroup divided={false}>
         <SettingBlock id="set-header" title={t("settings2.headerBehavior")} description={t("settings2.headerBehaviorDesc")} icon={PanelTop}>
           <div className="grid gap-3 sm:grid-cols-2" onKeyDown={handleNavArrowKeys}>
@@ -702,6 +691,27 @@ function InterfaceView({ appearance }: { appearance: AppearanceSettings }) {
               { value: "always", label: t("settings.autoplayAlways") },
               { value: "wifi", label: t("settings.autoplayWifi") },
               { value: "never", label: t("settings.autoplayNever") },
+            ]}
+          />
+        </SettingRow>
+      </SettingGroup>
+
+      {/* Least-used control — parked at the very bottom of the tab. */}
+      <SettingGroup divided={false}>
+        <SettingRow
+          className={rowClass}
+          id="set-profile-view"
+          icon={LayoutGrid}
+          title={t("settings2.profileDefaultView")}
+          description={t("settings2.profileDefaultViewDesc")}
+        >
+          <Segmented
+            aria-label={t("settings2.profileDefaultView")}
+            value={profileViewMode}
+            onChange={setProfileViewMode}
+            options={[
+              { value: "social", label: t("settings2.profileViewSocial") },
+              { value: "forum", label: t("settings2.profileViewForum") },
             ]}
           />
         </SettingRow>

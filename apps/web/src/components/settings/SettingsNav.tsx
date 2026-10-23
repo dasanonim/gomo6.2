@@ -26,8 +26,8 @@ export interface SettingsSection {
 }
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
-  { id: "profile", labelKey: "settings.profile", descriptionKey: "settings2.secProfileDesc", icon: UserRound },
   { id: "appearance", labelKey: "settings.appearance", descriptionKey: "settings2.secAppearanceDesc", icon: Palette },
+  { id: "profile", labelKey: "settings.profile", descriptionKey: "settings2.secProfileDesc", icon: UserRound },
   { id: "notifications", labelKey: "settings.notifications", descriptionKey: "settings2.secNotificationsDesc", icon: Bell },
   { id: "privacy", labelKey: "settings.privacy", descriptionKey: "settings2.secPrivacyDesc", icon: Lock },
   { id: "security", labelKey: "settings.security", descriptionKey: "settings2.secSecurityDesc", icon: ShieldCheck },

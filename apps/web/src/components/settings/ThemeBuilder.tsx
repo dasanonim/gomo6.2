@@ -182,15 +182,22 @@ export const ThemeBuilder = ({ colorTheme, modePref, isDarkMode, setColorTheme }
       className="[&>div]:space-y-4"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant={open ? "secondary" : "outline"} size="sm" className="gap-2" onClick={() => setOpen((v) => !v)}>
+        {/* Site-style pill row: the opener carries the primary weight, the
+            I/O actions stay quiet ghosts — one visual family, rounded-full. */}
+        <Button
+          variant={open ? "secondary" : "default"}
+          size="sm"
+          className="h-9 gap-2 rounded-full"
+          onClick={() => setOpen((v) => !v)}
+        >
           <Plus className="h-4 w-4" />
           {open ? t("settings2.builderClose") : t("settings2.builderOpen")}
         </Button>
-        <Button variant="ghost" size="sm" className="gap-2" onClick={handleExport}>
+        <Button variant="ghost" size="sm" className="h-9 gap-2 rounded-full text-muted-foreground hover:text-foreground" onClick={handleExport}>
           <Download className="h-4 w-4" />
           {t("settings2.builderExport")}
         </Button>
-        <Button variant="ghost" size="sm" className="gap-2" onClick={() => setIoOpen((v) => !v)}>
+        <Button variant="ghost" size="sm" className="h-9 gap-2 rounded-full text-muted-foreground hover:text-foreground" onClick={() => setIoOpen((v) => !v)}>
           <Upload className="h-4 w-4" />
           {t("settings2.builderImport")}
         </Button>
@@ -204,21 +211,22 @@ export const ThemeBuilder = ({ colorTheme, modePref, isDarkMode, setColorTheme }
             rows={5}
             spellCheck={false}
             placeholder={t("settings2.builderIoPlaceholder")}
-            className="w-full rounded-lg border border-border/60 bg-background/50 p-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            className="w-full rounded-2xl border border-border/60 bg-surface p-3 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           />
-          <Button size="sm" variant="outline" onClick={handleImport}>
+          <Button size="sm" variant="outline" className="h-8 gap-2 rounded-full bg-surface border-border/60" onClick={handleImport}>
             {t("settings2.builderImportApply")}
           </Button>
         </div>
       )}
 
       {open && (
-        <div className="space-y-4 rounded-xl border border-border/50 bg-background/40 p-3">
+        <div className="space-y-4 rounded-2xl border border-border/50 bg-background/40 p-3">
           <Input
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder={t("settings2.builderName")}
             aria-label={t("settings2.builderName")}
+            className="h-10 rounded-[1.25rem] border-border/60 bg-surface"
           />
 
           <div className="grid gap-3 sm:grid-cols-3">
@@ -246,7 +254,7 @@ export const ThemeBuilder = ({ colorTheme, modePref, isDarkMode, setColorTheme }
             <div className="space-y-1">
               <span className="block text-xs text-muted-foreground">{t("settings2.builderFont")}</span>
               <Select value={font} onValueChange={(v) => setFont(v as ThemeFont | "default")}>
-                <SelectTrigger aria-label={t("settings2.builderFont")}><SelectValue /></SelectTrigger>
+                <SelectTrigger aria-label={t("settings2.builderFont")} className="h-10 rounded-[1.25rem] border-border/60 bg-surface"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {FONTS.map((f) => (
                     <SelectItem key={f} value={f}>{t(`settings2.builderFont_${f}`)}</SelectItem>
@@ -257,7 +265,7 @@ export const ThemeBuilder = ({ colorTheme, modePref, isDarkMode, setColorTheme }
             <div className="space-y-1">
               <span className="block text-xs text-muted-foreground">{t("settings2.builderTexture")}</span>
               <Select value={texture} onValueChange={(v) => setTexture(v as ThemeTexture)}>
-                <SelectTrigger aria-label={t("settings2.builderTexture")}><SelectValue /></SelectTrigger>
+                <SelectTrigger aria-label={t("settings2.builderTexture")} className="h-10 rounded-[1.25rem] border-border/60 bg-surface"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {TEXTURES.map((tex) => (
                     <SelectItem key={tex} value={tex}>{t(`settings2.builderTexture_${tex}`)}</SelectItem>
