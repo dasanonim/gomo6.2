@@ -4,6 +4,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { MobileMenu } from "@/components/MobileMenu";
+import { ProfileCacheProvider } from "@/contexts/ProfileCacheContext";
+import { resetProfileSummaryLoader } from "@/utils/profileSummaryLoader";
+
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", (...args: unknown[]) => mockFetch(...args));
 
 vi.mock("@/integrations/api/compat", () => {
   // A chainable PostgREST-ish stub so the profile/subscription loads settle.
@@ -38,7 +43,9 @@ const renderMenu = (user: MenuUser) =>
   render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        <MobileMenu user={user} isModerator={false} />
+        <ProfileCacheProvider>
+          <MobileMenu user={user} isModerator={false} />
+        </ProfileCacheProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -46,6 +53,12 @@ const renderMenu = (user: MenuUser) =>
 describe("MobileMenu", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetProfileSummaryLoader();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: [] }),
+    });
   });
 
   it("renders the hamburger for guests and a login CTA inside the menu", async () => {
