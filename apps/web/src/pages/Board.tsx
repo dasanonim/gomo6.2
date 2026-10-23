@@ -79,6 +79,7 @@ interface Thread {
     display_name?: string | null;
     nickname_emoji_id?: string | null;
     is_anonymous: boolean;
+    avatar_url?: string | null;
   } | null;
   latest_post?: {
     content: string;
@@ -90,6 +91,7 @@ interface Thread {
       display_name?: string | null;
       nickname_emoji_id?: string | null;
       is_anonymous: boolean;
+      avatar_url?: string | null;
     } | null;
   };
 }
@@ -343,12 +345,12 @@ const Board = () => {
     allLatestPosts.forEach((p: Record<string, unknown>) => { if (p.user_id) userIds.add(p.user_id as string); });
 
     // Batch fetch all profiles (for is_anonymous + username)
-    const profilesMap = new Map<string, { id: string; username: string; display_name?: string | null; nickname_emoji_id?: string | null; is_anonymous: boolean }>();
+    const profilesMap = new Map<string, { id: string; username: string; display_name?: string | null; nickname_emoji_id?: string | null; is_anonymous: boolean; avatar_url?: string | null }>();
     const userIdArray = [...userIds];
     if (userIdArray.length > 0) {
       const profilesResponse = await fetch(`/api/v1/profiles?id=in.(${userIdArray.join(',')})`);
       const profilesResult = await profilesResponse.json();
-      (profilesResult.data || []).forEach((p: { id: string; username: string; display_name?: string | null; nickname_emoji_id?: string | null; is_anonymous: boolean }) => profilesMap.set(p.id, p));
+      (profilesResult.data || []).forEach((p: { id: string; username: string; display_name?: string | null; nickname_emoji_id?: string | null; is_anonymous: boolean; avatar_url?: string | null }) => profilesMap.set(p.id, p));
     }
 
     // Build result with profiles and latest posts
@@ -367,13 +369,13 @@ const Board = () => {
 
       return {
         ...thread,
-        profiles: profile ? { username: profile.username, display_name: profile.display_name, nickname_emoji_id: profile.nickname_emoji_id, is_anonymous: profile.is_anonymous } : null,
+        profiles: profile ? { username: profile.username, display_name: profile.display_name, nickname_emoji_id: profile.nickname_emoji_id, is_anonymous: profile.is_anonymous, avatar_url: profile.avatar_url } : null,
         latest_post: post ? {
           content: post.content,
           created_at: post.created_at,
           is_private: post.is_private,
           user_id: post.user_id,
-          profiles: postProfile ? { username: postProfile.username, display_name: postProfile.display_name, nickname_emoji_id: postProfile.nickname_emoji_id, is_anonymous: postProfile.is_anonymous } : null,
+          profiles: postProfile ? { username: postProfile.username, display_name: postProfile.display_name, nickname_emoji_id: postProfile.nickname_emoji_id, is_anonymous: postProfile.is_anonymous, avatar_url: postProfile.avatar_url } : null,
         } : undefined,
       };
     });
