@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion, animate } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { api } from "@/integrations/api/compat";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -192,6 +192,7 @@ interface WizardProps {
 
 export const GomoSubCreateWizard = ({ open, onOpenChange, onSubmit }: WizardProps) => {
   const { t } = useTranslation();
+  const reduce = useReducedMotion();
   const [index, setIndex] = useState(0);
   const [dir, setDir] = useState<1 | -1>(1);
   const [template, setTemplate] = useState<Template | null>(null);
@@ -298,9 +299,84 @@ export const GomoSubCreateWizard = ({ open, onOpenChange, onSubmit }: WizardProp
 
   const commitSlugEdit = () => setSlugEditing(false);
 
+  /* --- Playful sheet drag: grab the header, shake it, it springs back --- */
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  const drag = useRef({ dragging: false, startY: 0, dy: 0, velocity: 0, lastY: 0, lastT: 0, spring: null as ReturnType<typeof animate> | null });
+  const RUBBER_LIMIT = 150;
+
+  const setSheetOffset = useCallback((dy: number) => {
+    const el = sheetRef.current;
+    if (!el) return;
+    el.style.translate = `calc(-50%) calc(-50% + ${dy}px)`;
+  }, []);
+
+  const onHeaderPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (reduce) return; // reduced-motion users get a calm dialog
+      const d = drag.current;
+      d.spring?.stop();
+      d.dragging = true;
+      d.startY = e.clientY;
+      d.dy = 0;
+      d.lastY = e.clientY;
+      d.lastT = e.timeStamp;
+      d.velocity = 0;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch { /* gesture edge cases — drag still works rect-by-rect */ }
+    },
+    [reduce],
+  );
+
+  const onHeaderPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const d = drag.current;
+      if (!d.dragging) return; // hover without a pressed button — ignore
+      d.dy = Math.max(-RUBBER_LIMIT, Math.min(RUBBER_LIMIT, e.clientY - d.startY));
+      // Velocity estimate for the flick feel (px/s).
+      const dt = e.timeStamp - d.lastT;
+      if (dt > 8) {
+        d.velocity = ((e.clientY - d.lastY) / dt) * 1000;
+        d.lastY = e.clientY;
+        d.lastT = e.timeStamp;
+      }
+      setSheetOffset(d.dy);
+    },
+    [setSheetOffset],
+  );
+
+  const onHeaderPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const d = drag.current;
+      d.dragging = false;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch { /* already released */ }
+      const from = d.dy;
+      if (from === 0) return;
+      // Spring back to its place; pointer velocity carries the flick.
+      d.spring = animate(from, 0, {
+        type: "spring",
+        stiffness: 280,
+        damping: 20,
+        velocity: d.velocity,
+        onUpdate: setSheetOffset,
+      });
+      d.dy = 0;
+    },
+    [setSheetOffset],
+  );
+
+  useEffect(() => {
+    if (!open) {
+      setSheetOffset(0); // next run starts centered
+    }
+  }, [open, setSheetOffset]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        ref={sheetRef}
         overlayClassName="bg-background/95 backdrop-blur-sm"
         className="flex h-[min(680px,92dvh)] w-[96vw] flex-col gap-0 overflow-hidden rounded-2xl border-border/60 bg-surface p-0 shadow-2xl sm:max-w-lg"
       >
@@ -308,19 +384,28 @@ export const GomoSubCreateWizard = ({ open, onOpenChange, onSubmit }: WizardProp
           <DialogTitle>Создание g-саба</DialogTitle>
         </DialogHeader>
 
-        {/* Header: progress bar + step dot/title (× is the shared Dialog Close) */}
-        <div className="relative shrink-0 px-5 pt-4">
-          <div className="flex items-center justify-between pr-9">
-            <span className="text-[13px] font-semibold text-foreground/90">
-              <span className="text-muted-foreground">{index + 1} ·</span> {STEPS[index]}
-            </span>
-            <span className="text-[11px] tabular-nums text-muted-foreground/60">{index + 1}/{STEPS.length}</span>
-          </div>
-          <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
-              style={{ width: `${((index + 1) / STEPS.length) * 100}%` }}
-            />
+        {/* Header: progress bar + step dot/title (× is the shared Dialog Close).
+            The header is the grab handle: drag it and the sheet plays physics. */}
+        <div
+          className="relative shrink-0 cursor-grab touch-none active:cursor-grabbing"
+          onPointerDown={onHeaderPointerDown}
+          onPointerMove={onHeaderPointerMove}
+          onPointerUp={onHeaderPointerUp}
+          onPointerCancel={onHeaderPointerUp}
+        >
+          <div className="px-5 pt-4">
+            <div className="flex items-center justify-between pr-9">
+              <span className="text-[13px] font-semibold text-foreground/90">
+                <span className="text-muted-foreground">{index + 1} ·</span> {STEPS[index]}
+              </span>
+              <span className="text-[11px] tabular-nums text-muted-foreground/60">{index + 1}/{STEPS.length}</span>
+            </div>
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
+                style={{ width: `${((index + 1) / STEPS.length) * 100}%` }}
+              />
+            </div>
           </div>
         </div>
 
