@@ -92,6 +92,7 @@ var expectedRoutes = []string{
 	"POST /api/v1/link-preview",
 	"GET /api/v1/feed",
 	"GET /api/v1/profiles",
+	"GET /api/v1/profiles/summary",
 	"GET /api/v1/profiles/:id",
 	"GET /api/v1/boards",
 	"GET /api/v1/boards/:id",

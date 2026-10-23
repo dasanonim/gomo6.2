@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="360" viewBox="0 0 760 360" role="img" aria-label="Время на профильные запросы, мс">
+  <rect width="760" height="360" rx="18" fill="#ffffff"/>
+  <text x="32" y="44" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="22" font-weight="700" fill="#111827">Время на профильные запросы, мс</text>
+  <text x="32" y="70" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" fill="#6b7280">сумма ответов в браузере · 4 автора · сервер: 90 мс → 4,7 мс</text>
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" fill="#6b7280">
+    <rect x="566" y="61" width="10" height="10" rx="3" fill="#f97316"/>
+    <text x="582" y="70">до</text>
+    <rect x="620" y="61" width="10" height="10" rx="3" fill="#10b981"/>
+    <text x="636" y="70">после</text>
+  </g>
+  <line x1="72" y1="292.0" x2="728" y2="292.0" stroke="#e5e7eb" stroke-width="1"/>
+  <text x="62" y="296.0" text-anchor="end" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#6b7280">0</text>
+  <line x1="72" y1="245.0" x2="728" y2="245.0" stroke="#e5e7eb" stroke-width="1"/>
+  <text x="62" y="249.0" text-anchor="end" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#6b7280">200</text>
+  <line x1="72" y1="198.0" x2="728" y2="198.0" stroke="#e5e7eb" stroke-width="1"/>
+  <text x="62" y="202.0" text-anchor="end" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#6b7280">400</text>
+  <line x1="72" y1="151.0" x2="728" y2="151.0" stroke="#e5e7eb" stroke-width="1"/>
+  <text x="62" y="155.0" text-anchor="end" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#6b7280">600</text>
+  <line x1="72" y1="104.0" x2="728" y2="104.0" stroke="#e5e7eb" stroke-width="1"/>
+  <text x="62" y="108.0" text-anchor="end" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#6b7280">800</text>
+  <rect x="296.0" y="120.4" width="62.0" height="171.6" rx="6" fill="#f97316"/>
+  <text x="327.0" y="111.4" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="700" fill="#111827">730</text>
+  <rect x="366.0" y="241.7" width="62.0" height="50.3" rx="6" fill="#10b981"/>
+  <text x="397.0" y="232.7" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="700" fill="#111827">214</text>
+  <text x="362.0" y="318" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" fill="#6b7280">4 автора</text>
+  <text x="728" y="46" text-anchor="end" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="700" fill="#111827">730 мс → 214 мс</text>
+</svg>

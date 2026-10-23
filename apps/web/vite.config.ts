@@ -5,6 +5,9 @@ import { VitePWA } from "vite-plugin-pwa";
 
 // https://vitejs.dev/config/
 export default defineConfig(() => ({
+  // Local measurement / worktree override: point the dev proxy at another backend.
+  // Defaults to the canonical dev port, so normal `make dev` is unchanged.
+
   server: {
     host: "::",
     port: 8081,
@@ -29,11 +32,11 @@ export default defineConfig(() => ({
     ],
     proxy: {
       "/api": {
-        target: "http://localhost:8080",
+        target: process.env.GOMO6_API_TARGET ?? "http://localhost:8080",
         changeOrigin: true,
       },
       "/oauth": {
-        target: "http://localhost:8080",
+        target: process.env.GOMO6_API_TARGET ?? "http://localhost:8080",
         changeOrigin: true,
         bypass: (req) => {
           if (req.url?.startsWith("/oauth/consent")) {
@@ -42,33 +45,33 @@ export default defineConfig(() => ({
         },
       },
       "/rest": {
-        target: "http://localhost:8080",
+        target: process.env.GOMO6_API_TARGET ?? "http://localhost:8080",
         changeOrigin: true,
       },
       "/rpc": {
-        target: "http://localhost:8080",
+        target: process.env.GOMO6_API_TARGET ?? "http://localhost:8080",
         changeOrigin: true,
       },
       "/.well-known": {
-        target: "http://localhost:8080",
+        target: process.env.GOMO6_API_TARGET ?? "http://localhost:8080",
         changeOrigin: true,
       },
       "/ws": {
-        target: "http://localhost:8080",
+        target: process.env.GOMO6_API_TARGET ?? "http://localhost:8080",
         ws: true,
       },
       "/storage": {
-        target: "http://localhost:8080",
+        target: process.env.GOMO6_API_TARGET ?? "http://localhost:8080",
         changeOrigin: true,
       },
       // Public proxy for the private `wall` bucket — guest media is served
       // from /og/wall/…, so it must reach the backend in dev too.
       "/og": {
-        target: "http://localhost:8080",
+        target: process.env.GOMO6_API_TARGET ?? "http://localhost:8080",
         changeOrigin: true,
       },
       "/federation": {
-        target: "http://localhost:8080",
+        target: process.env.GOMO6_API_TARGET ?? "http://localhost:8080",
         changeOrigin: true,
       },
     },

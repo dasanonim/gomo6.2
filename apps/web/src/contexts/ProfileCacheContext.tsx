@@ -1,12 +1,10 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { api } from '@/integrations/api/compat';
-import { apiClient } from '@/integrations/api/client';
-import { isPublicId } from "@/utils/entityUrl";
-import { getProfileCustomization } from "@/utils/profileCustomization";
-import { profileCacheInvalidateUserId } from "@/utils/profileCacheEvents";
-
-// Listen for external invalidation events (e.g. from CustomProfile save)
-const INVALIDATE_EVENT = 'profile-cache:invalidate';
+import React, { createContext, useContext, useCallback, useMemo } from 'react';
+import {
+  getCachedProfileSummary,
+  invalidateProfileSummaries,
+  requestProfileSummary,
+  type ProfileSummary,
+} from '@/utils/profileSummaryLoader';
 
 interface ProfileData {
   /** Canonical user id (uuid) the row was resolved to. */
@@ -28,209 +26,59 @@ interface ProfileCacheContextType {
 
 const ProfileCacheContext = createContext<ProfileCacheContextType | null>(null);
 
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-const MAX_CACHE_SIZE = 100; // Maximum number of cached profiles
+const EMPTY_PROFILE: ProfileData = {
+  username: '',
+  customization: null,
+  isAdmin: false,
+  avatarUrl: undefined,
+};
 
-interface CacheEntry {
-  data: ProfileData;
-  timestamp: number;
-  loading: Promise<ProfileData> | null;
-}
+const toProfileData = (summary: ProfileSummary): ProfileData => ({
+  id: summary.id,
+  username: summary.username ?? '',
+  customization: summary.customization ?? null,
+  isAdmin: Boolean(summary.is_admin),
+  avatarUrl: summary.avatar_url || undefined,
+  nickname_emoji_id: summary.nickname_emoji_id ?? null,
+  public_id: summary.public_id ?? null,
+});
 
+/**
+ * Profiles for every badge/card on screen.
+ *
+ * The actual fetching/coalescing/caching lives in utils/profileSummaryLoader,
+ * which batches every `loadProfile` call of the same tick into one
+ * `/api/v1/profiles/summary` request (instead of three requests per author).
+ * This provider keeps the original, already-used API (`getProfile`,
+ * `loadProfile`, `clearCache`) so call sites did not have to change.
+ *
+ * `getProfile` is a synchronous cache read: callers that need fresh data use
+ * `loadProfile` and render from its promise. Both callbacks are intentionally
+ * stable — the old implementation re-created them on every cache write, which
+ * restarted every mounted badge effect.
+ */
 export const ProfileCacheProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [cache, setCache] = useState<Map<string, CacheEntry>>(new Map());
-  const loadingRequests = useRef(new Map<string, Promise<ProfileData>>());
-
-  // Cleanup old cache entries periodically
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      setCache(prev => {
-        const newCache = new Map(prev);
-        for (const [key, entry] of newCache.entries()) {
-          if (now - entry.timestamp > CACHE_TTL) {
-            newCache.delete(key);
-          }
-        }
-        return newCache;
-      });
-    }, 60000); // Check every minute
-
-    return () => clearInterval(interval);
+  const getProfile = useCallback((userId: string): ProfileData | null => {
+    const summary = getCachedProfileSummary(userId);
+    return summary ? toProfileData(summary) : null;
   }, []);
 
-  const getProfile = useCallback((userId: string): ProfileData | null => {
-    const entry = cache.get(userId);
-    if (!entry) return null;
-
-    const now = Date.now();
-    if (now - entry.timestamp > CACHE_TTL) {
-      setCache(prev => {
-        const newCache = new Map(prev);
-        newCache.delete(userId);
-        return newCache;
-      });
-      return null;
-    }
-
-    return entry.data;
-  }, [cache]);
-
-  const loadProfile = useCallback(async (userId: string | undefined): Promise<ProfileData> => {	    if (!userId) {
-      return { username: '', customization: null, isAdmin: false, avatarUrl: undefined };
-    }
-
-    const uid = userId;
-
-    // Check if already loading
-    const existingRequest = loadingRequests.current.get(uid);
-    if (existingRequest) {
-      return existingRequest;
-    }
-
-    // Check cache first
-    const cached = getProfile(uid);
-    if (cached) {
-      return cached;
-    }
-
-    // Start loading
-    const loadPromise = (async () => {
-      try {
-        // Load all data in parallel. user_roles is a protected table (401 for
-        // anonymous callers viewing a foreign profile) and single() rejects on
-        // missing rows — neither may bring down the whole profile load, so
-        // every request is degraded to a safe fallback.
-        // The query builder's then() has a custom signature, so the run
-        // closure is typed as () => unknown and the awaited result cast back.
-        const toFallback = async <T,>(run: () => unknown, fallback: T): Promise<T> => {
-          try {
-            return (await run()) as T;
-          } catch {
-            return fallback;
-          }
-        };
-
-        // user_roles is protected and viewer-scoped: for an anonymous caller
-        // viewing a foreign profile it would 401 (the toFallback wrapper above
-        // already swallows that). Guests never need the viewed profile's roles
-        // — isAdmin only matters for the signed-in owner — so skip the request
-        // entirely instead of firing a doomed 401.
-        // `uid` may be a public number (new links) or a UUID (old ones): the
-        // profiles query accepts both, and the row's canonical id is what the
-        // other lookups (user_roles, customization) must use.
-        const profileRes = await toFallback(
-          () =>
-            api
-              .from('profiles')
-              .select('id, public_id, username, avatar_url, nickname_emoji_id')
-              .eq(isPublicId(uid) ? 'public_id' : 'id', uid)
-              .single(),
-          { data: null, error: null }
-        );
-        const resolvedId = (profileRes.data as { id?: string } | null)?.id || uid;
-
-        const isGuest = !apiClient.getCSRFToken();
-        const [rolesRes, customization] = await Promise.all([
-          isGuest
-            ? Promise.resolve({ data: [] as { role: string }[], error: null })
-            : toFallback(
-                () => api.from('user_roles').select('role').eq('user_id', resolvedId),
-                { data: [], error: null }
-              ),
-          // Profile appearance for the viewed user, read through the SHARED
-          // profileCustomization cache (module-level, with in-flight dedupe).
-          // UserBadge's useProfileCustomization reads the same cache, so a badge
-          // that already fetched this user's appearance does not trigger a
-          // second identical request here — which used to double the
-          // /users/:id/customization volume. NOT the generic
-          // /profile_customization surface: that table is read-scoped to the
-          // caller's own user_id (TableMeta.UserScopedRead), so a foreign
-          // profile always came back empty. The public display endpoint works
-          // for the owner too, so no branch is needed.
-          getProfileCustomization(resolvedId),
-        ]);
-
-        // Check if admin
-        const isAdmin = rolesRes.data?.some((r: Record<string, unknown>) => r.role === 'admin') || false;		const profileData: ProfileData = {
-          id: resolvedId,
-          username: profileRes.data?.username || '',
-          customization: customization || null,
-          isAdmin,
-          avatarUrl: profileRes.data?.avatar_url || undefined,
-          nickname_emoji_id: (profileRes.data as { nickname_emoji_id?: string | null } | null)?.nickname_emoji_id || null,
-          public_id: (profileRes.data as { public_id?: number | null } | null)?.public_id ?? null,
-        };
-
-        // Update cache
-        setCache(prev => {
-          const newCache = new Map(prev);
-
-          // Limit cache size
-          if (newCache.size >= MAX_CACHE_SIZE) {
-            const firstKey = newCache.keys().next().value!;
-            newCache.delete(firstKey);
-          }
-
-          newCache.set(uid, {
-            data: profileData,
-            timestamp: Date.now(),
-            loading: null,
-          });
-          return newCache;
-        });
-
-        return profileData;
-      } finally {
-        loadingRequests.current.delete(uid);
-      }
-    })();
-
-    loadingRequests.current.set(uid, loadPromise);
-    return loadPromise;
-  }, [getProfile]);
+  const loadProfile = useCallback(async (userId: string | undefined): Promise<ProfileData> => {
+    if (!userId) return EMPTY_PROFILE;
+    const summary = await requestProfileSummary(userId);
+    return summary ? toProfileData(summary) : EMPTY_PROFILE;
+  }, []);
 
   const clearCache = useCallback(() => {
-    setCache(new Map());
-    loadingRequests.current.clear();
+    invalidateProfileSummaries();
   }, []);
 
-  // Listen for external cache invalidation events
-  useEffect(() => {
-    const handler = (event: Event) => {
-      const changedUserId = profileCacheInvalidateUserId(event);
-
-      // Unscoped reset (the editor's own save): drop everything.
-      if (!changedUserId) {
-        setCache(new Map());
-        loadingRequests.current.clear();
-        return;
-      }
-
-      // Scoped reset (the server's profile_updated broadcast): only the
-      // affected user's entry is stale. Match the key it was requested under
-      // (uuid or public id) as well as the resolved canonical id.
-      setCache(prev => {
-        let next: Map<string, CacheEntry> | null = null;
-        for (const [key, entry] of prev) {
-          if (key === changedUserId || entry.data.id === changedUserId) {
-            next ??= new Map(prev);
-            next.delete(key);
-          }
-        }
-        return next ?? prev;
-      });
-      loadingRequests.current.delete(changedUserId);
-    };
-    window.addEventListener(INVALIDATE_EVENT, handler);
-    return () => window.removeEventListener(INVALIDATE_EVENT, handler);
-  }, []);
-
-  return (
-    <ProfileCacheContext.Provider value={{ getProfile, loadProfile, clearCache }}>
-      {children}
-    </ProfileCacheContext.Provider>
+  const value = useMemo(
+    () => ({ getProfile, loadProfile, clearCache }),
+    [getProfile, loadProfile, clearCache],
   );
+
+  return <ProfileCacheContext.Provider value={value}>{children}</ProfileCacheContext.Provider>;
 };
 
 export const useProfileCache = () => {

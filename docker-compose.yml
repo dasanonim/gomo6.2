@@ -10,9 +10,21 @@
 # For local dev without a domain, Caddy will serve on http://localhost
 # =============================================================================
 
+# ── Log rotation ─────────────────────────────────────────────────────────────
+# Docker's default json-file driver never rotates: unbounded container logs are
+# what filled the 15 GB VPS (Caddy's access log alone reached 1.4 GB in three
+# weeks). Every service inherits this cap; `docker compose logs` still works,
+# it just keeps the last three 50 MB files per container.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 services:
   # ── Database ──────────────────────────────────────────────────────────────
   postgres:
+    logging: *default-logging
     image: postgres:18
     # pg_stat_statements is preloaded so postgres_exporter can expose per-query
     # statistics (migration 122 creates the extension itself).
@@ -36,6 +48,7 @@ services:
 
   # ── Cache ─────────────────────────────────────────────────────────────────
   redis:
+    logging: *default-logging
     image: redis:7-alpine
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     volumes:
@@ -54,6 +67,7 @@ services:
   # disposable — it can always be rebuilt from Postgres — but the volume keeps
   # restarts cheap.
   meilisearch:
+    logging: *default-logging
     image: getmeili/meilisearch:v1.53.1
     environment:
       MEILI_ENV: production
@@ -71,6 +85,7 @@ services:
 
   # ── Object Storage (Garage S3) ────────────────────────────────────────────
   garage:
+    logging: *default-logging
     image: dxflrs/garage:v2.3.0
     volumes:
       - garage_meta:/var/lib/garage/meta
@@ -81,6 +96,7 @@ services:
     restart: unless-stopped
 
   garage-init:
+    logging: *default-logging
     image: alpine:3.23
     depends_on:
       garage:
@@ -178,6 +194,7 @@ services:
 
   # ── Backend (Go API) ──────────────────────────────────────────────────────
   backend:
+    logging: *default-logging
     image: ghcr.io/elcrazycol/gomo6-backend:latest
     build:
       context: ./apps/backend-go
@@ -264,6 +281,7 @@ services:
 
   # ── Frontend: Main Web App ────────────────────────────────────────────────
   web:
+    logging: *default-logging
     image: ghcr.io/elcrazycol/gomo6-web:latest
     build:
       context: .
@@ -277,6 +295,7 @@ services:
 
   # ── Frontend: Documentation ───────────────────────────────────────────────
   docs:
+    logging: *default-logging
     image: ghcr.io/elcrazycol/gomo6-docs:latest
     build:
       context: .
@@ -285,6 +304,7 @@ services:
 
   # ── Frontend: Dev Dashboard ───────────────────────────────────────────────
   dev-dashboard:
+    logging: *default-logging
     image: ghcr.io/elcrazycol/gomo6-dev-dashboard:latest
     build:
       context: .
@@ -293,6 +313,7 @@ services:
 
   # ── Caddy Reverse Proxy (TLS + routing + S3 CORS proxy) ─────────────────
   caddy:
+    logging: *default-logging
     image: caddy:2-alpine
     ports:
       - "80:80"
@@ -333,6 +354,7 @@ services:
   # config change, recreate them on the VPS with
   #   docker compose up -d --no-build victoriametrics vmagent vmalert alertmanager
   victoriametrics:
+    logging: *default-logging
     image: victoriametrics/victoria-metrics:v1.153.0
     command:
       - "-storageDataPath=/victoria-metrics-data"
@@ -346,6 +368,7 @@ services:
     restart: unless-stopped
 
   vmagent:
+    logging: *default-logging
     image: victoriametrics/vmagent:v1.153.0
     command:
       - "-promscrape.config=/etc/vmagent/vmagent.yml"
@@ -366,6 +389,7 @@ services:
     restart: unless-stopped
 
   vmalert:
+    logging: *default-logging
     image: victoriametrics/vmalert:v1.153.0
     command:
       - "-rule=/etc/vmalert/rules.yml"
@@ -384,6 +408,7 @@ services:
     restart: unless-stopped
 
   alertmanager:
+    logging: *default-logging
     image: prom/alertmanager:v0.34.1
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
@@ -396,6 +421,7 @@ services:
     restart: unless-stopped
 
   blackbox-exporter:
+    logging: *default-logging
     image: prom/blackbox-exporter:v0.28.0
     command: ["--config.file=/etc/blackbox/blackbox.yml"]
     volumes:
@@ -403,6 +429,7 @@ services:
     restart: unless-stopped
 
   node-exporter:
+    logging: *default-logging
     image: prom/node-exporter:v1.12.1
     command:
       - "--path.rootfs=/host"
@@ -419,6 +446,7 @@ services:
   # forum actually cares about: active connections, cache hit ratio, deadlocks,
   # Redis hits/misses and evictions.
   postgres-exporter:
+    logging: *default-logging
     image: prometheuscommunity/postgres-exporter:v0.20.1
     environment:
       DATA_SOURCE_NAME: "postgres://gomo6:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/gomo6?sslmode=disable"
@@ -428,6 +456,7 @@ services:
     restart: unless-stopped
 
   redis-exporter:
+    logging: *default-logging
     image: oliver006/redis_exporter:v1.92.1
     environment:
       REDIS_ADDR: "redis://redis:6379"
@@ -440,6 +469,7 @@ services:
   # Dashboards-as-code UI for the stack above. Config and provisioning live in
   # observability/perses/ (git); the file DB persists in the perses_data volume.
   perses:
+    logging: *default-logging
     image: persesdev/perses:v0.54.0
     command:
       - "--config=/etc/perses/config.yaml"

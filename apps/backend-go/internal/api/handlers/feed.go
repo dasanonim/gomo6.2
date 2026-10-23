@@ -3,17 +3,17 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gomo6/backend/internal/httpx"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gomo6/backend/internal/metrics"
 	"github.com/gomo6/backend/internal/models"
-	"github.com/lib/pq"
 )
 
 // FeedHandler serves the unified personalized feed (threads + wall posts).
@@ -23,6 +23,72 @@ type FeedHandler struct {
 
 func NewFeedHandler(db *sql.DB) *FeedHandler {
 	return &FeedHandler{db: db}
+}
+
+// ─── Singleflight for cold-feed stampedes ────────────────────────────────────
+// The data-cache middleware serves most feed reads from Redis, but when the
+// 30s entry expires (or the first guest arrives) every concurrent request
+// misses at once and each would run the full SQL ranking. This tiny
+// stdlib-only singleflight collapses simultaneous identical misses into one
+// DB query: the losers wait on the winner's WaitGroup and share its page.
+// Calls are keyed by viewer + cursors and the entry lives only for the query
+// duration (no TTL, no stale data).
+
+type feedInflightCall struct {
+	wg    sync.WaitGroup
+	items []feedItem
+	err   error
+}
+
+var (
+	feedFlightMu sync.Mutex
+	feedFlight   = make(map[string]*feedInflightCall)
+)
+
+// doFeedSingleflight runs fn once per key; concurrent callers with the same
+// key wait and share the result. The third return value reports a shared hit.
+func doFeedSingleflight(key string, fn func() ([]feedItem, error)) ([]feedItem, error, bool) {
+	feedFlightMu.Lock()
+	if c, ok := feedFlight[key]; ok {
+		feedFlightMu.Unlock()
+		c.wg.Wait()
+		return c.items, c.err, true
+	}
+	c := &feedInflightCall{}
+	c.wg.Add(1)
+	feedFlight[key] = c
+	feedFlightMu.Unlock()
+
+	c.items, c.err = fn()
+	c.wg.Done()
+
+	feedFlightMu.Lock()
+	delete(feedFlight, key)
+	feedFlightMu.Unlock()
+	return c.items, c.err, false
+}
+
+func feedFlightKey(userID interface{}, limit int, sinceTS *time.Time, beforeSort *float64, beforeID *string) string {
+	var sinceKey, sortKey, idKey string
+	if sinceTS != nil {
+		sinceKey = sinceTS.UTC().Format(time.RFC3339Nano)
+	}
+	if beforeSort != nil {
+		sortKey = strconv.FormatFloat(*beforeSort, 'g', -1, 64)
+	}
+	if beforeID != nil {
+		idKey = *beforeID
+	}
+	return strings.Join([]string{
+		feedViewerKey(userID), strconv.Itoa(limit), sinceKey, sortKey, idKey,
+	}, "|")
+}
+
+func feedViewerKey(userID interface{}) string {
+	if s, ok := userID.(string); ok && s != "" {
+		return s
+	}
+	return "anon"
 }
 
 // feedItem is the wire shape of one unified feed entry. Both sources
@@ -144,6 +210,27 @@ func (h *FeedHandler) GetUserFeed(c *gin.Context) {
 		}
 	}
 
+	items, err, shared := doFeedSingleflight(
+		feedFlightKey(userID, limit, sinceTS, beforeSort, beforeID),
+		func() ([]feedItem, error) { return h.queryFeedPage(userID, limit, sinceTS, beforeSort, beforeID) },
+	)
+	if shared {
+		metrics.App.FeedSingleflightHit()
+	}
+	if err != nil {
+		httpx.ServerError(c, "feed query failed", err)
+		return
+	}
+
+	itemCount := len(items)
+	c.JSON(http.StatusOK, models.APIResponse{Success: true, Data: items, Count: &itemCount})
+}
+
+// queryFeedPage runs the single feed SQL query and hydrates the wire items.
+// get_user_feed returns the fully ranked AND hydrated page (public_ids and
+// liked_by_viewer included), so no second lookup round-trip is needed.
+func (h *FeedHandler) queryFeedPage(userID interface{}, limit int, sinceTS *time.Time, beforeSort *float64, beforeID *string) ([]feedItem, error) {
+	start := time.Now()
 	rows, err := h.db.Query(
 		`SELECT item_type, item_id, score, created_at, updated_at,
 		        title, content, content_json, image_url, image_urls, attachments,
@@ -154,13 +241,13 @@ func (h *FeedHandler) GetUserFeed(c *gin.Context) {
 		        section_id, section_slug, section_name, section_icon,
 		        subsection_id, subsection_slug, subsection_name,
 		        wall_user_id,
-	        likes_count, comments_count, reposts_count, liked_by_viewer, views_count
+	        likes_count, comments_count, reposts_count, liked_by_viewer, views_count,
+	        public_id, user_public_id, author_public_id
 		 FROM get_user_feed($1, $2, $3, $4, $5)`,
 		userID, limit, sinceTS, beforeSort, beforeID,
 	)
 	if err != nil {
-		httpx.ServerError(c, "feed query failed", err)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -181,6 +268,7 @@ func (h *FeedHandler) GetUserFeed(c *gin.Context) {
 		var sectionIsNSFW bool
 		var subsectionID, subsectionSlug, subsectionName sql.NullString
 		var wallUserID sql.NullString
+		var publicID, userPublicID, authorPublicID sql.NullInt64
 		var score float64
 
 		err := rows.Scan(
@@ -195,10 +283,10 @@ func (h *FeedHandler) GetUserFeed(c *gin.Context) {
 			&wallUserID,
 			&it.LikesCount, &it.CommentsCount, &it.RepostsCount, &it.LikedByViewer,
 			&it.ViewsCount,
+			&publicID, &userPublicID, &authorPublicID,
 		)
 		if err != nil {
-			httpx.ServerError(c, "feed row scan failed", err)
-			return
+			return nil, err
 		}
 
 		it.Score = score
@@ -233,13 +321,18 @@ func (h *FeedHandler) GetUserFeed(c *gin.Context) {
 		}
 		if authorID.Valid {
 			it.AuthorID = &authorID.String
-			it.Author = &feedAuthor{
+			author := &feedAuthor{
 				Username:        authorUsername.String,
 				DisplayName:     nullStringPtr(authorDisplayName),
 				NicknameEmojiID: nullStringPtr(authorNicknameEmojiID),
 				IsAnonymous:     authorIsAnonymous,
 				AvatarURL:       nullStringPtr(authorAvatarURL),
 			}
+			if authorPublicID.Valid {
+				n := authorPublicID.Int64
+				author.PublicID = &n
+			}
+			it.Author = author
 		}
 		if boardID.Valid {
 			it.BoardID = &boardID.String
@@ -270,108 +363,25 @@ func (h *FeedHandler) GetUserFeed(c *gin.Context) {
 		if wallUserID.Valid {
 			it.WallUserID = &wallUserID.String
 		}
+		// public_ids come from the same SQL query (hydration phase) — no
+		// second lookup round-trip.
+		if publicID.Valid {
+			n := publicID.Int64
+			it.PublicID = &n
+		}
+		if userPublicID.Valid {
+			n := userPublicID.Int64
+			it.UserPublicID = &n
+		}
 
 		items = append(items, it)
 	}
-
-	h.fillPublicIDs(items)
-
-	itemCount := len(items)
-	c.JSON(http.StatusOK, models.APIResponse{Success: true, Data: items, Count: &itemCount})
-}
-
-// fillPublicIDs attaches the human-readable numbers the client needs to build
-// links. It is a second pass on purpose: wrapping get_user_feed in a join would
-// risk reordering the score-ordered feed, so the function stays the single
-// source of truth for order and only the numbers are looked up by primary key.
-//
-// One query for the whole page: the feed is behind the viewer-keyed data cache,
-// so this runs on cache misses only.
-func (h *FeedHandler) fillPublicIDs(items []feedItem) {
-	if len(items) == 0 {
-		return
-	}
-	var threadIDs, wallPostIDs, authorIDs []string
-	seenAuthors := make(map[string]bool, len(items))
-	for _, it := range items {
-		switch it.ItemType {
-		case "thread":
-			threadIDs = append(threadIDs, it.ItemID)
-		case "wall_post":
-			wallPostIDs = append(wallPostIDs, it.ItemID)
-		}
-		if it.AuthorID != nil && !seenAuthors[*it.AuthorID] {
-			seenAuthors[*it.AuthorID] = true
-			authorIDs = append(authorIDs, *it.AuthorID)
-		}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
-	threadPublic := make(map[string]int64, len(threadIDs))
-	wallPostPublic := make(map[string]int64, len(wallPostIDs))
-	wallOwnerPublic := make(map[string]int64, len(wallPostIDs))
-	authorPublic := make(map[string]int64, len(authorIDs))
-
-	rows, err := h.db.Query(`
-		SELECT 'thread'::text AS kind, t.id, t.public_id, NULL::bigint
-		  FROM threads t WHERE t.id = ANY($1::uuid[])
-		UNION ALL
-		SELECT 'wall_post', p.id, p.public_id, ow.public_id
-		  FROM profile_wall_posts p
-		  LEFT JOIN users ow ON ow.id = p.user_id
-		 WHERE p.id = ANY($2::uuid[])
-		UNION ALL
-		SELECT 'user', u.id, u.public_id, NULL::bigint
-		  FROM users u WHERE u.id = ANY($3::uuid[])`,
-		pq.Array(threadIDs), pq.Array(wallPostIDs), pq.Array(authorIDs))
-	if err != nil {
-		// Best-effort enrichment: a failure here must not fail the feed — the
-		// client falls back to UUID links.
-		log.Printf("[feed] public_id lookup failed: %v", err)
-		return
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var kind, id string
-		var publicID int64
-		var ownerPublicID sql.NullInt64
-		if err := rows.Scan(&kind, &id, &publicID, &ownerPublicID); err != nil {
-			continue
-		}
-		switch kind {
-		case "thread":
-			threadPublic[id] = publicID
-		case "wall_post":
-			wallPostPublic[id] = publicID
-			if ownerPublicID.Valid {
-				wallOwnerPublic[id] = ownerPublicID.Int64
-			}
-		case "user":
-			authorPublic[id] = publicID
-		}
-	}
-
-	for i := range items {
-		it := &items[i]
-		switch it.ItemType {
-		case "thread":
-			if n, ok := threadPublic[it.ItemID]; ok {
-				it.PublicID = &n
-			}
-		case "wall_post":
-			if n, ok := wallPostPublic[it.ItemID]; ok {
-				it.PublicID = &n
-			}
-			if n, ok := wallOwnerPublic[it.ItemID]; ok {
-				it.UserPublicID = &n
-			}
-		}
-		if it.AuthorID != nil && it.Author != nil {
-			if n, ok := authorPublic[*it.AuthorID]; ok {
-				it.Author.PublicID = &n
-			}
-		}
-	}
+	metrics.App.FeedSQLObserved(time.Since(start))
+	return items, nil
 }
 
 func nullStringPtr(ns sql.NullString) *string {

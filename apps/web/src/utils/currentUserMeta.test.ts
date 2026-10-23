@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { getCurrentUserMeta, getGiftCatalog, clearCurrentUserMetaCache } from "./currentUserMeta";
+import { resetProfileSummaryLoader } from "./profileSummaryLoader";
 
 // vi.mock calls are hoisted above declarations, so the mock fns must live in
 // vi.hoisted to be referenced from the factory.
@@ -21,15 +22,19 @@ const session = { user: { id: "user-1" }, access_token: "token-abc" };
 
 function mockMetaResponses() {
   mocks.mockFetch.mockImplementation((url: string) => {
-    if (url.includes("/api/v1/user_roles")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [{ role: "admin" }] }) });
-    }
-    if (url.includes("/api/v1/profiles")) {
+    if (url.includes("/api/v1/profiles/summary")) {
       return Promise.resolve({
         ok: true,
         json: () =>
           Promise.resolve({
-            data: [{ id: "user-1", username: "alice", avatar_url: "/a.png", nickname_emoji_id: "emoji-1" }],
+            data: [{
+              id: "user-1",
+              username: "alice",
+              avatar_url: "/a.png",
+              nickname_emoji_id: "emoji-1",
+              is_admin: true,
+              roles: ["admin"],
+            }],
           }),
       });
     }	  if (url.includes("/api/v1/gift_catalog")) {
@@ -49,6 +54,7 @@ describe("getCurrentUserMeta", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearCurrentUserMetaCache();
+    resetProfileSummaryLoader();
     mocks.mockAuth.getSession.mockResolvedValue({ data: { session }, error: null });
     mockMetaResponses();
   });
@@ -63,7 +69,7 @@ describe("getCurrentUserMeta", () => {
     expect(meta.username).toBe("alice");
     expect(meta.avatarUrl).toBe("/a.png");
     expect(meta.nicknameEmojiId).toBe("emoji-1");
-    expect(mocks.mockFetch).toHaveBeenCalledTimes(2);
+    expect(mocks.mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("caches the result — a second call fires zero requests", async () => {
@@ -74,8 +80,8 @@ describe("getCurrentUserMeta", () => {
     expect(mocks.mockFetch.mock.calls.length).toBe(callsAfterFirst);
   });	  it("deduplicates concurrent calls", async () => {
     await Promise.all([getCurrentUserMeta("user-1"), getCurrentUserMeta("user-1"), getCurrentUserMeta("user-1")]);
-    // 3 parallel calls → only 2 fetches total (one roles + one profiles)
-    expect(mocks.mockFetch.mock.calls.length).toBe(2);
+    // 3 parallel calls → one shared summary request
+    expect(mocks.mockFetch.mock.calls.length).toBe(1);
   });
 
   it("returns empty meta without a userId", async () => {
@@ -92,7 +98,7 @@ describe("getCurrentUserMeta", () => {
     // Simulate a profile mutation (username/avatar/emoji change): all listeners
     // must reset their caches so the next read refetches.
     window.dispatchEvent(new CustomEvent("profile-cache:invalidate"));	    await getCurrentUserMeta("user-1");
-    expect(mocks.mockFetch.mock.calls.length).toBe(callsAfterFirst + 2);
+    expect(mocks.mockFetch.mock.calls.length).toBe(callsAfterFirst + 1);
   });
 
   it("keeps the cache for a scoped invalidation of another user", async () => {
@@ -116,7 +122,7 @@ describe("getCurrentUserMeta", () => {
       new CustomEvent("profile-cache:invalidate", { detail: { userId: "user-1" } }),
     );
     await getCurrentUserMeta("user-1");
-    expect(mocks.mockFetch.mock.calls.length).toBe(callsAfterFirst + 2);
+    expect(mocks.mockFetch.mock.calls.length).toBe(callsAfterFirst + 1);
   });
 });
 
@@ -124,6 +130,7 @@ describe("getGiftCatalog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearCurrentUserMetaCache();
+    resetProfileSummaryLoader();
     mockMetaResponses();
   });
 
