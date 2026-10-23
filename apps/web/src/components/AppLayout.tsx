@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
 import { NavigationLink } from "@/components/NavigationLink";
 import { motion, useScroll, useMotionValueEvent, useMotionValue, useTransform, animate } from "motion/react";
+import { SPRING } from "@/lib/motion";
 import { transitionEnterClass, isFeedRoute } from "@/lib/viewTransitions";
 import { useTransitionStyle } from "@/hooks/useTransitionStyle";
 import { useProfileCache } from "@/contexts/ProfileCacheContext";
@@ -147,14 +148,25 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
   const suspendHeaderToggleUntilRef = useRef(0);
   const prefersReducedMotionRef = useRef(false);
   const headerProgress = useMotionValue(1); // 1 = fully visible, 0 = hidden
+  // Presence of the app chrome (header + bottom nav) for chrome-less surfaces
+  // (messenger mobile chat, full-bleed channel chat). Instead of unmounting the
+  // header/nav — an instant pop — the chrome slides away with one shared spring:
+  // the header travels up, the bottom nav travels down, and the content padding
+  // (also derived below from the same value) collapses in the very same frames,
+  // so nothing moves asynchronously.
+  const chromePresence = useMotionValue(1);
   const nowPlayingPadPx = nowPlaying && !nowPlayingHidden ? 52 : 0;
-  const headerY = useTransform(headerProgress, (p) => -headerHeight * (1 - p));
-  const contentPad = useTransform(headerProgress, (p) => 24 + (headerHeight - 24) * p + nowPlayingPadPx);
+  const headerY = useTransform([headerProgress, chromePresence], ([p, cp]: number[]) =>
+    headerHeight * p * cp - headerHeight);
+  const contentPad = useTransform([headerProgress, chromePresence], ([p, cp]: number[]) =>
+    cp * (24 + (headerHeight - 24) * p + nowPlayingPadPx));
   // Sticky elements (profile tab bar) offset by the header's visible bottom
   // edge: flush under the header when open, flush with the viewport top when
   // hidden — unlike contentPad, which keeps a 24px breathing gap at the top.
-  const stickyPad = useTransform(headerProgress, (p) => headerHeight * p + nowPlayingPadPx);
-  const nowPlayingTop = useTransform(headerProgress, (p) => 12 + headerHeight * p);
+  const stickyPad = useTransform([headerProgress, chromePresence], ([p, cp]: number[]) =>
+    cp * (headerHeight * p + nowPlayingPadPx));
+  const nowPlayingTop = useTransform([headerProgress, chromePresence], ([p, cp]: number[]) =>
+    12 + headerHeight * p * cp);
 
   useTabTitle();
 
@@ -1197,6 +1209,20 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
     };
   }, []);
 
+  // Slide the chrome with one spring whenever a chrome-less surface opens or
+  // closes (header → headerHeight up, bottom nav → off below, padding follows).
+  // `animate()` keeps the interrupted direction change reversible mid-flight.
+  useEffect(() => {
+    const reduce = typeof window !== "undefined"
+      && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const controls = animate(
+      chromePresence,
+      hideMessengerChrome ? 0 : 1,
+      reduce ? { duration: 0 } : SPRING.standard,
+    );
+    return () => controls.stop();
+  }, [hideMessengerChrome]);
+
   // Focus main content on route change for keyboard users
   useEffect(() => {
     const main = document.getElementById('main-content');
@@ -1253,7 +1279,10 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
       >
         {t('nav.skipToContent')}
       </a>
-      {!hideChrome ? (
+      {/* The header stays mounted for chrome-less surfaces (messenger mobile
+          chat, full-bleed channel chat) and slides up with the shared
+          chromePresence spring — an unmount here was an instant pop in the
+          middle of the chat's push animation. */}
       <motion.header
         ref={headerRef}
         data-app-layout-header="true"
@@ -1382,7 +1411,6 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
         </div>
         <TopLoadingBar />
       </motion.header>
-      ) : null}
 
       {!hideChrome && nowPlaying && !nowPlayingHidden && (
         <motion.div
@@ -1565,12 +1593,16 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
         id="main-content"
         tabIndex={-1}
         className={`flex-1 min-h-0 outline-none${isMessengerPage ? " is-messenger-page" : ""}${showBottomNavigation ? " has-mobile-bottom-nav" : ""}${hideMessengerChrome && !isMessengerPage ? " is-app-surface" : ""}${enterClass ? ` ${enterClass}` : ""}`}
-        style={{ paddingTop: hideChrome ? 0 : contentPad }}
+        style={{ paddingTop: contentPad }}
       >
         {children}
       </motion.main>
 
-      {showBottomNavigation && <MobileBottomNav user={user} />}
+      {/* Bottom nav: always mounted (mobile sizes), exits with its own slide
+          — no unmount pop when the messenger chat opens/closes. */}
+      {!isSpecialPage && (
+        <MobileBottomNav user={user} chromeHidden={hideMessengerChrome} />
+      )}
 
       {!hideChrome && !isMessengerPage ? (
       <div className="mt-auto" data-app-layout-footer="true">

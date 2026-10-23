@@ -89,6 +89,7 @@ vi.mock("@/utils/globalSearch", () => ({
 vi.mock("motion/react", () => ({
   motion: {
     header: ({ children, ...props }: any) => <div data-testid="motion-header" {...props}>{children}</div>,
+    nav: ({ children, ...props }: any) => <nav {...props}>{children}</nav>,
     main: ({ children, ...props }: any) => <main {...props}>{children}</main>,
     div: ({ children, ...props }: any) => <div {...props}>{children}</div>,
     span: ({ children, layoutId: _layoutId, transition: _transition, ...props }: any) => <span {...props}>{children}</span>,
@@ -511,8 +512,10 @@ describe("AppLayout", () => {
       renderLayout();
       document.body.classList.add("messenger-mobile-chat-active");
       fireEvent(window, new CustomEvent("gomo6:messenger-mobile-chat"));
+      // The header no longer unmounts — the chrome slides away with an
+      // animated presence value (0 = gone) so the exit is one shared spring.
       await waitFor(() => {
-        expect(screen.queryByTestId("motion-header")).not.toBeInTheDocument();
+        expect(mockAnimate).toHaveBeenCalledWith(expect.anything(), 0, expect.anything());
       });
     });
 
