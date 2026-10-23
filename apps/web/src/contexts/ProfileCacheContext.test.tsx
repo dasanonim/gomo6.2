@@ -2,63 +2,65 @@ import { renderHook, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ProfileCacheProvider, useProfileCache } from "./ProfileCacheContext";
 import { ReactNode } from "react";
+import { resetProfileSummaryLoader } from "@/utils/profileSummaryLoader";
+import { PROFILE_CACHE_INVALIDATE_EVENT } from "@/utils/profileCacheEvents";
 
-const mockFrom = vi.fn();
-vi.mock("@/integrations/api/compat", () => ({
-  api: {
-    from: (...args: any[]) => mockFrom(...args),
-  },
-}));
-
-// The profile cache skips the protected user_roles request for guests (no
-// session CSRF cookie). Tests default to a signed-in viewer so the full
-// 4-request path is exercised; the guest path is covered explicitly below.
-const mockGetCSRFToken = vi.fn(() => "mock-csrf-token");
-vi.mock("@/integrations/api/client", () => ({
-  apiClient: {
-    getCSRFToken: () => mockGetCSRFToken(),
-  },
-}));
-
-function makeChain<T>(resolveValue: T): any {
-  const p = Promise.resolve(resolveValue) as any;
-  p.select = () => p;
-  p.eq = () => p;
-  p.single = () => p;
-  return p;
-}
-
-// The viewed user's appearance comes from the public
-// /users/:id/customization route, not from the owner-scoped generic table.
-const mockFetch = vi.fn((..._args: unknown[]) => Promise.resolve({ ok: true, json: async () => ({ success: true, data: null }) }));
+const mockFetch = vi.fn();
 vi.stubGlobal("fetch", (...args: unknown[]) => mockFetch(...args));
 
 function wrapper({ children }: { children: ReactNode }) {
   return <ProfileCacheProvider>{children}</ProfileCacheProvider>;
 }
 
-function defaultMocks() {
-  mockFrom.mockImplementation((table: string) => {
-    if (table === "profiles") return makeChain({ data: { username: "alice", avatar_url: "av.jpg" }, error: null });
-    if (table === "user_achievements") return makeChain({ data: [], error: null });
-    if (table === "user_roles") return makeChain({ data: [], error: null });
-    return makeChain({ data: null, error: null });
+type Row = {
+  id: string;
+  public_id?: number | null;
+  username: string;
+  display_name?: string | null;
+  avatar_url?: string | null;
+  nickname_emoji_id?: string | null;
+  is_admin?: boolean;
+  roles?: string[];
+  customization?: Record<string, unknown> | null;
+};
+
+function respondWith(rows: Row[]): void {
+  mockFetch.mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ success: true, data: rows }),
   });
+}
+
+/** Serve each requested id from the `ids=` list (used by batching tests). */
+function respondPerId(makeRow: (id: string) => Row): void {
+  mockFetch.mockImplementation((url: string) => {
+    const raw = url.split("ids=")[1] ?? "";
+    const ids = decodeURIComponent(raw).split(",").filter(Boolean);
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: ids.map(makeRow) }),
+    });
+  });
+}
+
+async function flushQueue(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(0);
 }
 
 describe("ProfileCacheContext", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetCSRFToken.mockReturnValue("mock-csrf-token");
+    resetProfileSummaryLoader();
     vi.useFakeTimers();
-    defaultMocks();
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("throws when used outside provider", () => {
+  it("throws when used outside the provider", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(() => {
       renderHook(() => useProfileCache());
@@ -66,188 +68,154 @@ describe("ProfileCacheContext", () => {
     consoleSpy.mockRestore();
   });
 
-  it("getProfile returns null for empty cache", () => {
+  it("getProfile returns null for an empty cache", () => {
     const { result } = renderHook(() => useProfileCache(), { wrapper });
     expect(result.current.getProfile("user-1")).toBeNull();
   });
 
-  it("loadProfile fetches profile data", async () => {
+  it("loadProfile maps the batched summary onto ProfileData", async () => {
+    respondWith([
+      {
+        id: "11111111-1111-1111-1111-111111111111",
+        public_id: 42,
+        username: "alice",
+        avatar_url: "av.jpg",
+        nickname_emoji_id: "emoji-1",
+        is_admin: true,
+        roles: ["admin"],
+        customization: { username_css: "color: red" },
+      },
+    ]);
     const { result } = renderHook(() => useProfileCache(), { wrapper });
 
-    let data: any;
+    let data: Awaited<ReturnType<typeof result.current.loadProfile>>;
     await act(async () => {
-      data = await result.current.loadProfile("user-1");
+      const pending = result.current.loadProfile("11111111-1111-1111-1111-111111111111");
+      await flushQueue();
+      data = await pending;
     });
 
-    expect(data.username).toBe("alice");
-    expect(data.avatarUrl).toBe("av.jpg");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toContain("/api/v1/profiles/summary?ids=");
+    expect(data!.username).toBe("alice");
+    expect(data!.isAdmin).toBe(true);
+    expect(data!.avatarUrl).toBe("av.jpg");
+    expect(data!.public_id).toBe(42);
+    expect(data!.customization).toEqual({ username_css: "color: red" });
+
+    const cached = result.current.getProfile("11111111-1111-1111-1111-111111111111");
+    expect(cached?.username).toBe("alice");
   });
 
-  it("caches profile after loading", async () => {
+  it("coalesces every author mounted in the same tick into one request", async () => {
+    respondPerId((id) => ({ id, username: id, is_admin: false }));
     const { result } = renderHook(() => useProfileCache(), { wrapper });
 
     await act(async () => {
-      await result.current.loadProfile("user-1");
+      const pending = Promise.all([
+        result.current.loadProfile("user-1"),
+        result.current.loadProfile("user-2"),
+        result.current.loadProfile("user-3"),
+      ]);
+      await flushQueue();
+      await pending;
     });
 
-    const cached = result.current.getProfile("user-1");
-    expect(cached).not.toBeNull();
-    expect(cached!.username).toBe("alice");	    expect(mockFrom).toHaveBeenCalledTimes(2); // profiles + roles (appearance comes from the public endpoint)
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const url = mockFetch.mock.calls[0][0] as string;
+    expect(url).toContain("user-1");
+    expect(url).toContain("user-2");
+    expect(url).toContain("user-3");
   });
 
-  it("returns cached data on second load", async () => {
+  it("serves a repeated load from the cache", async () => {
+    respondPerId((id) => ({ id, username: id }));
     const { result } = renderHook(() => useProfileCache(), { wrapper });
 
     await act(async () => {
-      await result.current.loadProfile("user-1");
+      const pending = result.current.loadProfile("user-1");
+      await flushQueue();
+      await pending;
     });
-
-    mockFrom.mockClear();
     await act(async () => {
-      await result.current.loadProfile("user-1");
+      const pending = result.current.loadProfile("user-1");
+      await flushQueue();
+      await pending;
     });
 
-    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("returns default profile for undefined userId", async () => {
+  it("resolves a public-id lookup through the canonical row", async () => {
+    respondPerId((id) => ({ id: "uuid-1", public_id: 42, username: "alice" }));
     const { result } = renderHook(() => useProfileCache(), { wrapper });
 
-    let data: any;
     await act(async () => {
-      data = await result.current.loadProfile(undefined);
+      const pending = result.current.loadProfile("42");
+      await flushQueue();
+      await pending;
     });
 
-    expect(data.username).toBe("");
-    expect(data.isAdmin).toBe(false);
+    // The response was keyed by both the canonical uuid and the public number.
+    expect(result.current.getProfile("42")?.username).toBe("alice");
+    expect(result.current.getProfile("uuid-1")?.username).toBe("alice");
   });
 
-  it("returns null after TTL expiry", async () => {
+  it("a scoped invalidation clears only the affected profile", async () => {
+    respondPerId((id) => ({ id, username: id }));
     const { result } = renderHook(() => useProfileCache(), { wrapper });
 
     await act(async () => {
-      await result.current.loadProfile("user-1");
+      const pending = Promise.all([
+        result.current.loadProfile("user-1"),
+        result.current.loadProfile("user-2"),
+      ]);
+      await flushQueue();
+      await pending;
     });
 
-    vi.advanceTimersByTime(5 * 60 * 1000 + 1);
-
-    expect(result.current.getProfile("user-1")).toBeNull();
-  });
-
-  it("clearCache resets everything", async () => {
-    const { result } = renderHook(() => useProfileCache(), { wrapper });
-
-    await act(async () => {
-      await result.current.loadProfile("user-1");
-    });
-
-    act(() => {
-      result.current.clearCache();
-    });
-
-    expect(result.current.getProfile("user-1")).toBeNull();
-  });
-
-  it("clears all entries on the profile-cache:invalidate DOM event", async () => {
-    const { result } = renderHook(() => useProfileCache(), { wrapper });
-
-    await act(async () => {
-      await result.current.loadProfile("user-1");
-      await result.current.loadProfile("user-2");
-    });
-    expect(result.current.getProfile("user-1")).not.toBeNull();
-    expect(result.current.getProfile("user-2")).not.toBeNull();
-
-    // Profile edits anywhere in the app broadcast this event; the whole cache
-    // must reset so nothing serves stale username/avatar/color/emoji.
-    act(() => {
-      window.dispatchEvent(new CustomEvent("profile-cache:invalidate"));
-    });
-
-    expect(result.current.getProfile("user-1")).toBeNull();
-    expect(result.current.getProfile("user-2")).toBeNull();
-
-    // Next load refetches (fresh data) instead of serving the stale entry.
-    mockFrom.mockClear();
-    await act(async () => {
-      await result.current.loadProfile("user-1");
-    });
-    expect(mockFrom).toHaveBeenCalled();
-  });
-
-  it("clears only the scoped user's entry on a scoped invalidate event", async () => {
-    const { result } = renderHook(() => useProfileCache(), { wrapper });
-
-    await act(async () => {
-      await result.current.loadProfile("user-1");
-      await result.current.loadProfile("user-2");
-    });
-    expect(result.current.getProfile("user-1")).not.toBeNull();
-    expect(result.current.getProfile("user-2")).not.toBeNull();
-
-    // A scoped profile_updated for user-1 must not evict user-2.
     act(() => {
       window.dispatchEvent(
-        new CustomEvent("profile-cache:invalidate", { detail: { userId: "user-1" } }),
+        new CustomEvent(PROFILE_CACHE_INVALIDATE_EVENT, { detail: { userId: "user-1" } }),
       );
     });
 
     expect(result.current.getProfile("user-1")).toBeNull();
-    expect(result.current.getProfile("user-2")).not.toBeNull();
+    expect(result.current.getProfile("user-2")?.username).toBe("user-2");
   });
 
-  it("skips user_roles for guests (no session cookie)", async () => {
-    mockGetCSRFToken.mockReturnValue(null);
-
-    const { result } = renderHook(() => useProfileCache(), { wrapper });
-
-    let data: any;
-    await act(async () => {
-      data = await result.current.loadProfile("user-1");
-    });	    // profiles only — NO user_roles (guest) and no generic
-	    // profile_customization read (appearance comes from the public endpoint).
-    const calledTables = mockFrom.mock.calls.map((c) => c[0]);
-    expect(calledTables).not.toContain("user_roles");
-    expect(calledTables).toHaveLength(1);
-    expect(data.isAdmin).toBe(false);
-  });
-
-  it("loads the viewed user's appearance from the public endpoint", async () => {
+  it("an unscoped invalidation clears every cached profile", async () => {
+    respondPerId((id) => ({ id, username: id }));
     const { result } = renderHook(() => useProfileCache(), { wrapper });
 
     await act(async () => {
-      await result.current.loadProfile("user-9");
+      const pending = Promise.all([
+        result.current.loadProfile("user-1"),
+        result.current.loadProfile("user-2"),
+      ]);
+      await flushQueue();
+      await pending;
     });
 
-    // Regression guard: the generic /profile_customization surface is scoped to
-    // the caller's own user_id, so a foreign profile could never render its
-    // owner's nickname colour or badge.
-    expect(mockFetch).toHaveBeenCalledWith("/api/v1/users/user-9/customization");
+    act(() => {
+      window.dispatchEvent(new CustomEvent(PROFILE_CACHE_INVALIDATE_EVENT));
+    });
+
+    expect(result.current.getProfile("user-1")).toBeNull();
+    expect(result.current.getProfile("user-2")).toBeNull();
   });
 
-  it("detects admin role", async () => {
-    mockFrom.mockImplementation((table: string) => {
-      if (table === "profiles") return makeChain({ data: { username: "admin" }, error: null });
-      if (table === "user_achievements") return makeChain({ data: [], error: null });
-      if (table === "user_roles") return makeChain({ data: [{ role: "admin" }], error: null });
-      return makeChain({ data: null, error: null });
-    });
-
+  it("clearCache drops everything", async () => {
+    respondPerId((id) => ({ id, username: id }));
     const { result } = renderHook(() => useProfileCache(), { wrapper });
 
-    let data: any;
     await act(async () => {
-      data = await result.current.loadProfile("admin-1");
+      const pending = result.current.loadProfile("user-1");
+      await flushQueue();
+      await pending;
     });
+    act(() => result.current.clearCache());
 
-    expect(data.isAdmin).toBe(true);
-  });	  it("deduplicates concurrent requests", async () => {
-    const { result } = renderHook(() => useProfileCache(), { wrapper });
-
-    const p1 = result.current.loadProfile("user-1");
-    const p2 = result.current.loadProfile("user-1");
-
-    const [d1, d2] = await Promise.all([p1, p2]);
-    expect(d1).toBe(d2);
+    expect(result.current.getProfile("user-1")).toBeNull();
   });
 });

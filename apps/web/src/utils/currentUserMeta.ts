@@ -1,5 +1,5 @@
-import { api } from "@/integrations/api/compat";
 import type { GiftCatalogItem } from "@/components/GiftCard";
+import { requestProfileSummary } from "@/utils/profileSummaryLoader";
 import { profileCacheInvalidateUserId } from "@/utils/profileCacheEvents";
 
 /**
@@ -58,28 +58,17 @@ if (typeof window !== "undefined") {
 }
 
 async function fetchCurrentUserMeta(userId: string): Promise<CurrentUserMeta> {
-  const token = (await api.auth.getSession()).data.session?.access_token;
-  const headers: Record<string, string> | undefined = token ? { Authorization: `Bearer ${token}` } : undefined;	const [rolesRes, profileRes] = await Promise.all([
-    fetch(`/api/v1/user_roles?user_id=eq.${userId}`, { headers }),
-    fetch(`/api/v1/profiles?id=eq.${userId}`, { headers }),
-  ]);
-
-  const [rolesJson, profileJson] = await Promise.all([
-    rolesRes.json().catch(() => ({ data: [] })),
-    profileRes.json().catch(() => ({ data: [] })),
-  ]);
-
-  const roles: string[] = Array.isArray(rolesJson?.data)
-    ? rolesJson.data.map((r: { role?: string }) => r.role).filter(Boolean)
-    : [];	const profile = profileJson?.data?.[0] ?? null;
-
-  // username_color achievement rewards were removed — no nickname color.
+  // The batched summary carries the viewer's own role list (only their row
+  // includes it) plus the username/avatar the header needs. One request, shared
+  // with every profile badge mounted in the same tick.
+  const summary = await requestProfileSummary(userId);
   return {
-    roles,
+    roles: summary?.roles ?? (summary?.is_admin ? ["admin"] : []),
+    // username_color achievement rewards were removed — no nickname color.
     color: "",
-    username: profile?.username ?? "",
-    avatarUrl: profile?.avatar_url ?? undefined,
-    nicknameEmojiId: profile?.nickname_emoji_id ?? null,
+    username: summary?.username ?? "",
+    avatarUrl: summary?.avatar_url ?? undefined,
+    nicknameEmojiId: summary?.nickname_emoji_id ?? null,
   };
 }
 

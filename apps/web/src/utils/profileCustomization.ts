@@ -1,3 +1,8 @@
+import {
+  invalidateProfileSummary,
+  invalidateProfileSummaries,
+  requestProfileSummary,
+} from "@/utils/profileSummaryLoader";
 import { PROFILE_CACHE_INVALIDATE_EVENT } from "@/utils/profileCacheEvents";
 
 export interface ProfileCustomization {
@@ -7,118 +12,40 @@ export interface ProfileCustomization {
   background_url: string | null;
 }
 
-const CUSTOMIZATION_TTL = 5 * 60 * 1000;
-const CUSTOMIZATION_MAX_ENTRIES = 200;
-
-interface CacheEntry {
-  value: ProfileCustomization | null;
-  at: number;
-}
-
-const customizationCache = new Map<string, CacheEntry>();
-
-// In-flight requests keyed by user id. The cache above is only populated once a
-// response resolves, so without this a feed rendering N badges for the same
-// author fired N identical concurrent requests on a cold load. They all share
-// the first promise instead.
-const inFlight = new Map<string, Promise<ProfileCustomization | null>>();
-
-// Bumped on every invalidation. A request captures the generation before it
-// starts and only writes its result if the generation is unchanged, so a
-// response that resolves after an edit can never resurrect the stale entry.
-let globalGeneration = 0;
-const userGeneration = new Map<string, number>();
-
-const generationFor = (userId: string): string =>
-  `${globalGeneration}:${userGeneration.get(userId) ?? 0}`;
-
-const readCached = (userId: string): { hit: boolean; value: ProfileCustomization | null } => {
-  const entry = customizationCache.get(userId);
-  if (!entry) return { hit: false, value: null };
-  // Expired entries are dropped rather than served. Without a TTL a viewer who
-  // once saw a nickname kept the old colour forever: the invalidate event only
-  // fires in the editor's own browser, so other clients would never hear about
-  // the change.
-  if (Date.now() - entry.at > CUSTOMIZATION_TTL) {
-    customizationCache.delete(userId);
-    return { hit: false, value: null };
-  }
-  return { hit: true, value: entry.value };
-};
-
-const writeCached = (userId: string, value: ProfileCustomization | null) => {
-  if (!customizationCache.has(userId) && customizationCache.size >= CUSTOMIZATION_MAX_ENTRIES) {
-    // Map preserves insertion order, so the first key is the oldest.
-    const oldest = customizationCache.keys().next().value;
-    if (oldest !== undefined) customizationCache.delete(oldest);
-  }
-  customizationCache.set(userId, { value, at: Date.now() });
-};
-
+/**
+ * A user's public display customization (nickname CSS, badge, background).
+ *
+ * The data comes from the batched `/api/v1/profiles/summary` loader: a badge
+ * rendering 20 authors no longer issues 20 per-user customization requests —
+ * every `getProfileCustomization` call in the same tick shares one batch. The
+ * module-level cache, TTL and invalidation generations also live there, so this
+ * function is only the typed projection every caller already uses.
+ *
+ * The generic `/profile_customization` table cannot serve this: it is scoped to
+ * the caller's own user_id, so a foreign row always came back empty. The public
+ * summary endpoint returns the display subset for any viewer, sanitized on the
+ * server with the same profile sanitizer as the owner's own read path.
+ */
 export const getProfileCustomization = async (userId: string): Promise<ProfileCustomization | null> => {
-  const cached = readCached(userId);
-  if (cached.hit) {
-    return cached.value;
-  }
-
-  // A concurrent call for the same user is already on the wire — reuse it
-  // instead of firing a duplicate (the cache is written only on resolution).
-  const pending = inFlight.get(userId);
-  if (pending) {
-    return pending;
-  }
-
-  const generation = generationFor(userId);
-
-  const promise = (async (): Promise<ProfileCustomization | null> => {
-    try {
-      // Public display endpoint, NOT the generic /profile_customization surface:
-      // that table is read-scoped to the caller's own user_id
-      // (TableMeta.UserScopedRead), so querying it with somebody else's id returns
-      // an empty row — which is exactly why nobody ever saw another user's
-      // nickname colour. /users/:id/customization serves the display fields to any
-      // viewer (the same reason /users/:id/privacy exists for privacy_settings)
-      // and it works for the current user too, so no owner/viewer branch is needed.
-      const res = await fetch(`/api/v1/users/${encodeURIComponent(userId)}/customization`);
-      if (!res.ok) {
-        if (generationFor(userId) === generation) writeCached(userId, null);
-        return null;
-      }
-
-      const payload = (await res.json()) as { data?: ProfileCustomization | null };
-      const customization = payload?.data ?? null;
-      // An invalidation that landed while this request was in flight wins: do
-      // not overwrite the cleared cache with the pre-edit response.
-      if (generationFor(userId) === generation) writeCached(userId, customization);
-      return customization;
-    } catch (error) {
-      console.error("Error loading customization:", error);
-      if (generationFor(userId) === generation) writeCached(userId, null);
-      return null;
-    } finally {
-      inFlight.delete(userId);
-    }
-  })();
-
-  inFlight.set(userId, promise);
-  return promise;
+  const summary = await requestProfileSummary(userId);
+  return (summary?.customization as ProfileCustomization | null) ?? null;
 };
 
 export const parseCssToStyle = (css: string): React.CSSProperties => {
   const style: React.CSSProperties = {};
-  
+
   if (!css) return style;
 
   const declarations = css.split(';').filter(s => s.trim());
-  
+
   declarations.forEach(decl => {
     // Split on first colon only, as values may contain colons (e.g., url(...), rgba(...))
     const colonIndex = decl.indexOf(':');
     if (colonIndex === -1) return;
-    
+
     const property = decl.substring(0, colonIndex).trim();
     const value = decl.substring(colonIndex + 1).trim();
-    
+
     if (!property || !value) return;
 
     // Convert CSS property to React style property
@@ -155,23 +82,20 @@ export const parseCssToStyle = (css: string): React.CSSProperties => {
   return style;
 };
 
+/** Drops the cached display data for one user, or everything when omitted. */
 export const clearCustomizationCache = (userId?: string) => {
   if (userId) {
-    customizationCache.delete(userId);
-    inFlight.delete(userId);
-    userGeneration.set(userId, (userGeneration.get(userId) ?? 0) + 1);
+    invalidateProfileSummary(userId);
     return;
   }
-  customizationCache.clear();
-  inFlight.clear();
-  globalGeneration += 1;
+  invalidateProfileSummaries();
 };
 
 /**
  * Broadcast that a profile changed (username, avatar, display name, nickname
  * emoji, customization...). This is the single entry point every profile
  * mutation must call:
- *  - clears the relevant customization cache entry, and
+ *  - clears the relevant summary/customization cache entry, and
  *  - dispatches a DOM event that ProfileCacheContext, currentUserMeta and the
  *    other client-side profile caches listen to, so they reset together.
  *

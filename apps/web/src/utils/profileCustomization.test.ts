@@ -1,16 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseCssToStyle, getProfileCustomization, clearCustomizationCache, dispatchProfileCacheInvalidate } from "./profileCustomization";
+import {
+  parseCssToStyle,
+  getProfileCustomization,
+  clearCustomizationCache,
+  dispatchProfileCacheInvalidate,
+} from "./profileCustomization";
+import { PROFILE_CACHE_INVALIDATE_EVENT } from "@/utils/profileCacheEvents";
+import { resetProfileSummaryLoader } from "@/utils/profileSummaryLoader";
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", (...args: unknown[]) => mockFetch(...args));
 
-function respondWith(data: unknown, ok = true): void {
+function respondWith(rows: unknown[], ok = true, status = ok ? 200 : 500): void {
   mockFetch.mockResolvedValue({
     ok,
-    status: ok ? 200 : 500,
-    json: async () => ({ success: ok, data }),
+    status,
+    json: async () => ({ success: ok, data: rows }),
   });
 }
+
+const row = (customization: Record<string, unknown> | null) => ({
+  id: "user-1",
+  username: "alice",
+  is_admin: false,
+  customization,
+});
 
 describe("parseCssToStyle", () => {
   it("returns empty object for empty string", () => {
@@ -46,13 +60,11 @@ describe("parseCssToStyle", () => {
   });
 
   it("handles background-color", () => {
-    const result = parseCssToStyle("background-color: #fff");
-    expect(result).toEqual({ backgroundColor: "#fff" });
+    expect(parseCssToStyle("background-color: #fff")).toEqual({ backgroundColor: "#fff" });
   });
 
   it("handles border-radius", () => {
-    const result = parseCssToStyle("border-radius: 8px");
-    expect(result).toEqual({ borderRadius: "8px" });
+    expect(parseCssToStyle("border-radius: 8px")).toEqual({ borderRadius: "8px" });
   });
 
   it("skips declarations without colon", () => {
@@ -72,39 +84,31 @@ describe("parseCssToStyle", () => {
 describe("getProfileCustomization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    clearCustomizationCache();
+    resetProfileSummaryLoader();
   });
 
-  it("reads the public per-user endpoint, not the owner-scoped table", async () => {
+  it("reads the batched public summary, not the owner-scoped table", async () => {
     // Regression guard: /profile_customization is scoped to the caller's own
     // user_id, so a foreign id came back empty and nobody ever saw another
-    // user's nickname colour. The display fields now come from the public
-    // /users/:id/customization route.
-    respondWith({ username_css: "color: red" });
-
-    await getProfileCustomization("user-1");
-
-    expect(mockFetch).toHaveBeenCalledWith("/api/v1/users/user-1/customization");
-  });
-
-  it("fetches customization from API", async () => {
-    const mockData = { username_css: "color: red", profile_badge_text: "VIP", profile_badge_css: null };
-    respondWith(mockData);
+    // user's nickname colour.
+    respondWith([row({ username_css: "color: red" })]);
 
     const result = await getProfileCustomization("user-1");
-    expect(result).toEqual(mockData);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toContain("/api/v1/profiles/summary?ids=user-1");
+    expect(result).toEqual({ username_css: "color: red" });
   });
 
-  it("returns null when no data found", async () => {
-    respondWith(null);
+  it("returns null when the summary has no row", async () => {
+    respondWith([]);
 
     const result = await getProfileCustomization("user-1");
     expect(result).toBeNull();
   });
 
-  it("caches result on subsequent calls", async () => {
-    const mockData = { username_css: "color: blue", profile_badge_text: null, profile_badge_css: null };
-    respondWith(mockData);
+  it("caches the result on subsequent calls", async () => {
+    respondWith([row({ username_css: "color: blue" })]);
 
     await getProfileCustomization("user-1");
     await getProfileCustomization("user-1");
@@ -113,10 +117,7 @@ describe("getProfileCustomization", () => {
   });
 
   it("deduplicates concurrent requests for the same user", async () => {
-    // A feed mounts N badges for the same author in one commit; the cache is
-    // empty until the response resolves, so without in-flight dedupe each badge
-    // fired its own identical request.
-    respondWith({ username_css: "color: red" });
+    respondWith([row({ username_css: "color: red" })]);
 
     await Promise.all([
       getProfileCustomization("user-1"),
@@ -127,23 +128,45 @@ describe("getProfileCustomization", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("re-fetches once the cached entry passes its TTL", async () => {
-    const mockData = { username_css: "color: blue", profile_badge_text: null, profile_badge_css: null };
-    respondWith(mockData);
+  it("batches different users mounted in the same tick", async () => {
+    mockFetch.mockImplementation((url: string) => {
+      const ids = decodeURIComponent(url.split("ids=")[1] ?? "").split(",");
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          data: ids.map((id) => ({ id, username: id, is_admin: false, customization: { username_css: "color: red" } })),
+        }),
+      });
+    });
 
-    // Only Date is faked, so the promise chain still settles normally.
+    await Promise.all([
+      getProfileCustomization("user-1"),
+      getProfileCustomization("user-2"),
+      getProfileCustomization("user-3"),
+    ]);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const url = mockFetch.mock.calls[0][0] as string;
+    expect(url).toContain("user-1");
+    expect(url).toContain("user-2");
+    expect(url).toContain("user-3");
+  });
+
+  it("re-fetches once the cached entry passes its TTL", async () => {
+    respondWith([row({ username_css: "color: blue" })]);
+
+    // Only Date is faked, so the flush timer still settles normally.
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       await getProfileCustomization("user-1");
       expect(mockFetch).toHaveBeenCalledTimes(1);
 
-      // Inside the window: served from cache.
       vi.setSystemTime(Date.now() + 4 * 60 * 1000);
       await getProfileCustomization("user-1");
       expect(mockFetch).toHaveBeenCalledTimes(1);
 
-      // Past it: a viewer who once saw a nickname must not keep it forever —
-      // the invalidate event only fires in the editor's own browser.
       vi.setSystemTime(Date.now() + 6 * 60 * 1000);
       await getProfileCustomization("user-1");
       expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -152,31 +175,13 @@ describe("getProfileCustomization", () => {
     }
   });
 
-  it("returns null on API error", async () => {
-    respondWith(null, false);
+  it("drops the cached entry when the profile is invalidated", async () => {
+    respondWith([row({ username_css: "color: red" })]);
 
-    const result = await getProfileCustomization("user-1");
-    expect(result).toBeNull();
-  });
-
-  it("does not cache a response that resolves after an invalidation", async () => {
-    let resolveFetch!: (value: unknown) => void;
-    mockFetch.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveFetch = resolve;
-      }),
-    );
-
-    const pending = getProfileCustomization("user-1");
-    // The profile is edited while the first request is still on the wire.
+    await getProfileCustomization("user-1");
     dispatchProfileCacheInvalidate("user-1");
-    resolveFetch({ ok: true, json: async () => ({ data: { username_css: "stale" } }) });
-    await pending;
+    await getProfileCustomization("user-1");
 
-    // The pre-edit response must not have repopulated the cache.
-    respondWith({ username_css: "fresh" });
-    const value = await getProfileCustomization("user-1");
-    expect(value?.username_css).toBe("fresh");
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });
@@ -184,11 +189,11 @@ describe("getProfileCustomization", () => {
 describe("clearCustomizationCache", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    clearCustomizationCache();
+    resetProfileSummaryLoader();
   });
 
-  it("clears specific user from cache", async () => {
-    respondWith({ username_css: null, profile_badge_text: null, profile_badge_css: null });
+  it("clears a specific user from cache", async () => {
+    respondWith([row({ username_css: null })]);
 
     await getProfileCustomization("user-1");
     clearCustomizationCache("user-1");
@@ -197,8 +202,8 @@ describe("clearCustomizationCache", () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("clears entire cache when no userId", async () => {
-    respondWith({ username_css: null, profile_badge_text: null, profile_badge_css: null });
+  it("clears the whole cache when no userId is given", async () => {
+    respondWith([row({ username_css: null })]);
 
     await getProfileCustomization("user-1");
     clearCustomizationCache();
@@ -211,52 +216,21 @@ describe("clearCustomizationCache", () => {
 describe("dispatchProfileCacheInvalidate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    clearCustomizationCache();
+    resetProfileSummaryLoader();
   });
 
-  it("dispatches the invalidate event and clears the customization cache", async () => {
-    respondWith({ username_css: null, profile_badge_text: null, profile_badge_css: null });
-
-    // Prime the cache for two users
-    await getProfileCustomization("user-1");
-    await getProfileCustomization("user-2");
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-
+  it("dispatches a scoped event and clears the cached entry", async () => {
+    respondWith([row({ username_css: null })]);
     const listener = vi.fn();
-    window.addEventListener("profile-cache:invalidate", listener);
-
-    dispatchProfileCacheInvalidate();
-
-    // Event broadcast so ProfileCacheContext / currentUserMeta also reset
-    expect(listener).toHaveBeenCalledTimes(1);
-    window.removeEventListener("profile-cache:invalidate", listener);
-
-    // Cache cleared → next call must refetch, not serve the old value
-    await getProfileCustomization("user-1");
-    expect(mockFetch).toHaveBeenCalledTimes(3);
-  });
-
-  it("scopes the event and cache clear to one user when given an id", async () => {
-    respondWith({ username_css: null, profile_badge_text: null, profile_badge_css: null });
+    window.addEventListener(PROFILE_CACHE_INVALIDATE_EVENT, listener);
 
     await getProfileCustomization("user-1");
-    await getProfileCustomization("user-2");
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-
-    const listener = vi.fn();
-    window.addEventListener("profile-cache:invalidate", listener);
-
-    // The server sends the changed user id with profile_updated; only that
-    // profile must be invalidated.
     dispatchProfileCacheInvalidate("user-1");
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({ userId: "user-1" });
-    window.removeEventListener("profile-cache:invalidate", listener);
+    const event = listener.mock.calls[0][0] as CustomEvent;
+    expect(event.detail).toEqual({ userId: "user-1" });
 
-    // user-1 evicted → refetch; user-2 stays cached (no request).
-    await getProfileCustomization("user-1");
-    await getProfileCustomization("user-2");
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    window.removeEventListener(PROFILE_CACHE_INVALIDATE_EVENT, listener);
   });
 });

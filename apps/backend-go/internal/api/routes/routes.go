@@ -471,6 +471,9 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 
 		// Public endpoints (no auth required)
 		rest.GET("/profiles", profilesHandler.GetProfiles)
+		// Batch display data for every author on a page: replaces the per-user
+		// profiles + user_roles + customization triple (the frontend N+1).
+		rest.GET("/profiles/summary", profilesHandler.GetProfileSummaries)
 		rest.GET("/profiles/:id", profilesHandler.GetProfile)
 		rest.GET("/boards", boardsHandler.GetBoards)
 		rest.GET("/boards/:id", boardsHandler.GetBoard)
