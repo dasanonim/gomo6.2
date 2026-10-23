@@ -14,12 +14,24 @@ import { toast } from "sonner";
 import { storageUrl, uploadFile } from "@/utils/storage";
 import { apiErrorMessage } from "@/utils/apiErrors";
 import { cn } from "@/lib/utils";
-import { Loader2, CheckCircle2, XCircle, Upload, Minus as MinusIcon, Globe, Lock } from "lucide-react";
+import { ChevronRight, Loader2, CheckCircle2, XCircle, Upload, Minus as MinusIcon, Globe, Lock } from "lucide-react";
 
 const RESERVED_SLUGS = [
   "b", "pol", "a", "v", "mu", "fit", "d", "tv", "co", "int",
   "rules", "faq", "bugs", "g", "tech", "meta", "admin", "mod", "news"
 ];
+
+/** Круг-статус чек-листа: галочка, когда условие выполнено. */
+const ReqDot = ({ ok }: { ok: boolean }) =>
+  ok ? (
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
+      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+    </span>
+  ) : (
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted">
+      <XCircle className="h-3.5 w-3.5 text-muted-foreground/70" />
+    </span>
+  );
 
 const SLUG_REGEX = /^[a-z0-9][a-z0-9_-]{1,24}$/;
 
@@ -305,6 +317,24 @@ const GomoSubCreate = () => {
               </p>
 
               <div className="mt-4 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setShowGuide(true)}
+                  data-testid="req-guide"
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-colors",
+                    guideRead ? "border-emerald-500/30 bg-emerald-500/[0.06]" : "border-border/60 bg-surface hover:bg-muted/40",
+                  )}
+                >
+                  <ReqDot ok={guideRead} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium leading-tight">Прочитать правила</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {guideRead ? "Отмечено прочитанным" : "Короткий свод правил платформы — тапни, чтобы открыть"}
+                    </span>
+                  </span>
+                  <ChevronRight aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+                </button>
                 {[
                   { ok: garmaOk, done: "10+ gармы", note: `Текущая gарма: ${garma}` },
                   { ok: ageOk, done: "Аккаунт старше 2 недель", note: profileCreatedAt ? `Создан: ${new Date(profileCreatedAt).toLocaleDateString()}` : "Нет данных" },
@@ -316,15 +346,7 @@ const GomoSubCreate = () => {
                       req.ok ? "border-emerald-500/30 bg-emerald-500/[0.06]" : "border-border/60 bg-surface",
                     )}
                   >
-                    {req.ok ? (
-                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                      </span>
-                    ) : (
-                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted">
-                        <XCircle className="h-3.5 w-3.5 text-muted-foreground" />
-                      </span>
-                    )}
+                    <ReqDot ok={req.ok} />
                     <div className="min-w-0">
                       <div className="text-sm font-medium leading-tight">{req.done}</div>
                       <div className="text-xs text-muted-foreground">{req.note}</div>
@@ -333,24 +355,20 @@ const GomoSubCreate = () => {
                 ))}
               </div>
 
-              <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center">
-                <Button
-                  onClick={() => setStep("form")}
-                  disabled={!canProceed}
-                  className="h-10 flex-1 rounded-full"
-                >
-                  {canProceed ? "Поехали" : "Правила пока не прочитаны"}
-                </Button>
-                <Button
-                  variant="outline"
-                  className="h-10 shrink-0 rounded-full"
-                  onClick={() => setShowGuide(true)}
-                >
-                  Прочитать правила
-                </Button>
-              </div>
+              {(() => {
+                const ready = guideRead;
+                return (
+                  <Button
+                    onClick={() => setStep("form")}
+                    disabled={!canProceed}
+                    className="mt-5 h-10 w-full rounded-full"
+                  >
+                    {ready ? "Поехали" : "Прочитай правила"}
+                  </Button>
+                );
+              })()}
               <div className="mt-3 text-center text-xs text-muted-foreground">
-                Или{" "}
+                Не создаю с нуля —{" "}
                 <button type="button" onClick={() => setShowImportDialog(true)} className="text-primary hover:underline inline-flex items-center gap-1">
                   <Upload className="h-3 w-3" />
                   импортировать саб из архива
@@ -571,16 +589,63 @@ const GomoSubCreate = () => {
       )}
 
       <Dialog open={showGuide} onOpenChange={setShowGuide}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Что такое g-саб</DialogTitle>
+        <DialogContent className="rounded-2xl border-border/60 bg-surface shadow-2xl sm:max-w-lg">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Правила перед созданием саба</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3 text-sm text-muted-foreground">
-            <p>g-саб напоминает доску и запись одновременно, но создается для крупного фандома или обсуждения конкретной темы.</p>
-            <p>Если тебе нужна отдельная тематическая зона с собственными правилами и тегами - g-саб это нужный формат.</p>
-            <Badge variant={guideRead ? "default" : "outline"} className="cursor-pointer" onClick={() => setGuideRead((prev) => !prev)}>
-              {guideRead ? "Прочитано" : "Отметить как прочитано"}
+          <div aria-hidden className="mx-auto h-1 w-10 rounded-full bg-muted-foreground/20" />
+          <div className="px-1">
+            <h2 className="text-lg font-bold tracking-tight">Правила перед созданием</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Короткий свод того, как живут сабы gomo6. Полные версии — по ссылке ниже.
+            </p>
+          </div>
+
+          <ul className="space-y-2.5 py-1">
+            {[
+              {
+                t: "Саб держится на своей теме",
+                n: "Это место сообщества, а не личная стена: держи обсуждения в рамках задуманной тематики.",
+              },
+              {
+                t: "Уважение — база",
+                n: "Разжигание, докопы, спам и попытки «раскачалок» банятся без уговоров.",
+              },
+              {
+                t: "18+ — только там, где разрешено",
+                n: "Возрастные границы соблюдаются жёстко: взрослый контент живёт исключительно в предназначенных для этого местах.",
+              },
+              {
+                t: "Правила саба не отменяют правила платформы",
+                n: "Владельцы задают свои правила, но они не могут противоречить правилам g6 или скрывать нарушения от модерации.",
+              },
+            ].map((rule, i) => (
+              <li key={i} className="flex gap-3 rounded-xl bg-muted/30 px-3.5 py-3">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">
+                  {i + 1}
+                </span>
+                <div>
+                  <div className="text-sm font-medium leading-tight">{rule.t}</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">{rule.n}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          <div className="flex items-center gap-2 pt-1">
+            <Badge
+              variant={guideRead ? "default" : "outline"}
+              className="h-9 flex-1 cursor-pointer justify-center transition-all hover:opacity-90"
+              onClick={() => setGuideRead((prev) => !prev)}
+            >
+              {guideRead ? "Прочитано" : "Отметить как прочитанное"}
             </Badge>
+            <Button variant="ghost" className="h-10 shrink-0 rounded-full" asChild>
+              <a href="/legal" target="_blank" rel="noopener noreferrer">
+                Все документы
+                <ChevronRight aria-hidden className="ml-1 h-3.5 w-3.5" />
+              </a>
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

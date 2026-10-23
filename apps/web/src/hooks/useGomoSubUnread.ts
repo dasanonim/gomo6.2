@@ -8,12 +8,20 @@ type ChannelActivity = { channel_id: string; last_activity_at: string };
 export const seenKey = (userId: string, channelId: string) =>
   `gomosub-seen:${userId}:${channelId}`;
 
+const readSeenStamp = (userId: string, channelId: string): string | null => {
+  try {
+    return localStorage.getItem(seenKey(userId, channelId));
+  } catch {
+    return null; // storage unavailable — no dot, no crash
+  }
+};
+
 /**
- * Unread state for the workspace sidebar: the server reports the last activity
- * of every readable channel (messages + threads); a row is unread when that
- * timestamp is newer than the viewer's last-seen record. Board calls
- * `markSeen(activeChannelId)` whenever the viewer opens a channel — dots are
- * best-effort cosmetics: any error just hides the dot, nothing crashes.
+ * Unread state for the workspace sidebar. The server reports the last activity
+ * of every readable channel (messages + threads); a row is unread while that
+ * timestamp is newer than the viewer's last-seen record — and no record at all
+ * means the channel was never opened. Board calls `markSeen(activeChannelId)`
+ * when the viewer opens a channel; any error just hides the dot.
  */
 export const useGomoSubUnread = (
   userId: string | null,
@@ -48,24 +56,22 @@ export const useGomoSubUnread = (
       } catch { /* dots are cosmetic — stay silent */ }
     };
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [userId, boardId, channels.length]);
 
   const unread = useMemo(() => {
     const set = new Set<string>();
-    if (!lastActivity || !userId) return set;
+    if (!lastActivity) return set;
     for (const [channelId, at] of lastActivity) {
-      let lastSeen: string | null = null;
-      try {
-        lastSeen = localStorage.getItem(seenKey(userId, channelId));
-      } catch { /* storage unavailable — no dot */ }
+      const lastSeen = userId ? readSeenStamp(userId, channelId) : null;
       if (!lastSeen || Date.parse(at) > Date.parse(lastSeen)) {
         set.add(channelId);
       }
     }
-    return set;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastActivity, userId, channels.length, seenVersion]);
+    return set; // seenVersion forces a re-check after markSeen
+  }, [lastActivity, userId, seenVersion]);
 
   const markSeen = useCallback(
     (channelId: string | null) => {
