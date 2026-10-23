@@ -125,22 +125,22 @@ export const GomoSubHeader = memo(
                 >
                   <Share2 className="w-4 h-4" />
                 </Button>
+                {/* The button is REAL from the first paint — no invisible ghost,
+                    no fade-in of the join slot. While membership is in flight
+                    it wears the joined look and disables itself; the trailing
+                    swap to «Вступить» (for non-members) is just text, and the
+                    whole card settles with its soft page-load spring. */}
                 <Button
-                  variant={isJoined ? "secondary" : "default"}
+                  variant={isJoined || membershipPending ? "secondary" : "default"}
                   onClick={onToggleJoin}
-                  className={membershipPending
-                    // Same footprint as the joined state — the row never shifts
-                    // when the membership response lands.
-                    ? "invisible h-9 px-4 text-sm border border-primary/35 bg-primary/12"
-                    : `h-9 px-4 text-sm ${isJoined
+                  className={`h-9 px-4 text-sm ${
+                    isJoined || membershipPending
                       ? "border border-primary/35 bg-primary/12 text-primary hover:bg-primary/20"
-                      : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
+                      : "bg-primary text-primary-foreground hover:bg-primary/90"
+                  }`}
                   disabled={membershipPending || membershipLoading || checkingRules}
                   aria-busy={membershipPending}
                 >
-                  {/* Ghost shows the JOINED content: only then does the slot's
-                      real width match the settled state, and "Поделиться" to
-                      its left never reflows when membership lands. */}
                   {(membershipPending || isJoined) ? (
                     <>
                       <UserCheck className="w-4 h-4 mr-2" />

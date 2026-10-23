@@ -24,7 +24,6 @@ import { Filter, X, MessageCircle, ArrowUpRight, BookOpenText, UserPlus, UserChe
 import { useSessionTime } from "@/hooks/useSessionTime";
 import { useProfileInvalidation } from "@/hooks/useProfileInvalidation";
 import { getCurrentUserMeta } from "@/utils/currentUserMeta";
-import { ThreadFeedSkeleton } from "@/components/skeletons/ContentSkeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { renderPreviewContent } from "@/utils/emojiUtils.tsx";
 import { renderTags } from "@/components/ThreadCard";
@@ -122,6 +121,11 @@ const Board = () => {
   const [authResolved, setAuthResolved] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [threadsLoading, setThreadsLoading] = useState(false);
+  // True only after the thread list actually returned for this board. The
+  // «Записей пока нет» empty state is gated on it: an intermediate commit
+  // (threads=[] while the fetch is still spinning up) must never paint the
+  // empty state — that was one of the entry races.
+  const [threadsSettled, setThreadsSettled] = useState(false);
   const [showAgeVerification, setShowAgeVerification] = useState(false);
   const [ageVerified, setAgeVerified] = useState(false);
   const [searchParams] = useSearchParams();
@@ -421,6 +425,7 @@ const Board = () => {
       setPageLoading(true);
       // Show a warm row for this slug if we have one (SWR), otherwise clear.
       setBoard(slug ? peekCached<Board>(boardBySlugUrl(slug)) ?? null : null);
+      setThreadsSettled(false);
       setThreads([]);
       setThreadsCursor(null);
       setHasMoreThreads(true);
@@ -558,6 +563,7 @@ const Board = () => {
     const boardChanged = prevBoardIdRef.current !== board.id;
     prevBoardIdRef.current = board.id;
     if (boardChanged) {
+      setThreadsSettled(false);
       setThreads([]);
       setThreadsCursor(null);
       setHasMoreThreads(true);
@@ -574,6 +580,7 @@ const Board = () => {
     const loadChannelThreads = async () => {
       setThreadsLoading(true);
       await loadThreadsRef.current(board.id, false, resolvedChannelId);
+      setThreadsSettled(true);
       setThreadsLoading(false);
     };
     loadChannelThreads();
@@ -998,18 +1005,11 @@ const Board = () => {
     invalidateByPrefix('/api/v1/boards');
   };
 
-  // Full-screen loader only on a genuinely cold board (no cached row). When the
-  // route preloader warmed it, the page paints immediately; the rules check
-  // (checkingRules) resolves behind the modal instead of blocking the page.
-  // Full-screen state only on a genuinely cold board (no cached row): the
-  // same skeleton as the feed, no spinner — the page paints into its final
-  // layout instead of flashing a loader first.
+  // Cold board (no cached row): paint the bare background — no fake post
+  // skeleton, no loaders. The route preloader makes this state rare; a blank
+  // frame is quieter than skeleton → empty → pills → posts churn.
   if (!board) {
-    return (
-      <div className="bg-background min-h-screen px-3 pt-6 sm:px-5">
-        <ThreadFeedSkeleton count={4} />
-      </div>
-    );
+    return <div className="bg-background min-h-screen" />;
   }
 
   if (privateAccessDenied) {
@@ -1630,16 +1630,12 @@ const Board = () => {
                   />
                 ) : (
                 <>
-                {/* Thread content — same as non-gomosub version below */}
-                {pageLoading ? (
-                  <ThreadFeedSkeleton count={5} />
-                ) : (
+                {/* Thread content — same as non-gomosub version below.
+                    Warm entry shows NOTHING while loading: no fake-post
+                    skeleton, no loading pills, no mid-flight empty state.
+                    The list simply appears (cascade) when ready. */}
+                {pageLoading ? null : (
                   <>
-                    {threadsLoading && (
-                      <div className="flex justify-center py-2">
-                        <Skeleton className="h-5 w-28 rounded-full" />
-                      </div>
-                    )}
                 {!isTextChannel && (
                   <div className={isTextChannel ? undefined : "space-y-2"}>
                     {threads.map((thread, index) => {
@@ -1685,7 +1681,7 @@ const Board = () => {
                 )}
               </div>
 
-              {!isTextChannel && threads.length === 0 && !pageLoading && !threadsLoading && (
+              {!isTextChannel && threads.length === 0 && threadsSettled && !pageLoading && !threadsLoading && (
                 <div className="text-center text-muted-foreground p-8">
                   Записей пока нет. Будьте первым!
                 </div>
@@ -1880,40 +1876,8 @@ const Board = () => {
 
 
         <div className="space-y-2 relative">
-          {pageLoading ? (
+          {pageLoading ? null : (
             <>
-              {/* Placeholder threads with blur */}
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div
-                  key={`placeholder-${i}`}
-                  className="block border border-border bg-surface p-2 sm:p-3 opacity-60 blur-sm pointer-events-none"
-                >
-                  <div className="relative flex items-start gap-3 min-h-[80px] sm:min-h-[100px]">
-                    <div className="w-16 h-16 sm:w-20 sm:h-20 bg-muted rounded flex-shrink-0" />
-                    <div className="flex-shrink-0 max-w-[200px] sm:max-w-[250px]">
-                      <div className="h-5 bg-muted rounded mb-2 w-full" />
-                      <div className="h-3 bg-muted rounded w-1/2" />
-                    </div>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="h-3 bg-muted rounded w-1/2" />
-                    </div>
-                    <div className="absolute bottom-2 right-2">
-                      <div className="h-3 bg-muted rounded w-8" />
-                    </div>
-                    <div className="absolute top-2 right-2">
-                      <div className="w-6 h-6 bg-muted rounded-full" />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </>
-          ) : (
-            <>
-            {threadsLoading && (
-              <div className="flex justify-center py-2">
-                <Skeleton className="h-5 w-28 rounded-full" />
-              </div>
-            )}
                     {threads.map((thread) => (
                       isGomoRoute ? (
                 <Card key={thread.id} className="border-border/70 bg-card/95 p-0 overflow-hidden hover:border-primary/35 transition-colors rounded-xl">
@@ -2161,7 +2125,7 @@ const Board = () => {
           )}
         </div>
 
-        {threads.length === 0 && !pageLoading && !threadsLoading && (
+        {threads.length === 0 && threadsSettled && !pageLoading && !threadsLoading && (
           <div className="text-center text-muted-foreground p-8">
             Записей пока нет. Будьте первым!
           </div>
