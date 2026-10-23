@@ -604,6 +604,28 @@ function InterfaceView({ appearance }: { appearance: AppearanceSettings }) {
 
   return (
     <div className="space-y-5">
+      {/* Top of the tab, on its own card: the global motion switch. Exactly two
+          positions — animated (default) or a hard motion-off that behaves like
+          prefers-reduced-motion for the whole site. Old saved styles map to
+          «Есть анимации», so no one loses the setting. */}
+      <SettingGroup divided={false}>
+        <SettingBlock id="set-transitions" title={t("settings2.transitions")} description={t("settings2.transitionsDesc")} icon={Blend}>
+          <Segmented
+            aria-label={t("settings2.transitions")}
+            value={transitionStyle}
+            onChange={setTransitionStyle}
+            options={TRANSITION_STYLES.map((style) => ({
+              value: style.id,
+              label: style.label,
+              icon: style.id === "fade" ? Sparkles : CircleSlash,
+            }))}
+          />
+          <p className="mt-2 text-xs text-muted-foreground" role="note">
+            {TRANSITION_STYLES.find((style) => style.id === transitionStyle)?.description}
+          </p>
+        </SettingBlock>
+      </SettingGroup>
+
       <SettingGroup divided={false}>
         <SettingBlock id="set-header" title={t("settings2.headerBehavior")} description={t("settings2.headerBehaviorDesc")} icon={PanelTop}>
           <div className="grid gap-3 sm:grid-cols-2" onKeyDown={handleNavArrowKeys}>
@@ -634,25 +656,6 @@ function InterfaceView({ appearance }: { appearance: AppearanceSettings }) {
             ))}
           </div>
         </SettingBlock>
-
-        {/* Exactly two positions: animated (default) or a hard motion-off
-            that behaves like prefers-reduced-motion for the whole site. Old
-            saved styles map to «Есть анимации», so no one loses the setting. */}
-        <SettingBlock id="set-transitions" title={t("settings2.transitions")} description={t("settings2.transitionsDesc")} icon={Blend}>
-          <Segmented
-            aria-label={t("settings2.transitions")}
-            value={transitionStyle}
-            onChange={setTransitionStyle}
-            options={TRANSITION_STYLES.map((style) => ({
-              value: style.id,
-              label: style.label,
-              icon: style.id === "fade" ? Sparkles : CircleSlash,
-            }))}
-          />
-          <p className="mt-2 text-xs text-muted-foreground" role="note">
-            {TRANSITION_STYLES.find((style) => style.id === transitionStyle)?.description}
-          </p>
-        </SettingBlock>
       </SettingGroup>
 
       <SettingGroup divided={false}>
@@ -682,7 +685,10 @@ function InterfaceView({ appearance }: { appearance: AppearanceSettings }) {
             ))}
           </div>
         </SettingBlock>
+      </SettingGroup>
 
+      {/* Media on its own card, right under the content-style controls. */}
+      <SettingGroup divided={false}>
         <SettingRow
           className={rowClass}
           id="set-autoplay"
