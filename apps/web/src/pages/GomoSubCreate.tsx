@@ -19,7 +19,9 @@ import { ChevronRight, Loader2, CheckCircle2, XCircle, Upload, Minus as MinusIco
 
 const RESERVED_SLUGS = [
   "b", "pol", "a", "v", "mu", "fit", "d", "tv", "co", "int",
-  "rules", "faq", "bugs", "g", "tech", "meta", "admin", "mod", "news"
+  "rules", "faq", "bugs", "g", "tech", "meta", "admin", "mod", "news",
+  // Известные название/инфраструктура проекта и служебные роуты:
+  "create", "test", "g6", "gomo6", "gomo", "dev", "docs", "help", "api",
 ];
 
 /** Круг-статус чек-листа: галочка, когда условие выполнено. */

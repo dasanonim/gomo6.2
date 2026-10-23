@@ -136,6 +136,8 @@ const SLUG_REGEX = /^[a-z0-9][a-z0-9_-]{1,24}$/;
 const RESERVED_SLUGS = [
   "b", "pol", "a", "v", "mu", "fit", "d", "tv", "co", "int",
   "rules", "faq", "bugs", "g", "tech", "meta", "admin", "mod", "news",
+  // Известные название/инфраструктура проекта и служебные роуты:
+  "create", "test", "g6", "gomo6", "gomo", "dev", "docs", "help", "api",
 ];
 
 /** Rough latinization so a Russian name still auto-suggests a usable slug. */
