@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
 import {
   Blend,
+  CircleSlash,
   Clock,
   Dices,
   Globe,
@@ -14,6 +15,7 @@ import {
   Palette,
   PanelTop,
   PlayCircle,
+  Rows3,
   RotateCcw,
   Search,
   Send,
@@ -21,6 +23,8 @@ import {
   Star,
   Sun,
   Type,
+  Users,
+  Wifi,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -117,6 +121,17 @@ const MODE_OPTIONS: Array<{ value: ThemeModePref; labelKey: string; icon: typeof
   { value: "light", labelKey: "settings2.modeLight", icon: Sun },
   { value: "dark", labelKey: "settings2.modeDark", icon: Moon },
   { value: "system", labelKey: "settings2.modeSystem", icon: Monitor },
+];
+
+const AUTOPLAY_OPTIONS = [
+  { value: "always" as const, icon: PlayCircle, labelKey: "settings.autoplayAlways" },
+  { value: "wifi" as const, icon: Wifi, labelKey: "settings.autoplayWifi" },
+  { value: "never" as const, icon: CircleSlash, labelKey: "settings.autoplayNever" },
+];
+
+const PROFILE_VIEW_OPTIONS = [
+  { value: "social" as const, icon: Users, labelKey: "settings2.profileViewSocial" },
+  { value: "forum" as const, icon: Rows3, labelKey: "settings2.profileViewForum" },
 ];
 
 /** Favourites, kept in sync across tabs and with the picker. */
@@ -385,6 +400,7 @@ function ThemesView({
             aria-label={t("settings.darkMode")}
             value={modePref}
             onChange={setModePref}
+            compactMobile
             options={MODE_OPTIONS.map((option) => ({ value: option.value, label: t(option.labelKey), icon: option.icon }))}
           />
         </SettingRow>
@@ -687,11 +703,8 @@ function InterfaceView({ appearance }: { appearance: AppearanceSettings }) {
             aria-label={t("settings.autoplayMedia")}
             value={autoplayMode}
             onChange={setAutoplayMode}
-            options={[
-              { value: "always", label: t("settings.autoplayAlways") },
-              { value: "wifi", label: t("settings.autoplayWifi") },
-              { value: "never", label: t("settings.autoplayNever") },
-            ]}
+            compactMobile
+            options={AUTOPLAY_OPTIONS.map((option) => ({ value: option.value, label: t(option.labelKey), icon: option.icon }))}
           />
         </SettingRow>
       </SettingGroup>
@@ -709,10 +722,8 @@ function InterfaceView({ appearance }: { appearance: AppearanceSettings }) {
             aria-label={t("settings2.profileDefaultView")}
             value={profileViewMode}
             onChange={setProfileViewMode}
-            options={[
-              { value: "social", label: t("settings2.profileViewSocial") },
-              { value: "forum", label: t("settings2.profileViewForum") },
-            ]}
+            compactMobile
+            options={PROFILE_VIEW_OPTIONS.map((option) => ({ value: option.value, label: t(option.labelKey), icon: option.icon }))}
           />
         </SettingRow>
       </SettingGroup>
