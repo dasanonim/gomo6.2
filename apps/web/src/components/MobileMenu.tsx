@@ -19,6 +19,7 @@ import {
   History,
   Home,
   X,
+  Settings,
 } from "lucide-react";
 import { toast } from "sonner";
 import { HeaderUsername } from "@/components/HeaderUsername";
@@ -413,6 +414,14 @@ export const MobileMenu = ({ user, isModerator }: MobileMenuProps) => {
                 ))
               )}
             </div>
+
+            {/* Настройки — на мобилке живут в бургер-панели, из хедера */}
+            <NavigationLink to="/settings" onClick={() => setOpen(false)} className="block">
+              <Button variant="ghost" className="w-full justify-start relative group hover:translate-x-0.5 transition-transform duration-200 !hover:bg-primary/10 !hover:text-primary">
+                <Settings className="w-4 h-4 mr-2" />
+                {t('nav.settings')}
+              </Button>
+            </NavigationLink>
 
             {/* Drops */}
             {dropsData && (
