@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useParams, useNavigate, useSearchParams, Navigate, useLocation } from "react-router-dom";
+import { motion, useReducedMotion } from "motion/react";
 import { NavigationLink } from "@/components/NavigationLink";
 import { api } from "@/integrations/api/compat";
 import { apiClient } from "@/integrations/api/client";
@@ -19,7 +20,7 @@ import { storageUrl } from "@/utils/storage";
 import { CONTENT_TAGS, FORMAT_TAGS, ATMOSPHERE_TAGS, FLAG_TAGS } from "@/constants/tags";
 import { UserBadge } from "@/components/UserBadge";
 import { AgeVerification } from "@/components/AgeVerification";
-import { Filter, X, MessageCircle, ArrowUpRight, BookOpenText, UserPlus, UserCheck, Plus, Share2, ChevronLeft, ChevronRight, ChevronDown, Hash, Lock, MessageSquare, Settings } from "lucide-react";
+import { Filter, X, MessageCircle, ArrowUpRight, BookOpenText, UserPlus, UserCheck, Plus, Share2, ChevronLeft, ChevronRight, ChevronDown, Hash, Lock, Settings } from "lucide-react";
 import { useSessionTime } from "@/hooks/useSessionTime";
 import { useProfileInvalidation } from "@/hooks/useProfileInvalidation";
 import { getCurrentUserMeta } from "@/utils/currentUserMeta";
@@ -41,6 +42,7 @@ import {
   type ChannelRow as Channel,
 } from "@/routes/data/boardData";
 import { getDirectoryMemberCount } from "@/routes/data/gomosubData";
+import { STREAM_CASCADE_VARIANTS, STREAM_ITEM_VARIANTS } from "@/lib/motion";
 import { GomoSubHeader } from "@/components/gomosub/GomoSubHeader";
 import { GomoSubChannelsList } from "@/components/gomosub/GomoSubChannelsList";
 import { useGomoSubUnread } from "@/hooks/useGomoSubUnread";
@@ -803,6 +805,13 @@ const Board = () => {
   }, []);
 
   const { unread, markSeen } = useGomoSubUnread(user?.id ?? null, board?.id ?? null, channels);
+
+  // Same entrance language as the feed: one lift+scale cascade on the first
+  // thread list paint, never re-run on channel switches / paginated updates.
+  const prefersReducedMotion = useReducedMotion();
+  const didAnimateRef = useRef(false);
+  const workspaceCascade =
+    Boolean(board?.is_gomosub) && threads.length > 0 && !prefersReducedMotion && !didAnimateRef.current;
 
   // Opened a channel → its unread dot clears at once.
   useEffect(() => {
@@ -1610,21 +1619,40 @@ const Board = () => {
                         <PentagramLoader size="sm" />
                       </div>
                     )}
-                    {threads.map((thread) => (
-                      <GomoThreadCard
-                        key={thread.id}
-                        thread={thread}
-                        currentUserId={user?.id ?? null}
-                        currentUsername={currentUsername}
-                        currentUserColor={currentUserColor}
-                        boardPath={`${pathPrefix}/${slug}${channelSlug ? `/c/${channelSlug}` : ""}`}
-                        sourceLabel={activeChannelName || board?.name || undefined}
-                        onImageClick={(items, idx) => {
-                          setGalleryItems(items);
-                          setGalleryIndex(idx);
-                        }}
-                      />
-                    ))}
+                {!isTextChannel && (
+                  <motion.div
+                    className={isTextChannel ? undefined : "space-y-2"}
+                    variants={workspaceCascade ? STREAM_CASCADE_VARIANTS : undefined}
+                    initial={workspaceCascade ? "hidden" : false}
+                    animate={workspaceCascade ? "show" : undefined}
+                    onAnimationComplete={() => { didAnimateRef.current = true; }}
+                  >
+                    {threads.map((thread, index) => {
+                      const card = (
+                        <GomoThreadCard
+                          thread={thread}
+                          currentUserId={user?.id ?? null}
+                          currentUsername={currentUsername}
+                          currentUserColor={currentUserColor}
+                          boardPath={`${pathPrefix}/${slug}${channelSlug ? `/c/${channelSlug}` : ""}`}
+                          sourceLabel={activeChannelName || board?.name || undefined}
+                          onImageClick={(items, idx) => {
+                            setGalleryItems(items);
+                            setGalleryIndex(idx);
+                          }}
+                        />
+                      );
+                      if (workspaceCascade && index < 6) {
+                        return (
+                          <motion.div key={thread.id} variants={STREAM_ITEM_VARIANTS} data-motion="cascade-row">
+                            {card}
+                          </motion.div>
+                        );
+                      }
+                      return <div key={thread.id}>{card}</div>;
+                    })}
+                  </motion.div>
+                )}
                   </>
                 )}
                 </>

@@ -3,12 +3,14 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { invalidateByPrefix } from "@/integrations/api/queryCache";
 import { api } from "@/integrations/api/compat";
 import { X, Search, Plus, ArrowUpDown, ChevronDown, Check } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NavigationLink } from "@/components/NavigationLink";
 import { storageUrl } from "@/utils/storage";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { STREAM_CASCADE_VARIANTS, STREAM_ITEM_VARIANTS } from "@/lib/motion";
 import { GomoSubCard } from "@/components/gomosub/GomoSubCard";
 import { cn } from "@/lib/utils";
 import { useCachedQuery } from "@/hooks/useCachedQuery";
@@ -22,6 +24,9 @@ import {
 
 type ViewTab = "all" | "mine";
 type SortKey = "popular" | "new" | "alpha";
+
+/** Cards animated on entry — the visible first rows of the grid. */
+const INITIAL_CASCADE_LIMIT = 9;
 
 const SORTS: { key: SortKey; label: string }[] = [
   { key: "popular", label: "Популярные" },
@@ -144,6 +149,14 @@ const GomoSubs = () => {
   const mine = useMemo(() => subs.filter((sub) => isJoined(sub)), [subs, isJoined]);
 
   const hasQuery = Boolean(q);
+
+  // Telegram-style lift+scale cascade: only once, when the first real data
+  // lands (same latch pattern as the feed / conversation list). Search changes
+  // afterwards must not re-cascade.
+  const prefersReducedMotion = useReducedMotion();
+  const didAnimateRef = useRef(false);
+  const runInitialCascade =
+    subsData !== undefined && subs.length > 0 && !prefersReducedMotion && !didAnimateRef.current;
 
   return (
     <div className="max-w-6xl mx-auto w-full px-3 sm:px-5">
@@ -310,18 +323,31 @@ const GomoSubs = () => {
             </div>
           </div>
         ) : (
-          <div>
-            <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
-              {filtered.map((sub) => (
+          <motion.div
+            className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3"
+            variants={runInitialCascade ? STREAM_CASCADE_VARIANTS : undefined}
+            initial={runInitialCascade ? "hidden" : false}
+            animate={runInitialCascade ? "show" : undefined}
+            onAnimationComplete={() => { didAnimateRef.current = true; }}
+          >
+            {filtered.map((sub, index) => {
+              const card = (
                 <GomoSubCard
-                  key={sub.id}
                   sub={{ ...sub, joined: isJoined(sub) }}
                   isToggling={togglingId === sub.id}
                   onToggleJoin={toggleMembership}
                 />
-              ))}
-            </div>
-          </div>
+              );
+              if (runInitialCascade && index < INITIAL_CASCADE_LIMIT) {
+                return (
+                  <motion.div key={sub.id} variants={STREAM_ITEM_VARIANTS} data-motion="cascade-row">
+                    {card}
+                  </motion.div>
+                );
+              }
+              return <div key={sub.id}>{card}</div>;
+            })}
+          </motion.div>
         )}
       </main>
     </div>
