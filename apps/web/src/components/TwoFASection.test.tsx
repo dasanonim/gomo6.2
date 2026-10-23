@@ -100,7 +100,7 @@ describe("TwoFASection", () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(screen.getByText("❌ 2FA отключена")).toBeInTheDocument();
+      expect(screen.getByText("2FA отключена")).toBeInTheDocument();
     });
     expect(
       screen.getByText("Добавьте дополнительный уровень защиты"),
@@ -120,7 +120,7 @@ describe("TwoFASection", () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(screen.getByText("✅ 2FA включена")).toBeInTheDocument();
+      expect(screen.getByText("2FA включена")).toBeInTheDocument();
     });
     expect(
       screen.getByText("При входе потребуется код из аутентификатора"),
@@ -141,7 +141,7 @@ describe("TwoFASection", () => {
 
     await waitFor(() => {
       // Should show the main UI (not loading), default to disabled
-      expect(screen.getByText("❌ 2FA отключена")).toBeInTheDocument();
+      expect(screen.getByText("2FA отключена")).toBeInTheDocument();
     });
     expect(consoleSpy).toHaveBeenCalledWith(
       "Failed to load 2FA status:",
@@ -440,7 +440,7 @@ describe("TwoFASection", () => {
     await userEvent.click(screen.getByText("Закрыть"));
 
     await waitFor(() => {
-      expect(screen.getByText("✅ 2FA включена")).toBeInTheDocument();
+      expect(screen.getByText("2FA включена")).toBeInTheDocument();
     });
   });
 
@@ -455,7 +455,7 @@ describe("TwoFASection", () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(screen.getByText("✅ 2FA включена")).toBeInTheDocument();
+      expect(screen.getByText("2FA включена")).toBeInTheDocument();
     });
 
     await userEvent.click(screen.getByText("Отключить"));
@@ -479,7 +479,7 @@ describe("TwoFASection", () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(screen.getByText("✅ 2FA включена")).toBeInTheDocument();
+      expect(screen.getByText("2FA включена")).toBeInTheDocument();
     });
 
     await userEvent.click(screen.getByText("Отключить"));
@@ -494,7 +494,7 @@ describe("TwoFASection", () => {
     expect(mockDisableTOTP).toHaveBeenCalledWith("123456");
 
     await waitFor(() => {
-      expect(screen.getByText("❌ 2FA отключена")).toBeInTheDocument();
+      expect(screen.getByText("2FA отключена")).toBeInTheDocument();
     });
     expect(toast.success).toHaveBeenCalledWith("2FA отключена");
   });
@@ -508,7 +508,7 @@ describe("TwoFASection", () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(screen.getByText("✅ 2FA включена")).toBeInTheDocument();
+      expect(screen.getByText("2FA включена")).toBeInTheDocument();
     });
 
     await userEvent.click(screen.getByText("Отключить"));
@@ -516,7 +516,7 @@ describe("TwoFASection", () => {
 
     expect(mockDisableTOTP).not.toHaveBeenCalled();
     // Should still show enabled state
-    expect(screen.getByText("✅ 2FA включена")).toBeInTheDocument();
+    expect(screen.getByText("2FA включена")).toBeInTheDocument();
   });
 
   it("shows error toast when disable fails", async () => {
@@ -529,7 +529,7 @@ describe("TwoFASection", () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(screen.getByText("✅ 2FA включена")).toBeInTheDocument();
+      expect(screen.getByText("2FA включена")).toBeInTheDocument();
     });
 
     await userEvent.click(screen.getByText("Отключить"));
@@ -564,7 +564,7 @@ describe("TwoFASection", () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(screen.getByText("❌ 2FA отключена")).toBeInTheDocument();
+      expect(screen.getByText("2FA отключена")).toBeInTheDocument();
       expect(screen.getByText("Включить 2FA")).toBeInTheDocument();
     });
 

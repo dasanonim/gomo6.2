@@ -244,7 +244,7 @@ export const TwoFASection = ({ userId }: TwoFASectionProps) => {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-medium">
-            {isEnabled ? "✅ 2FA включена" : "❌ 2FA отключена"}
+            2FA {isEnabled ? "включена" : "отключена"}
           </p>
           <p className="text-xs text-muted-foreground mt-1">
             {isEnabled
