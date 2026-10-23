@@ -11,10 +11,11 @@ import { PentagramLoader } from "@/components/PentagramLoader";
 /**
  * The bell and its preview panel.
  *
- * Hover opens the panel, but it closes ONLY on an outside click (or Escape):
- * the old auto-close on mouse-leave made the list impossible to scroll. The
- * panel shows the whole loaded history and pulls older pages as its list nears
- * the end, so it is usable as a lightweight inbox, not just the last handful.
+ * Hover opens the panel; the cursor LEAVING the bell-or-panel zone closes it
+ * after a short grace delay (the timer bridges the dead gap between the
+ * button and the floating panel, and lets the mouse trip over the edge
+ * without killing the panel). Outside click + Escape still close it too, so
+ * keyboard and touch users are not stranded.
  */
 export const NotificationBell = ({ userId }: { userId: string }) => {
   const { t } = useTranslation();
@@ -29,6 +30,21 @@ export const NotificationBell = ({ userId }: { userId: string }) => {
   const [canHover, setCanHover] = useState(true);
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelScheduledClose = useCallback(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleClose = useCallback(() => {
+    cancelScheduledClose();
+    closeTimerRef.current = setTimeout(() => setShowCard(false), 160);
+  }, [cancelScheduledClose]);
+
+  useEffect(() => cancelScheduledClose, [cancelScheduledClose]);
 
   const notifications = useNotificationStore((s) => s.notifications);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
@@ -73,17 +89,25 @@ export const NotificationBell = ({ userId }: { userId: string }) => {
   }, [showCard]);
 
   // Pull older notifications as the panel's list approaches the bottom.
+  const listScrollContext = useRef({ hasMore, isLoadingMore, fetchMore });
+  listScrollContext.current = { hasMore, isLoadingMore, fetchMore };
   const onListScroll = useCallback(() => {
+    const { hasMore, isLoadingMore, fetchMore } = listScrollContext.current;
     const el = listRef.current;
     if (!el || !hasMore || isLoadingMore) return;
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 96) void fetchMore();
-  }, [hasMore, isLoadingMore, fetchMore]);
+  }, []);
 
   return (
     <div
       className="relative"
       ref={rootRef}
-      onMouseEnter={canHover && !onNotificationsPage ? () => setShowCard(true) : undefined}
+      onMouseEnter={
+        canHover && !onNotificationsPage
+          ? () => { cancelScheduledClose(); setShowCard(true); }
+          : undefined
+      }
+      onMouseLeave={canHover && !onNotificationsPage ? scheduleClose : undefined}
     >
       <Button
         variant="ghost"

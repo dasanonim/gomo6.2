@@ -63,19 +63,30 @@ describe("NotificationBell", () => {
     vi.unstubAllGlobals();
   });
 
-  it("opens on hover, shows the whole loaded list, and stays open on leave", () => {
+  it("stays open on leave for the grace delay, then closes — unless the cursor returns", () => {
     mockStore.notifications = Array.from({ length: 12 }, (_, i) => ({ id: `n${i}` }));
+    vi.useFakeTimers();
     renderBell();
 
     const bell = screen.getByRole("button");
     fireEvent.mouseOver(bell);
-
     expect(screen.getAllByTestId("notif-row")).toHaveLength(12);
 
-    // Moving the pointer away must NOT close the panel — that auto-close is
-    // what made the list impossible to scroll.
+    // The cursor can trip over the edge / gap between button and panel: the
+    // close is delayed, and re-entering cancels it.
     fireEvent.mouseLeave(bell.parentElement!);
+    fireEvent.mouseOver(bell);
+    act(() => { vi.advanceTimersByTime(500); });
     expect(screen.getAllByTestId("notif-row")).toHaveLength(12);
+
+    // Leaving for real (no re-entry) closes the panel after the grace delay.
+    fireEvent.mouseLeave(bell.parentElement!);
+    act(() => { vi.advanceTimersByTime(100); });
+    expect(screen.getAllByTestId("notif-row")).toHaveLength(12);
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(screen.queryByTestId("notif-row")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
   });
 
   it("closes on an outside click", () => {
