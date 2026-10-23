@@ -536,13 +536,26 @@ const Board = () => {
     loadBoard();
   }, [slug, user, isGomoRoute, authResolved]);
 
+  // Opening a gomosub by bare slug used to fetch threads with `channel_id=is.null`,
+  // i.e. only channel-less posts — most subs looked empty until a channel was
+  // picked. Entering a sub now lands on its first channel (Discord behaviour).
+  useEffect(() => {
+    if (!isGomoRoute || channelSlug || !slug) return;
+    if (channels.length === 0) return;
+    // Prefer a forum channel: records live there, while `text` channels are
+    // live chats that would greet the user with an empty composer instead.
+    const first = channels.find((ch) => ch.kind === "forum") ?? channels[0];
+    navigate(`/g/${slug}/c/${first.slug}`, { replace: true });
+  }, [isGomoRoute, channelSlug, slug, channels, navigate]);
+
   // Thread load: runs when board is ready and channelSlug/board.id changes
   // This is SEPARATE from board load so switching channels is instant
   useEffect(() => {
     if (!board) return;
     if (board.slug === 'd' && !ageVerified && !isGomoRoute) return;
-    // Don't load threads until channels are resolved (avoids double fetch)
-    if (isGomoRoute && channels.length === 0) return;
+    // Don't load threads until channels are resolved (avoids double fetch),
+    // and skip the dead channel-less fetch right before the auto-redirect.
+    if (isGomoRoute && (channels.length === 0 || (!channelSlug && channels.length > 0))) return;
 
     setThreads([]);
     setThreadsCursor(null);

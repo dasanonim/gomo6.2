@@ -1332,7 +1332,13 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
               </Button>
             </NavigationLink>
             {user && <NotificationBell userId={user.id} />}
-            {user && <ChatIcon userId={user.id} />}
+            {/* Messenger lives in the bottom nav on phones — keep the header
+                one for desktop only to avoid two identical entry points. */}
+            {user && (
+              <div className="hidden lg:block">
+                <ChatIcon userId={user.id} />
+              </div>
+            )}
             {user && (
               <div className="hidden lg:flex gap-1 sm:gap-2 items-center ml-2">
                 <HeaderUsername userId={user.id} />

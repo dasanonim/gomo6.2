@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { NavigationLink } from "@/components/NavigationLink";
 import { storageUrl } from "@/utils/storage";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { STREAM_CASCADE_VARIANTS, STREAM_ITEM_VARIANTS } from "@/lib/motion";
+import { STREAM_CASCADE_VARIANTS, STREAM_ITEM_VARIANTS, springFor } from "@/lib/motion";
 import { GomoSubCard } from "@/components/gomosub/GomoSubCard";
 import { cn } from "@/lib/utils";
 import { useCachedQuery } from "@/hooks/useCachedQuery";
@@ -188,19 +188,32 @@ const GomoSubs = () => {
               )}
             </div>
             {userId && (
-              <div className="shrink-0 rounded-full border border-border/50 bg-surface p-0.5">
+              <div className="grid shrink-0 grid-cols-2 rounded-full border border-border/50 bg-surface p-0.5" role="tablist" aria-label="Фильтр сообществ">
                 {(["all", "mine"] as const).map((t) => (
                   <button
                     key={t}
+                    role="tab"
+                    aria-selected={tab === t}
                     onClick={() => setQueryState({ tab: t })}
-                    className={cn(
-                      "h-9 rounded-full px-3.5 text-sm transition-colors",
-                      tab === t
-                        ? "bg-primary font-medium text-primary-foreground"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
+                    className="relative h-9 rounded-full px-3.5 text-sm"
                   >
-                    {t === "all" ? "Все" : "Мои"}
+                    {/* Telegram-style thumb: one shared layoutId element slides
+                        and morphs between the two labels instead of two fades. */}
+                    {tab === t && (
+                      <motion.span
+                        layoutId="gomosub-view-thumb"
+                        className="absolute inset-0 rounded-full bg-primary"
+                        transition={springFor("snappy", prefersReducedMotion)}
+                      />
+                    )}
+                    <span
+                      className={cn(
+                        "relative z-10 transition-colors duration-200",
+                        tab === t ? "font-medium text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {t === "all" ? "Все" : "Мои"}
+                    </span>
                   </button>
                 ))}
               </div>

@@ -223,6 +223,13 @@ export function MobileBottomNav({ user }: MobileBottomNavProps) {
               }
               className={`mobile-bottom-nav__item${isActive ? " is-active" : ""}`}
               onDragStart={(event) => event.preventDefault()}
+              onClick={(event) => {
+                // Re-tapping the active tab goes to its root: /g/foo → /g,
+                // /messages/123 → /messages, profile subpage → own profile.
+                if (id !== activeTab) return;
+                event.preventDefault();
+                navigate(to);
+              }}
             >
               <span className="mobile-bottom-nav__icon-wrap">
                 {isProfile && user?.avatar_url ? (

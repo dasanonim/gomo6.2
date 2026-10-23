@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion, animate } from "motion/react";
+import { springFor } from "@/lib/motion";
 import { useTranslation } from "react-i18next";
 import { api } from "@/integrations/api/compat";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -356,9 +357,7 @@ export const GomoSubCreateWizard = ({ open, onOpenChange, onSubmit }: WizardProp
       if (from === 0) return;
       // Spring back to its place; pointer velocity carries the flick.
       d.spring = animate(from, 0, {
-        type: "spring",
-        stiffness: 280,
-        damping: 20,
+        ...springFor("composer", reduce),
         velocity: d.velocity,
         onUpdate: setSheetOffset,
       });
