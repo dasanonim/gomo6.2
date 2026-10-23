@@ -16,7 +16,7 @@ func TestGetGomoSubsDirectory_Success(t *testing.T) {
 	h, mock := setupRPCHandler(t)
 
 	mock.ExpectQuery(`(?s)SELECT b\.id.*FROM boards b WHERE b\.is_gomosub = true AND b\.visibility = 'public'.*`).
-		WithArgs(nil).
+		WithArgs(nil, 200).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "slug", "name", "description", "cover_image_url",
 			"gomosub_avatar_url", "gomosub_tags", "visibility", "created_at",
@@ -63,7 +63,7 @@ func TestGetGomoSubsDirectory_DBError(t *testing.T) {
 	h, mock := setupRPCHandler(t)
 
 	mock.ExpectQuery(`(?s)SELECT b\.id.*FROM boards b.*`).
-		WithArgs(nil).
+		WithArgs(nil, 200).
 		WillReturnError(sqlmock.ErrCancelled)
 
 	c, w := testutil.NewRPCGETContext(map[string]string{})

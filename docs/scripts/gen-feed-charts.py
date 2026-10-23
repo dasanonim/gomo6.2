@@ -70,6 +70,7 @@ def main() -> None:
             ("conversations", 2, 1),
             ("auth/me", 2, 1),
             ("notifications", 2, 1),
+            ("membership", 3, 1),
         ],
         4,
         before_total="44",

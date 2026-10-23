@@ -5,6 +5,7 @@ import { NavigationLink } from "@/components/NavigationLink";
 import { api } from "@/integrations/api/compat";
 import { apiClient } from "@/integrations/api/client";
 import { invalidateByPrefix, peekCached } from "@/integrations/api/queryCache";
+import { getMyGomosubMembership, invalidateGomosubMembership } from "@/utils/gomosubMembership";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -204,13 +205,11 @@ const Board = () => {
         // Fetch user's membership and channel_permissions
         const privateChannelIds = channelsData.filter((ch) => ch.is_private).map((ch) => ch.id);
         if (privateChannelIds.length > 0) {
-          const [membershipRes, permissionsRes] = await Promise.all([
-            fetch(`/api/v1/gomosub_memberships?board_id=eq.${boardId}&user_id=eq.${user.id}`),
+          const [membership, permissionsRes] = await Promise.all([
+            getMyGomosubMembership(boardId, user.id),
             fetch(`/api/v1/channel_permissions?channel_id=in.(${privateChannelIds.join(",")})`),
           ]);
-          const membershipData = await membershipRes.json();
           const permissionsData = await permissionsRes.json();
-          const membership = membershipData.data?.[0] as { role_id: string | null } | undefined;
           const permissions = (permissionsData.data || []) as { channel_id: string; role_id: string; can_read: boolean }[];
 
           channelsData = channelsData.filter((ch) => {
@@ -507,9 +506,7 @@ const Board = () => {
           const isOwner = user?.id && boardData.owner_id === user.id;
           let isMember = false;
           if (!isOwner && user?.id) {
-            const mRes = await fetch(`/api/v1/gomosub_memberships?board_id=eq.${boardData.id}&user_id=eq.${user.id}`);
-            const mData = await mRes.json();
-            isMember = (mData.data || []).length > 0;
+            isMember = (await getMyGomosubMembership(boardData.id, user.id)) !== null;
           }
           if (!isOwner && !isMember) {
             setPrivateAccessDenied(true);
@@ -618,9 +615,8 @@ const Board = () => {
         return;
       }
 
-      const membershipResponse = await fetch(`/api/v1/gomosub_memberships?board_id=eq.${board.id}&user_id=eq.${user.id}`);
-      const membershipResult = await membershipResponse.json();
-      setIsJoined((membershipResult.data || []).length > 0);
+      const membership = await getMyGomosubMembership(board.id, user.id);
+      setIsJoined(membership !== null);
       setMembershipKnown(true);
     };
 
@@ -982,6 +978,7 @@ const Board = () => {
       // Raw write bypasses query-builder — drop memberships/boards GET cache.
       invalidateByPrefix('/api/v1/gomosub_memberships');
       invalidateByPrefix('/api/v1/boards');
+      invalidateGomosubMembership(board.id, user.id);
       return;
     }
 
@@ -1003,6 +1000,7 @@ const Board = () => {
     // Raw write bypasses query-builder — drop memberships/boards GET cache.
     invalidateByPrefix('/api/v1/gomosub_memberships');
     invalidateByPrefix('/api/v1/boards');
+    invalidateGomosubMembership(board.id, user.id);
   };
 
   // Cold board (no cached row): paint the bare background — no fake post

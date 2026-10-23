@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gomo6/backend/internal/channelaccess"
@@ -102,8 +103,8 @@ func (h *RPCHandler) GetGomoSubChannelActivity(c *gin.Context) {
 }
 
 // GomoSubDirectoryItem is one public community in the /g catalog. Member and
-// channel counts come from correlated subqueries so the whole catalog is a
-// single request instead of the old N+1 head-counts per board.
+// channel counts are denormalized boards columns (migration 141), so the whole
+// catalog stays a single request without per-board aggregation.
 type GomoSubDirectoryItem struct {
 	ID           string   `json:"id"`
 	Slug         string   `json:"slug"`
@@ -119,29 +120,44 @@ type GomoSubDirectoryItem struct {
 	Joined       bool     `json:"joined"`
 }
 
-// GetGomoSubsDirectory returns every public gomosub with its member/channel
-// counts for the /g catalog page. Anonymous callers get the same rows with
-// joined=false; with a token, joined reflects the viewer's memberships.
+// GetGomoSubsDirectory returns the public gomosub catalog with member/channel
+// counts for the /g page. Counts are denormalized boards columns maintained by
+// DB triggers (migration 141) — no per-row aggregation. Anonymous callers get
+// the same rows with joined=false; with a token, joined reflects the viewer's
+// memberships.
+//
+// The catalog is bounded (default 200, max 500): the client caches the whole
+// page for 5 minutes and searches/sorts locally, so an unbounded scan would
+// only ever get more expensive without any UI asking for it.
 //
 // GetGomoSubsDirectory godoc
 // @Summary      GomoSub directory
 // @Description  Public catalog of gomosubs with member/channel counts
 // @Tags         RPC
 // @Produce      json
+// @Param        limit query int false "Max boards (1-500)" default(200)
 // @Success      200 {object} models.APIResponse
 // @Router       /rpc/gomosubs_directory [get]
 func (h *RPCHandler) GetGomoSubsDirectory(c *gin.Context) {
 	viewerID := rpcLikesViewerID(c)
 
+	limit := 200
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 500 {
+			limit = l
+		}
+	}
+
 	const query = `
 		SELECT b.id, b.slug, b.name, b.description, b.cover_image_url,
 		       b.gomosub_avatar_url, b.gomosub_tags, b.visibility, b.created_at,
-		       (SELECT count(*) FROM gomosub_memberships m WHERE m.board_id = b.id) AS member_count,
-		       (SELECT count(*) FROM channels ch WHERE ch.board_id = b.id) AS channel_count,
+		       b.member_count AS member_count,
+		       b.channel_count AS channel_count,
 		       EXISTS(SELECT 1 FROM gomosub_memberships jm WHERE jm.board_id = b.id AND jm.user_id = $1) AS joined
 		FROM boards b
 		WHERE b.is_gomosub = true AND b.visibility = 'public'
 		ORDER BY b.created_at DESC
+		LIMIT $2
 	`
 
 	var viewerArg any
@@ -153,7 +169,7 @@ func (h *RPCHandler) GetGomoSubsDirectory(c *gin.Context) {
 		viewerArg = viewerID
 	}
 
-	rows, err := h.db.Query(query, viewerArg)
+	rows, err := h.db.Query(query, viewerArg, limit)
 	if err != nil {
 		httpx.ServerError(c, "handler error", err)
 		return
