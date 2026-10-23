@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useState, useRef, useCallback, type FormEve
 import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
 import { NavigationLink } from "@/components/NavigationLink";
-import { motion, useScroll, useMotionValueEvent, useMotionValue, useTransform, animate } from "motion/react";
+import { motion, AnimatePresence, useScroll, useMotionValueEvent, useMotionValue, useTransform, animate } from "motion/react";
 import { SPRING } from "@/lib/motion";
 import { transitionEnterClass, isFeedRoute } from "@/lib/viewTransitions";
 import { useTransitionStyle } from "@/hooks/useTransitionStyle";
@@ -118,8 +118,9 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
   const [desktopSearchExpanded, setDesktopSearchExpanded] = useState(false);
   const [searchResults, setSearchResults] = useState<GlobalSearchResult>({ users: [], boards: [], threads: [], posts: [], wall_posts: [] });
   const [hideMessengerChrome, setHideMessengerChrome] = useState(false);
-  const searchRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLElement | null>(null);
   const desktopSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const mobileSearchInputRef = useRef<HTMLInputElement | null>(null);
   const lastPlayEventRef = useRef<string | null>(null);
   const isBackgroundResumeRef = useRef(false);
   const { scrollY } = useScroll();
@@ -1035,6 +1036,12 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
     return () => window.clearTimeout(id);
   }, [desktopSearchExpanded]);
 
+  useEffect(() => {
+    if (!mobileSearchOpen) return;
+    const id = window.setTimeout(() => mobileSearchInputRef.current?.focus(), 160);
+    return () => window.clearTimeout(id);
+  }, [mobileSearchOpen]);
+
   const totalSearchHits =
     searchResults.users.length +
     searchResults.boards.length +
@@ -1290,7 +1297,57 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
         style={{ y: headerY, willChange: "transform" }}
       >
         <div className="max-w-6xl mx-auto px-4">
-          <div className="flex items-center justify-between gap-2 sm:gap-3 min-h-[49px]">
+          {/* Mobile search: Telegram-style in-place swap — the header row
+              content dissolves and a single full-width field (one lens, Enter
+              submits) takes its place; no second row pushing the page down.
+              Esc = blur = collapse. */}
+          <AnimatePresence initial={false} mode="popLayout">
+            {mobileSearchOpen ? (
+              <motion.form
+                key="mobile-search"
+                ref={(el: HTMLFormElement | null) => { searchRef.current = el; }}
+                onSubmit={submitSearch}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                transition={SPRING.soft}
+                className="lg:hidden relative flex items-center gap-2.5 min-h-[49px]"
+              >
+                <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                <Input
+                  ref={mobileSearchInputRef}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setMobileSearchOpen(false);
+                      window.setTimeout(() => mobileSearchInputRef.current?.blur(), 0);
+                    }
+                  }}
+                  placeholder={t('nav.searchPlaceholder')}
+                  className="h-9 flex-1 pl-0 pr-3 border-0 bg-transparent shadow-none rounded-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                  onFocus={() => {
+                    if (searchQuery.trim().length >= 2) setSearchOpen(true);
+                  }}
+                />
+                {searchOpen && (
+                  <div className="absolute top-[calc(100%-6px)] left-0 right-0 rounded-2xl border border-border bg-card/95 backdrop-blur shadow-lg p-3 z-50 space-y-3 max-h-[65vh] overflow-auto">
+                    {searchLoading ? (
+                      <div className="text-sm text-muted-foreground">{t('nav.searching')}</div>
+                    ) : totalSearchHits === 0 ? (
+                      <div className="text-sm text-muted-foreground">{t('nav.nothingFound')}</div>
+                    ) : (
+                      quickResultsContent
+                    )}
+                  </div>
+                )}
+              </motion.form>
+            ) : null}
+          </AnimatePresence>
+          <motion.div
+            className={`flex items-center justify-between gap-2 sm:gap-3 min-h-[49px]${mobileSearchOpen ? " hidden lg:flex" : ""}`}
+          >
           <NavigationLink to="/" aria-label="gomo6" className="shrink-0 inline-flex items-center group">
             <Gomo6Mark className="app-header-logo h-11 w-11 text-primary transition-transform duration-200 ease-out group-hover:scale-105" />
           </NavigationLink>
@@ -1300,7 +1357,7 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
                 with a spring (width via framer, colors via CSS transition).
                 Enter submits; Esc / outside click / navigation collapses it
                 back into the lens. */}
-            <div ref={searchRef} className="hidden lg:block relative">
+            <div ref={(el: HTMLDivElement | null) => { searchRef.current = el; }} className="hidden lg:block relative">
               <motion.form
                 onSubmit={submitSearch}
                 initial={false}
@@ -1392,35 +1449,7 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
                 get the hamburger instead of a separate header button. */}
             <MobileMenu user={user} isModerator={isModerator} />
           </div>
-        </div>
-        {mobileSearchOpen && (
-          <div ref={searchRef} className="lg:hidden mt-1.5 relative">
-            <form onSubmit={submitSearch}>
-              <Input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={t('nav.searchShort')}
-                className="h-9 pl-10 pr-20 rounded-xl border-border/70 bg-background/85 backdrop-blur"
-                onFocus={() => {
-                  if (searchQuery.trim().length >= 2) setSearchOpen(true);
-                }}
-              />
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
-              <Button type="submit" size="sm" className="absolute right-1 top-1 h-7 rounded-lg">{t('nav.find')}</Button>
-            </form>
-            {searchOpen && (
-              <div className="absolute top-12 left-0 right-0 rounded-2xl border border-border bg-card/95 backdrop-blur shadow-lg p-3 z-50 space-y-3 max-h-[65vh] overflow-auto">
-                {searchLoading ? (
-                  <div className="text-sm text-muted-foreground">{t('nav.searching')}</div>
-                ) : totalSearchHits === 0 ? (
-                  <div className="text-sm text-muted-foreground">{t('nav.nothingFound')}</div>
-                ) : (
-                  quickResultsContent
-                )}
-              </div>
-            )}
-          </div>
-        )}
+          </motion.div>
         </div>
         <TopLoadingBar />
       </motion.header>

@@ -107,6 +107,7 @@ vi.mock("motion/react", () => ({
   useMotionValue: (initial: any) => ({ get: () => initial, set: () => {} }),
   useTransform: () => "0px",
   animate: mockAnimate,
+  AnimatePresence: ({ children }: any) => <>{children}</>,
 }));
 
 // Sub-components
