@@ -23,7 +23,7 @@
  * Signed-off taste and locked parameters live in docs/wiki/MOTION_TASTE.md —
  * read it before adding or retuning a preset.
  */
-import type { Transition, Variants } from "motion/react";
+import type { TargetAndTransition, Transition, Variants } from "motion/react";
 
 /**
  * Telegram-grade physics. These four constants are the whole vocabulary of
@@ -163,6 +163,25 @@ export const CASCADE_VARIANTS: Variants = {
 export const STREAM_CASCADE_VARIANTS: Variants = {
   hidden: {},
   show: { transition: { staggerChildren: 0.055, delayChildren: 0.02 } },
+};
+
+/**
+ * Keeps the same entrance language as the stream cascade, but this is explicitly
+ * set on **each row** with `initial` + `animate` instead of being inherited from
+ * a parent. Inherited variant trees can be muffled by a re-render that happens
+ * between mounting and the animation (the channel load race silenced "show" and
+ * made rows stay at opacity 0 forever); a self-driven row plays to the end no
+ * matter what happens around it.
+ */
+export const streamRowVariants = (index: number): Variants => {
+  const show = STREAM_ITEM_VARIANTS.show as TargetAndTransition;
+  return {
+    hidden: STREAM_ITEM_VARIANTS.hidden,
+    show: {
+      ...show,
+      transition: { ...show.transition, delay: Math.max(0, Math.min(index, 5)) * 0.055 },
+    },
+  };
 };
 
 /** Restrained card landing: lift + tiny scale settle, never a flat opacity-only reveal. */

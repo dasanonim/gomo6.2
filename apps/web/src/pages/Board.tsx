@@ -42,7 +42,7 @@ import {
   type ChannelRow as Channel,
 } from "@/routes/data/boardData";
 import { getDirectoryMemberCount } from "@/routes/data/gomosubData";
-import { STREAM_CASCADE_VARIANTS, STREAM_ITEM_VARIANTS } from "@/lib/motion";
+import { STREAM_ITEM_VARIANTS, streamRowVariants } from "@/lib/motion";
 import { GomoSubHeader } from "@/components/gomosub/GomoSubHeader";
 import { GomoSubChannelsList } from "@/components/gomosub/GomoSubChannelsList";
 import { useGomoSubUnread } from "@/hooks/useGomoSubUnread";
@@ -819,12 +819,9 @@ const Board = () => {
 
   const { unread, markSeen } = useGomoSubUnread(user?.id ?? null, board?.id ?? null, channels);
 
-  // Same entrance language as the feed: one lift+scale cascade on the first
-  // thread list paint, never re-run on channel switches / paginated updates.
+  // Per-row entrance motion needs the reduced-motion gate (no parent cascade
+  // anymore — see the thread list below).
   const prefersReducedMotion = useReducedMotion();
-  const didAnimateRef = useRef(false);
-  const workspaceCascade =
-    Boolean(board?.is_gomosub) && threads.length > 0 && !prefersReducedMotion && !didAnimateRef.current;
 
   // Opened a channel → its unread dot clears at once.
   useEffect(() => {
@@ -1633,13 +1630,7 @@ const Board = () => {
                       </div>
                     )}
                 {!isTextChannel && (
-                  <motion.div
-                    className={isTextChannel ? undefined : "space-y-2"}
-                    variants={workspaceCascade ? STREAM_CASCADE_VARIANTS : undefined}
-                    initial={workspaceCascade ? "hidden" : false}
-                    animate={workspaceCascade ? "show" : undefined}
-                    onAnimationComplete={() => { didAnimateRef.current = true; }}
-                  >
+                  <div className={isTextChannel ? undefined : "space-y-2"}>
                     {threads.map((thread, index) => {
                       const card = (
                         <GomoThreadCard
@@ -1655,16 +1646,27 @@ const Board = () => {
                           }}
                         />
                       );
-                      if (workspaceCascade && index < 6) {
+                      // Per-row entrance: self-driven initial/animate, NOT variant
+                      // propagation from a parent. A re-render (channel load race,
+                      // WS update) between mount and animation used to swallow the
+                      // parent's "show" and leave rows permanently opacity-0 —
+                      // that was the invisible-records bug on gomosub channels.
+                      if (index < 6 && !prefersReducedMotion) {
                         return (
-                          <motion.div key={thread.id} variants={STREAM_ITEM_VARIANTS} data-motion="cascade-row">
+                          <motion.div
+                            key={thread.id}
+                            data-motion="cascade-row"
+                            variants={streamRowVariants(index)}
+                            initial="hidden"
+                            animate="show"
+                          >
                             {card}
                           </motion.div>
                         );
                       }
                       return <div key={thread.id}>{card}</div>;
                     })}
-                  </motion.div>
+                  </div>
                 )}
                   </>
                 )}
