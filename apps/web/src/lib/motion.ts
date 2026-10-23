@@ -198,6 +198,27 @@ export const STREAM_ITEM_VARIANTS: Variants = {
   },
 };
 
+/**
+ * Whisper-level row entrance: a breath of lift (no scale), fast fade, tight
+ * ~25ms stagger across up to 9 rows. For lists that should ARRIVE, not
+ * perform — the notification inbox uses this instead of the card landing.
+ */
+export const whisperRowVariants = (index: number): Variants => {
+  const slot = Math.max(0, Math.min(index, 8)) * 0.025;
+  return {
+    hidden: { opacity: 0, y: SPATIAL_OFFSET.row / 2 },
+    show: {
+      opacity: 1,
+      y: 0,
+      transition: {
+        ...SPRING.soft,
+        delay: slot,
+        opacity: { duration: 0.14, ease: EASE_OUT_EXPO, delay: slot },
+      },
+    },
+  };
+};
+
 export interface MorphOrigin {
   /** 0 = left edge, 0.5 = centre, 1 = right edge. */
   x?: number;

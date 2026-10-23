@@ -10,7 +10,7 @@ import { NotificationItem } from "@/components/NotificationItem";
 import { ArrowLeft, CheckCheck } from "lucide-react";
 import { normalizeLanguage } from "@/i18n/languages";
 import { groupByDay, type NotifWithSlug } from "@/utils/notificationGroups";
-import { springFor, streamRowVariants } from "@/lib/motion";
+import { springFor, whisperRowVariants } from "@/lib/motion";
 
 /**
  * A row that marks its notification read once it has actually been on screen
@@ -296,11 +296,14 @@ const Notify = () => {
                     />
                   );
                   const flatIndex = runningIndex + i;
-                  if (flatIndex < 6 && !prefersReducedMotion) {
+                  // Every row rides the whisper entrance (its delay slots cap
+                  // at 8), so labels and cards of EVERY group settle together —
+                  // no instant-pop tail after the cascaded head.
+                  if (!prefersReducedMotion) {
                     return (
                       <motion.div
                         key={notif.id}
-                        variants={streamRowVariants(flatIndex)}
+                        variants={whisperRowVariants(flatIndex)}
                         initial="hidden"
                         animate="show"
                       >
