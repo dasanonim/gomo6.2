@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { motion } from "motion/react";
 import { api } from "@/integrations/api/compat";
 import { invalidateByPrefix } from "@/integrations/api/queryCache";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,7 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { storageUrl, uploadFile } from "@/utils/storage";
 import { apiErrorMessage } from "@/utils/apiErrors";
-import { Loader2, CheckCircle2, XCircle, Plus, Upload } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Loader2, CheckCircle2, XCircle, Upload, Minus as MinusIcon, Globe, Lock } from "lucide-react";
 
 const RESERVED_SLUGS = [
   "b", "pol", "a", "v", "mu", "fit", "d", "tv", "co", "int",
@@ -59,6 +60,10 @@ const GomoSubCreate = () => {
   const [importLoading, setImportLoading] = useState(false);
 
   const garmaOk = useMemo(() => garma >= 10, [garma]);
+  const slugOk = useCallback(
+    () => SLUG_REGEX.test(form.slug.trim()) && !RESERVED_SLUGS.includes(form.slug.trim()),
+    [form.slug],
+  );
   const ageOk = useMemo(() => {
     if (!profileCreatedAt) return false;
     return Date.now() - new Date(profileCreatedAt).getTime() >= 14 * 24 * 60 * 60 * 1000;
@@ -118,24 +123,6 @@ const GomoSubCreate = () => {
       blocks.push(`Нельзя\n${forbidden.map((x) => `- ${x}`).join("\n")}`);
     }
     return blocks.join("\n\n").trim() || null;
-  };
-
-  const updateRuleItem = (kind: "allowed" | "forbidden", index: number, value: string) => {
-    const setter = kind === "allowed" ? setAllowedRules : setForbiddenRules;
-    setter((prev) => prev.map((item, i) => (i === index ? value : item)));
-  };
-
-  const addRuleItem = (kind: "allowed" | "forbidden") => {
-    const setter = kind === "allowed" ? setAllowedRules : setForbiddenRules;
-    setter((prev) => [...prev, ""]);
-  };
-
-  const removeRuleItem = (kind: "allowed" | "forbidden", index: number) => {
-    const setter = kind === "allowed" ? setAllowedRules : setForbiddenRules;
-    setter((prev) => {
-      const next = prev.filter((_, i) => i !== index);
-      return next.length ? next : [""];
-    });
   };
 
   const handleImportFileSelect = async (file: File) => {
@@ -297,62 +284,93 @@ const GomoSubCreate = () => {
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-3 sm:p-6 space-y-4">
+    <div className="max-w-2xl mx-auto w-full px-3 sm:px-5 pb-32 md:pb-10">
       {step === "requirements" && (
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-          <Card className="border-primary/30">
-            <CardHeader>
-              <CardTitle>Создание g-саба</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className={`rounded-lg border p-3 ${garmaOk ? "border-emerald-500/40 bg-emerald-500/10" : "border-border bg-muted/30"}`}>
-                  <div className="flex items-center gap-2 font-medium">
-                    {garmaOk ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <XCircle className="w-4 h-4 text-muted-foreground" />}
-                    10+ gармы
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          className="space-y-4 pt-2"
+        >
+          <Card className="overflow-hidden rounded-2xl border-border/70 bg-surface">
+            <div className="relative h-20 bg-gradient-to-br from-primary/20 via-primary/10 to-muted">
+              <span aria-hidden className="absolute -bottom-5 left-5 select-none text-5xl font-black uppercase leading-none tracking-tight text-primary/25">
+                g
+              </span>
+            </div>
+            <div className="px-5 pb-5 pt-3">
+              <h1 className="text-xl font-bold tracking-tight">Своя тематическая зона</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                g-саб — отдельное сообщество под твой фандом, игру или тему: свои каналы, свои правила, свои теги.
+              </p>
+
+              <div className="mt-4 space-y-2">
+                {[
+                  { ok: garmaOk, done: "10+ gармы", note: `Текущая gарма: ${garma}` },
+                  { ok: ageOk, done: "Аккаунт старше 2 недель", note: profileCreatedAt ? `Создан: ${new Date(profileCreatedAt).toLocaleDateString()}` : "Нет данных" },
+                ].map((req) => (
+                  <div
+                    key={req.done}
+                    className={cn(
+                      "flex items-center gap-3 rounded-xl border px-3.5 py-2.5 transition-colors",
+                      req.ok ? "border-emerald-500/30 bg-emerald-500/[0.06]" : "border-border/60 bg-surface",
+                    )}
+                  >
+                    {req.ok ? (
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                      </span>
+                    ) : (
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted">
+                        <XCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                      </span>
+                    )}
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium leading-tight">{req.done}</div>
+                      <div className="text-xs text-muted-foreground">{req.note}</div>
+                    </div>
                   </div>
-                  <div className="text-sm text-muted-foreground mt-1">Текущая gарма: {garma}</div>
-                </div>
-                <div className={`rounded-lg border p-3 ${ageOk ? "border-emerald-500/40 bg-emerald-500/10" : "border-border bg-muted/30"}`}>
-                  <div className="flex items-center gap-2 font-medium">
-                    {ageOk ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <XCircle className="w-4 h-4 text-muted-foreground" />}
-                    Аккаунт старше 2 недель
-                  </div>
-                  <div className="text-sm text-muted-foreground mt-1">
-                    {profileCreatedAt ? `Создан: ${new Date(profileCreatedAt).toLocaleDateString()}` : "Нет данных"}
-                  </div>
-                </div>
+                ))}
               </div>
 
-              <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
-                <div className="text-sm text-muted-foreground">
-                  {garmaOk && ageOk ? "Условия выполнены. Можешь перейти к созданию после чтения правил." : "Условия пока не выполнены."}
-                </div>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <Button variant="outline" onClick={() => setShowGuide(true)}>
-                    Прочитать правила
-                  </Button>
-                  <Button onClick={() => setStep("form")} disabled={!canProceed}>
-                    Перейти к созданию
-                  </Button>
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  Или{" "}
-                  <button onClick={() => setShowImportDialog(true)} className="text-primary hover:underline inline-flex items-center gap-1">
-                    <Upload className="w-3 h-3" />
-                    импортировать g-sub из архива
-                  </button>
-                </div>
+              <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Button
+                  onClick={() => setStep("form")}
+                  disabled={!canProceed}
+                  className="h-10 flex-1 rounded-full"
+                >
+                  {canProceed ? "Поехали" : "Правила пока не прочитаны"}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-10 shrink-0 rounded-full"
+                  onClick={() => setShowGuide(true)}
+                >
+                  Прочитать правила
+                </Button>
               </div>
-            </CardContent>
+              <div className="mt-3 text-center text-xs text-muted-foreground">
+                Или{" "}
+                <button type="button" onClick={() => setShowImportDialog(true)} className="text-primary hover:underline inline-flex items-center gap-1">
+                  <Upload className="h-3 w-3" />
+                  импортировать саб из архива
+                </button>
+              </div>
+            </div>
           </Card>
         </motion.div>
       )}
 
       {step === "form" && (
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-          <Card className="overflow-hidden border-primary/30">
-            <div className="h-36 sm:h-44 bg-muted/30 border-b border-border relative">
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          className="space-y-4 pt-2"
+        >
+          <Card className="overflow-hidden rounded-2xl border-border/70 bg-surface">
+            {/* фон + аватар */}
+            <div className="h-24 sm:h-28 border-b border-border relative">
               <input
                 ref={coverInputRef}
                 type="file"
@@ -372,13 +390,14 @@ const GomoSubCreate = () => {
                 {coverImages[0] ? (
                   <img src={storageUrl("post-images", coverImages[0]) ?? undefined} alt="cover" className="w-full h-full object-cover" />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-sm text-muted-foreground">
-                    {uploadingCover ? "Загрузка..." : "Нажми сюда, чтобы добавить фон"}
+                  <div className="relative flex h-full w-full items-center justify-center gap-2 bg-gradient-to-br from-primary/20 via-primary/10 to-muted text-sm text-muted-foreground">
+                    <Upload className="h-4 w-4" />
+                    {uploadingCover ? "Загружаем…" : "Загрузить фон"}
                   </div>
                 )}
-                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors" />
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
               </button>
-              <div className="absolute -bottom-10 left-4 w-20 h-20 rounded-full border-4 border-background bg-surface overflow-hidden">
+              <div className="absolute -bottom-7 left-4 h-14 w-14 sm:h-16 sm:w-16 overflow-hidden rounded-2xl border-[3px] border-background bg-muted shadow-md">
                 <input
                   ref={avatarInputRef}
                   type="file"
@@ -390,133 +409,163 @@ const GomoSubCreate = () => {
                     e.target.value = "";
                   }}
                 />
-                <button
-                  type="button"
-                  onClick={() => avatarInputRef.current?.click()}
-                  className="group relative w-full h-full"
-                >
-                {avatarImages[0] ? (
-                  <img src={storageUrl("post-images", avatarImages[0]) ?? undefined} alt="avatar" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-xl font-bold text-muted-foreground">
-                    {uploadingAvatar ? "..." : (form.name.trim()[0] || "g").toUpperCase()}
-                  </div>
-                )}
-                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors" />
+                <button type="button" onClick={() => avatarInputRef.current?.click()} className="group relative h-full w-full">
+                  {avatarImages[0] ? (
+                    <img src={storageUrl("post-images", avatarImages[0]) ?? undefined} alt="avatar" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary/30 to-muted text-lg font-bold text-primary">
+                      {uploadingAvatar ? "…" : (form.name.trim()[0] || "g").toUpperCase()}
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
                 </button>
               </div>
             </div>
-            <CardContent className="pt-12 space-y-4">
-              <div className="text-xs text-muted-foreground">Для смены фото нажми прямо на круглый аватар или фоновый прямоугольник.</div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Название</label>
-                  <Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} maxLength={80} />
+            <div className="space-y-5 px-5 pb-5 pt-11">
+              {/* Название */}
+              <div className="space-y-1.5">
+                <div className="flex items-baseline justify-between">
+                  <label htmlFor="gs-name" className="text-sm font-medium">Название</label>
+                  <span className={cn("text-[10px]", form.name.length ? "text-muted-foreground" : "text-muted-foreground/40")}>
+                    {form.name.length}/80
+                  </span>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Слаг</label>
+                <Input id="gs-name" value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} maxLength={80} />
+              </div>
+
+              {/* Слаг */}
+              <div className="space-y-1.5">
+                <div className="flex items-baseline justify-between">
+                  <label htmlFor="gs-slug" className="text-sm font-medium">Адрес</label>
+                  <span className={cn("inline-flex items-center gap-1 text-[10px]", slugOk() ? "text-emerald-600" : "text-muted-foreground/50")}>
+                    {slugOk() ? (
+                      <>
+                        <CheckCircle2 className="h-3 w-3" /> свободен для набора
+                      </>
+                    ) : (
+                      "латиница, цифры, - или _"
+                    )}
+                  </span>
+                </div>
+                <div className="relative">
+                  <span aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 select-none text-sm font-semibold text-muted-foreground/60">
+                    g/
+                  </span>
                   <Input
+                    id="gs-slug"
                     value={form.slug}
                     onChange={(e) => setForm((p) => ({ ...p, slug: e.target.value.toLowerCase().replace(/\s+/g, "-") }))}
                     placeholder="my-fandom"
                     maxLength={25}
+                    className="pl-8"
                   />
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Описание</label>
-                <Textarea value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} rows={3} maxLength={240} />
-              </div>
-
-              {/* Visibility Toggle */}
-              <div className="rounded-lg border border-border/60 bg-muted/30 p-4 space-y-3">
-                <label className="text-sm font-medium">Тип g-саба</label>
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setVisibility("public")}
-                    className={`flex-1 rounded-lg border p-3 text-left transition-all ${
-                      visibility === "public"
-                        ? "border-primary/50 bg-primary/10 text-primary"
-                        : "border-border bg-surface hover:bg-muted/50"
-                    }`}
-                  >
-                    <div className="font-medium text-sm">Публичный</div>
-                    <div className="text-xs text-muted-foreground mt-1">Виден всем на /g, нужны правила, любой может вступить</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setVisibility("private")}
-                    className={`flex-1 rounded-lg border p-3 text-left transition-all ${
-                      visibility === "private"
-                        ? "border-primary/50 bg-primary/10 text-primary"
-                        : "border-border bg-surface hover:bg-muted/50"
-                    }`}
-                  >
-                    <div className="font-medium text-sm">Приватный</div>
-                    <div className="text-xs text-muted-foreground mt-1">Только по приглашениям, не виден в общем списке, без правил</div>
-                  </button>
+              {/* Описание */}
+              <div className="space-y-1.5">
+                <div className="flex items-baseline justify-between">
+                  <label htmlFor="gs-desc" className="text-sm font-medium">Описание</label>
+                  <span className={cn("text-[10px]", form.description.length ? "text-muted-foreground" : "text-muted-foreground/40")}>
+                    {form.description.length}/240
+                  </span>
                 </div>
+                <Textarea id="gs-desc" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} rows={3} maxLength={240} />
               </div>
 
-              {/* Rules section — only for public gomosubs */}
-              {visibility === "public" && (<>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Базовые правила</label>
-                <Textarea value={form.standardRules} onChange={(e) => setForm((p) => ({ ...p, standardRules: e.target.value }))} rows={3} />
+              {/* Тип саба */}
+              <div className="grid gap-2 sm:grid-cols-2">
+                {([
+                  { value: "public", label: "Публичный", note: "Виден всем на /g, любой может вступить" },
+                  { value: "private", label: "Приватный", note: "Только по приглашениям, без правил" },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setVisibility(opt.value)}
+                    className={cn(
+                      "rounded-xl border p-3 text-left transition-colors",
+                      visibility === opt.value
+                        ? "border-primary/50 bg-primary/[0.06]"
+                        : "border-border/60 bg-surface hover:bg-muted/40",
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 text-sm font-medium">
+                      {opt.value === "public" ? <Globe className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5 text-amber-500" />}
+                      {opt.label}
+                    </div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">{opt.note}</div>
+                  </button>
+                ))}
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium">Можно</label>
-                    <Button size="sm" variant="outline" onClick={() => addRuleItem("allowed")}>
-                      <Plus className="w-4 h-4" />
-                    </Button>
+              {/* Правила — только публичным */}
+              {visibility === "public" && (
+                <div className="space-y-3 rounded-xl border border-border/60 bg-surface p-4">
+                  <div className="space-y-1.5">
+                    <label htmlFor="gs-rules" className="text-sm font-medium">Главное правило</label>
+                    <Textarea
+                      id="gs-rules"
+                      value={form.standardRules}
+                      onChange={(e) => setForm((p) => ({ ...p, standardRules: e.target.value }))}
+                      rows={2}
+                      placeholder="Уважай участников, соблюдай тему саба…"
+                    />
                   </div>
-                  {allowedRules.map((rule, index) => (
-                    <div key={`allowed-${index}`} className="flex gap-2">
-                      <Input value={rule} onChange={(e) => updateRuleItem("allowed", index, e.target.value)} placeholder="Добавить разрешение" />
-                      <Button size="sm" variant="outline" onClick={() => removeRuleItem("allowed", index)}>x</Button>
+
+                  {([
+                    { kind: "allowed" as const, label: "Можно", tilde: <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />, items: allowedRules, set: setAllowedRules, placeholder: "что в сабе приветствуется" },
+                    { kind: "forbidden" as const, label: "Нельзя", tilde: <XCircle className="h-3.5 w-3.5 text-destructive" />, items: forbiddenRules, set: setForbiddenRules, placeholder: "с чего начинается бан" },
+                  ]).map((col) => (
+                    <div key={col.kind} className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="inline-flex items-center gap-1.5 text-sm font-medium">
+                          {col.tilde}
+                          {col.label}
+                        </span>
+                        {col.items.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => col.set(col.items.slice(0, -1).length ? col.items.slice(0, -1) : [""])}
+                            title="Убрать последнее"
+                            aria-label={`Убрать последнее правило из «${col.label}»`}
+                            className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            <MinusIcon className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                      {col.items.map((rule, index) => (
+                        <Input
+                          key={`${col.kind}-${index}`}
+                          value={rule}
+                          onChange={(e) => col.set(col.items.map((item, i) => (i === index ? e.target.value : item)))}
+                          placeholder={col.placeholder}
+                        />
+                      ))}
                     </div>
                   ))}
                 </div>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium">Нельзя</label>
-                    <Button size="sm" variant="outline" onClick={() => addRuleItem("forbidden")}>
-                      <Plus className="w-4 h-4" />
-                    </Button>
-                  </div>
-                  {forbiddenRules.map((rule, index) => (
-                    <div key={`forbidden-${index}`} className="flex gap-2">
-                      <Input value={rule} onChange={(e) => updateRuleItem("forbidden", index, e.target.value)} placeholder="Добавить ограничение" />
-                      <Button size="sm" variant="outline" onClick={() => removeRuleItem("forbidden", index)}>x</Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              </>)}
+              )}
 
               {visibility === "private" && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
-                  <p className="text-sm text-muted-foreground">
-                    Приватный g-саб не виден в общем списке. Доступ только по пригласительным ссылкам.
-                    Ты сможешь создать приглашения в настройках после создания.
+                <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.05] px-4 py-3">
+                  <p className="text-xs text-muted-foreground">
+                    Приватный саб не виден в общем списке. Пригласительные ссылки создашь в настройках после создания — и разошлёшь их тем, кому открыто.
                   </p>
                 </div>
               )}
 
-              <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-between">
-                <Button variant="outline" onClick={() => setStep("requirements")}>Назад</Button>
-                <Button onClick={handleCreate} disabled={creating}>
-                  {creating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Создать g-саб
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <Button variant="outline" className="h-10 rounded-full" onClick={() => setStep("requirements")}>
+                  Назад
+                </Button>
+                <Button onClick={handleCreate} disabled={creating} className="h-10 min-w-44 rounded-full">
+                  {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Создать саб"}
                 </Button>
               </div>
-            </CardContent>
+            </div>
           </Card>
         </motion.div>
       )}
