@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sync/atomic"
+	"time"
 )
 
 // AppMetrics counts product-level events (registrations, content).
@@ -31,6 +32,13 @@ type AppMetrics struct {
 	// ids counter shows how much fan-out that one call replaced.
 	profileSummaryRequests atomic.Uint64
 	profileSummaryIDs      atomic.Uint64
+
+	// Unified feed SQL: how many uncached feed pages hit Postgres, their total
+	// time, and how many concurrent stampede requests shared one query via the
+	// handler singleflight instead of running it themselves.
+	feedSQLQueries      atomic.Uint64
+	feedSQLNanos        atomic.Uint64
+	feedSingleflightHit atomic.Uint64
 }
 
 // App is the process-wide product-metrics instance.
@@ -67,6 +75,18 @@ func (a *AppMetrics) ProfileSummaryRequested(ids int) {
 	}
 }
 
+// FeedSQLObserved records one uncached feed page query and its latency.
+func (a *AppMetrics) FeedSQLObserved(d time.Duration) {
+	a.feedSQLQueries.Add(1)
+	if d > 0 {
+		a.feedSQLNanos.Add(uint64(d.Nanoseconds()))
+	}
+}
+
+// FeedSingleflightHit counts a feed request that shared an in-flight identical
+// query instead of running its own (cache-stampede collapse).
+func (a *AppMetrics) FeedSingleflightHit() { a.feedSingleflightHit.Add(1) }
+
 // TableCreated maps a generic CRUD insert to a product counter. Only content
 // tables are counted; everything else is ignored.
 func (a *AppMetrics) TableCreated(table string) {
@@ -95,7 +115,13 @@ func (a *AppMetrics) writeTo(w io.Writer) {
 			"# TYPE app_profile_summary_requests_total counter\n"+
 			"app_profile_summary_requests_total %d\n"+
 			"# TYPE app_profile_summary_ids_total counter\n"+
-			"app_profile_summary_ids_total %d\n",
+			"app_profile_summary_ids_total %d\n"+
+			"# TYPE app_feed_sql_queries_total counter\n"+
+			"app_feed_sql_queries_total %d\n"+
+			"# TYPE app_feed_sql_seconds_total counter\n"+
+			"app_feed_sql_seconds_total %f\n"+
+			"# TYPE app_feed_singleflight_hits_total counter\n"+
+			"app_feed_singleflight_hits_total %d\n",
 		a.registrations.Load(),
 		a.threads.Load(),
 		a.posts.Load(),
@@ -105,5 +131,8 @@ func (a *AppMetrics) writeTo(w io.Writer) {
 		a.searchEngineFallback.Load(),
 		a.profileSummaryRequests.Load(),
 		a.profileSummaryIDs.Load(),
+		a.feedSQLQueries.Load(),
+		float64(a.feedSQLNanos.Load())/1e9,
+		a.feedSingleflightHit.Load(),
 	)
 }

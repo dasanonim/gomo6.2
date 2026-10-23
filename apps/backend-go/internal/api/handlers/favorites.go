@@ -40,7 +40,7 @@ SELECT * FROM (
     t.subsection_id, tss.slug::text, tss.name::text,
     NULL::uuid AS wall_user_id,
     NULL::bigint AS user_public_id,
-    (SELECT COUNT(*)::bigint FROM thread_likes tl WHERE tl.thread_id = t.id) AS likes_count,
+    t.likes_count::bigint AS likes_count,
     t.post_count::bigint AS comments_count,
     0::bigint AS reposts_count,
     EXISTS(SELECT 1 FROM thread_likes tl WHERE tl.thread_id = t.id AND tl.user_id = $1) AS liked_by_viewer,
@@ -69,11 +69,11 @@ SELECT * FROM (
     NULL::uuid, NULL::text, NULL::text,
     p.user_id,
     ow.public_id,
-    (SELECT COUNT(*)::bigint FROM profile_wall_post_likes l WHERE l.post_id = p.id),
-    (SELECT COUNT(*)::bigint FROM profile_wall_post_comments cm WHERE cm.post_id = p.id),
-    (SELECT COUNT(*)::bigint FROM profile_wall_post_reposts r WHERE r.post_id = p.id),
+    p.likes_count::bigint,
+    p.comments_count::bigint,
+    p.reposts_count::bigint,
     EXISTS(SELECT 1 FROM profile_wall_post_likes l WHERE l.post_id = p.id AND l.user_id = $1),
-    (SELECT COUNT(*)::bigint FROM profile_wall_post_views v WHERE v.post_id = p.id),
+    p.views_count::bigint,
     f.created_at
   FROM content_favorites f
   JOIN profile_wall_posts p ON p.id = f.item_id

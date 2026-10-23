@@ -10,7 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gomo6/backend/internal/auth"
 	"github.com/gomo6/backend/internal/models"
-	"github.com/lib/pq"
 )
 
 // setupFeedHandler creates a FeedHandler with a mock DB.
@@ -44,6 +43,7 @@ func feedColumnNames() []string {
 		"subsection_id", "subsection_slug", "subsection_name",
 		"wall_user_id",
 		"likes_count", "comments_count", "reposts_count", "liked_by_viewer", "views_count",
+		"public_id", "user_public_id", "author_public_id",
 	}
 }
 
@@ -67,6 +67,7 @@ func TestGetUserFeed_AuthenticatedWithThreadAndWall(t *testing.T) {
 			"sec-1", "general", "Общее", "hash", nil, nil, nil,
 			nil,
 			5, 3, 0, true, 42,
+			315, nil, 10,
 		).
 		AddRow(
 			"wall_post", "post-1", 8.5, now, now,
@@ -77,6 +78,7 @@ func TestGetUserFeed_AuthenticatedWithThreadAndWall(t *testing.T) {
 			nil, nil, nil, nil, nil, nil, nil,
 			"wall-owner-2",
 			2, 1, 0, false, 7,
+			1337, 42, 11,
 		)
 
 	mock.ExpectQuery(`SELECT item_type, item_id.*FROM get_user_feed\(\$1, \$2, \$3, \$4, \$5\)`).
@@ -154,6 +156,7 @@ func TestGetUserFeed_AnonymousPassesNull(t *testing.T) {
 			nil, nil, nil, nil, nil, nil, nil,
 			nil,
 			9, 1, 0, false, 13,
+			900, nil, 90,
 		)
 
 	mock.ExpectQuery(`SELECT item_type, item_id.*FROM get_user_feed\(\$1, \$2, \$3, \$4, \$5\)`).
@@ -216,10 +219,11 @@ func TestGetUserFeed_DBError(t *testing.T) {
 	}
 }
 
-// TestGetUserFeed_AttachesPublicIDs proves the second-pass enrichment attaches
-// the human-readable numbers the client links with: the item's own public_id,
-// the wall owner's user_public_id, and the author's public_id.
-func TestGetUserFeed_AttachesPublicIDs(t *testing.T) {
+// TestGetUserFeed_PublicIDsFromSingleQuery proves the human-readable numbers
+// the client links with (item public_id, wall owner user_public_id, author
+// public_id) arrive in the single get_user_feed query — the old second-pass
+// fillPublicIDs lookup is gone, so no second DB round-trip is expected.
+func TestGetUserFeed_PublicIDsFromSingleQuery(t *testing.T) {
 	handler, mock := setupFeedHandler(t)
 
 	now := time.Now()
@@ -236,6 +240,7 @@ func TestGetUserFeed_AttachesPublicIDs(t *testing.T) {
 			"sec-1", "general", "Общее", "hash", nil, nil, nil,
 			nil,
 			5, 3, 0, true, 42,
+			315, nil, 10,
 		).
 		AddRow(
 			"wall_post", "post-1", 8.5, now, now,
@@ -246,27 +251,14 @@ func TestGetUserFeed_AttachesPublicIDs(t *testing.T) {
 			nil, nil, nil, nil, nil, nil, nil,
 			"wall-owner-2",
 			2, 1, 0, false, 7,
+			1337, 42, 11,
 		)
 
 	mock.ExpectQuery(`SELECT item_type, item_id.*FROM get_user_feed\(\$1, \$2, \$3, \$4, \$5\)`).
 		WithArgs("viewer-1", 20, nil, nil, nil).
 		WillReturnRows(rows)
 
-	// The enrichment lookup: numbers for the thread, the wall post, its owner and
-	// both authors, in one UNION query.
-	// The three arrays must be distinct: reusing one placeholder for both the
-	// thread and the wall-post lookup silently returned no numbers for wall posts.
-	mock.ExpectQuery(`SELECT 'thread'::text AS kind`).
-		WithArgs(
-			pq.Array([]string{"thread-1"}),
-			pq.Array([]string{"post-1"}),
-			pq.Array([]string{"author-1", "author-2"}),
-		).
-		WillReturnRows(sqlmock.NewRows([]string{"kind", "id", "public_id", "owner_public_id"}).
-			AddRow("thread", "thread-1", int64(315), nil).
-			AddRow("wall_post", "post-1", int64(1337), int64(42)).
-			AddRow("user", "author-1", int64(10), nil).
-			AddRow("user", "author-2", int64(11), nil))
+	// NOTE: no second ExpectQuery — any extra DB call fails the test.
 
 	handler.GetUserFeed(c)
 
