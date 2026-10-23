@@ -79,6 +79,8 @@ const GomoSubs = () => {
 
   const isJoined = useCallback((sub: GomoSubDirectoryItem) => joinedBySub[sub.id] ?? sub.joined, [joinedBySub]);
 
+  const prefersReducedMotion = useReducedMotion();
+
   const setQueryState = useCallback(
     (updates: { q?: string; tab?: ViewTab; sort?: SortKey }) => {
       const next = new URLSearchParams(searchParams);
@@ -90,6 +92,20 @@ const GomoSubs = () => {
       setSearchParams(next, { replace: true });
     },
     [searchParams, setSearchParams],
+  );
+
+  const switchTab = useCallback(
+    (value: ViewTab) => {
+      // Switching to a (often much shorter) list while stranded deep in the
+      // page reads as a broken jump — glide back to the top instead. Only
+      // when the page is meaningfully scrolled; the tab change itself stays
+      // in place.
+      if (tab !== value && window.scrollY > 240 && !prefersReducedMotion && "scrollBehavior" in document.documentElement.style) {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      setQueryState({ tab: value });
+    },
+    [tab, prefersReducedMotion, setQueryState],
   );
 
   const handleSearchChange = (value: string) => {
@@ -153,7 +169,6 @@ const GomoSubs = () => {
   // Telegram-style lift+scale cascade: only once, when the first real data
   // lands (same latch pattern as the feed / conversation list). Search changes
   // afterwards must not re-cascade.
-  const prefersReducedMotion = useReducedMotion();
   const didAnimateRef = useRef(false);
   const runInitialCascade =
     subsData !== undefined && subs.length > 0 && !prefersReducedMotion && !didAnimateRef.current;
@@ -194,7 +209,7 @@ const GomoSubs = () => {
                     key={t}
                     role="tab"
                     aria-selected={tab === t}
-                    onClick={() => setQueryState({ tab: t })}
+                    onClick={() => switchTab(t)}
                     className="relative h-9 rounded-full px-3.5 text-sm"
                   >
                     {/* Telegram-style thumb: one shared layoutId element slides

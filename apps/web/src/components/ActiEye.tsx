@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { motion, useReducedMotion } from "motion/react";
 import { cn } from "@/lib/utils";
-import { springFor } from "@/lib/motion";
 import { apiClient } from "@/integrations/api/client";
 import { ActiEyePanel } from "./ActiEyePanel";
 
@@ -151,28 +150,17 @@ export function ActiEye({ className }: ActiEyeProps) {
       <span className={cn("relative inline-grid shrink-0 place-items-center", className)}>
         {/* The eye draws its rim once when the stats arrive, then keeps the
             slow hue drift. A thin stroke, not a progress bar: it reads as the
-            circle being outlined, not as loading. */}
-        <motion.svg
+            circle being outlined, not as loading. iOS renders a rotated
+            absolutely-positioned SVG (-inset + -rotate-90) displaced from its
+            parent, so the rim is a plain CSS ring instead — same look,
+            bulletproof geometry on every engine. */}
+        <motion.span
           aria-hidden="true"
-          viewBox="0 0 100 100"
-          className="pointer-events-none absolute -inset-1.5 -rotate-90 text-primary"
+          className="pointer-events-none absolute -inset-1.5 rounded-full ring-1 ring-primary"
           initial={skipMotion ? false : { opacity: 0 }}
           animate={{ opacity: 0.5 }}
           transition={{ duration: 0.3, delay: 0.15 }}
-        >
-          <motion.circle
-            cx="50"
-            cy="50"
-            r="47"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            initial={skipMotion ? false : { pathLength: 0 }}
-            animate={{ pathLength: 1 }}
-            transition={springFor("standard", reduceMotion)}
-          />
-        </motion.svg>
+        />
         <button
           type="button"
           onClick={() => setOpen(true)}

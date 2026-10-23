@@ -144,6 +144,18 @@
   main.has-mobile-bottom-nav {
     padding-bottom: var(--mobile-bottom-nav-space, calc(5rem + env(safe-area-inset-bottom, 0px))) !important;
   }
+
+  /* Profile page «+» — sits above the bottom nav rail, not under it. */
+  .profile-wall-fab {
+    bottom: calc(var(--mobile-bottom-nav-space, calc(5rem + env(safe-area-inset-bottom, 0px))) + 0.75rem);
+  }
+}
+
+@media (min-width: 1024px) {
+  /* No bottom rail on desktop — normal corner distance. */
+  .profile-wall-fab {
+    bottom: 1.5rem;
+  }
 }
 
 @media (min-width: 1024px) {

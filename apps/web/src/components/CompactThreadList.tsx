@@ -133,6 +133,13 @@ export const CompactThreadList = ({
     setPreview(null);
   }, [clearTimer]);
 
+  // Hover preview is mouse-only: on touch devices (@media hover:none — iOS,
+  // Android) a tap lands the pointer and fires mouseenter, popping the
+  // floating preview over the tapped thread. Touch simply navigates.
+  const [canHover] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(hover: hover)").matches,
+  );
+
   useEffect(() => clearTimer, [clearTimer]);
 
   return (
@@ -156,10 +163,14 @@ export const CompactThreadList = ({
           return (
             <div
               key={thread.id}
-              onMouseEnter={(event) => showPreview(row, event.currentTarget)}
-              onMouseLeave={hidePreview}
-              onFocus={(event) => showPreview(row, event.currentTarget)}
-              onBlur={hidePreview}
+              // Hover preview only on hover-capable pointers: a touch tap
+              // fires mouseenter and would hang the preview in place.
+              {...(canHover && {
+                onMouseEnter: (event: React.MouseEvent<HTMLElement>) => showPreview(row, event.currentTarget),
+                onMouseLeave: hidePreview,
+                onFocus: (event: React.FocusEvent<HTMLElement>) => showPreview(row, event.currentTarget),
+                onBlur: hidePreview,
+              })}
               className="group relative flex items-start gap-3 border-b border-border/50 px-3 py-3 transition-colors last:border-b-0 hover:bg-muted/40 focus-within:bg-muted/40 sm:px-4"
             >
               {/* Stretched link: the row opens the thread. The author links in
