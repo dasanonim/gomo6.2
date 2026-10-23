@@ -67,7 +67,7 @@ describe("ProcessedContent", () => {
     });
   });
 
-  it("shows loading state initially", () => {
+  it("renders plain content immediately without any loading phase", () => {
     const { container } = render(
       <ProcessedContent
         content="Hello"
@@ -76,7 +76,10 @@ describe("ProcessedContent", () => {
         currentUsername="testuser"
       />,
     );
-    expect(screen.getByText("Загрузка...")).toBeInTheDocument();
+    // Текст виден с первого кадра — никакого мигания «Загрузка...».
+    expect(screen.getByText("Hello")).toBeInTheDocument();
+    expect(screen.queryByText("Загрузка...")).not.toBeInTheDocument();
+    expect(container.textContent).toContain("Hello");
   });
 
   it("renders contentJson with RichContentRenderer when provided and not legacy", async () => {
@@ -124,6 +127,8 @@ describe("ProcessedContent", () => {
   });
 
   it("renders dude link marker", async () => {
+    // The tag gate keys off the raw content, so the marker must be there for
+    // processing to run at all (tag-less posts skip the pipeline entirely).
     const { processVisibilityTags } = await import("@/utils/contentVisibility");
     (processVisibilityTags as any).mockResolvedValueOnce({
       processedContent: "__DUDE_LINK__ said hi",
@@ -133,7 +138,7 @@ describe("ProcessedContent", () => {
 
     render(
       <ProcessedContent
-        content="test"
+        content="[dude][/dude] said hi"
         currentUserId="u1"
         isAdmin={false}
         currentUsername="testuser"
