@@ -592,13 +592,20 @@ const Board = () => {
     loadThreadsRef.current(board.id, false, resolvedChannelId);
   });
 
+  // Membership is resolved asynchronously per board; until the response lands
+  // the join button renders a stable ghost, not a wrong "Вступить".
+  const [membershipKnown, setMembershipKnown] = useState(false);
+
   useEffect(() => {
     const loadMembership = async () => {
+      const needsFetch = Boolean(board?.is_gomosub && user?.id);
+      // Ghost-button state ONLY while a real fetch is in flight; guests and
+      // non-gomosub boards know "not joined" immediately.
+      setMembershipKnown(!needsFetch);
       if (!board?.is_gomosub) {
         setIsJoined(false);
         return;
       }
-
       if (!user?.id) {
         setIsJoined(false);
         return;
@@ -607,6 +614,7 @@ const Board = () => {
       const membershipResponse = await fetch(`/api/v1/gomosub_memberships?board_id=eq.${board.id}&user_id=eq.${user.id}`);
       const membershipResult = await membershipResponse.json();
       setIsJoined((membershipResult.data || []).length > 0);
+      setMembershipKnown(true);
     };
 
     loadMembership();
@@ -1030,7 +1038,10 @@ const Board = () => {
     );
   }
 
-  const hasChannels = isGomoRoute && channels.length > 0;
+  // Layout target must be known on the FIRST paint: a gomosub board will
+  // always draw the channels sidebar, so it takes the wide container before
+  // the channel list arrives (no max-w reflow on entry).
+  const hasChannels = isGomoRoute && (channels.length > 0 || Boolean(board?.is_gomosub));
 
   return (
     <>
@@ -1049,6 +1060,7 @@ const Board = () => {
               tags={gomosubTags}
               viewerId={user?.id ?? null}
               isJoined={isJoined}
+              membershipPending={!membershipKnown}
               memberCount={memberCount}
               membershipLoading={membershipLoading}
               checkingRules={checkingRules}

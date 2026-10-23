@@ -26,6 +26,12 @@ interface GomoSubHeaderProps {
   /** Viewer id (null for guests). */
   viewerId?: string | null;
   isJoined: boolean;
+  /**
+   * Membership not resolved yet (fetch in flight). The join slot renders a
+   * ghost with the same footprint instead of a wrong "Вступить" that flips
+   * to "Вы участник" a frame later.
+   */
+  membershipPending: boolean;
   memberCount: number | null;
   membershipLoading: boolean;
   checkingRules: boolean;
@@ -47,6 +53,7 @@ export const GomoSubHeader = memo(
     tags,
     viewerId,
     isJoined,
+    membershipPending,
     memberCount,
     membershipLoading,
     checkingRules,
@@ -113,12 +120,15 @@ export const GomoSubHeader = memo(
                 <Button
                   variant={isJoined ? "secondary" : "default"}
                   onClick={onToggleJoin}
-                  className={`h-9 px-4 text-sm ${
-                    isJoined
+                  className={membershipPending
+                    // Same footprint as the joined state — the row never shifts
+                    // when the membership response lands.
+                    ? "invisible h-9 px-4 text-sm border border-primary/35 bg-primary/12"
+                    : `h-9 px-4 text-sm ${isJoined
                       ? "border border-primary/35 bg-primary/12 text-primary hover:bg-primary/20"
-                      : "bg-primary text-primary-foreground hover:bg-primary/90"
-                  }`}
-                  disabled={membershipLoading || checkingRules}
+                      : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
+                  disabled={membershipPending || membershipLoading || checkingRules}
+                  aria-busy={membershipPending}
                 >
                   {isJoined ? (
                     <>
@@ -147,12 +157,19 @@ export const GomoSubHeader = memo(
             <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1">
               <h1 className="text-lg sm:text-xl font-bold tracking-tight">{board.name}</h1>
               <span className="text-sm font-semibold text-primary">g/{board.slug}</span>
-              {memberCount != null && (
-                <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Users className="h-3 w-3" />
-                  {formatCompactCount(memberCount)}
-                </span>
-              )}
+              {/* Reserved slot: an invisible placeholder keeps the row from
+                  jumping when the count arrives from the directory cache. */}
+              <span
+                className="flex items-center gap-1 text-xs text-muted-foreground min-w-[3.5rem]"
+                data-testid="gomosub-member-count"
+              >
+                {memberCount != null ? (
+                  <>
+                    <Users className="h-3 w-3" />
+                    {formatCompactCount(memberCount)}
+                  </>
+                ) : null}
+              </span>
               {board.visibility === "private" && <Lock className="h-3.5 w-3.5 text-amber-500" />}
             </div>
 
