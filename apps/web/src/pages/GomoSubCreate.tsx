@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { storageUrl, uploadFile } from "@/utils/storage";
 import { apiErrorMessage } from "@/utils/apiErrors";
+import { GomoSubCreateWizard, type WizardResult } from "@/components/gomosub/GomoSubCreateWizard";
 import { cn } from "@/lib/utils";
 import { ChevronRight, Loader2, CheckCircle2, XCircle, Upload, Minus as MinusIcon, Globe, Lock } from "lucide-react";
 
@@ -42,6 +43,7 @@ const GomoSubCreate = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("requirements");
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
@@ -295,6 +297,72 @@ const GomoSubCreate = () => {
     }
   };
 
+  /**
+   * Wizard path: the template already filled name/description/rules, so we
+   * create the sub straight away and then pour in the preset channels
+   * (best-effort, same plain REST the settings page uses).
+   */
+  const handleWizardCreate = async (draft: WizardResult): Promise<boolean> => {
+    setCreating(true);
+    try {
+      const { data: { session } } = await api.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch("/api/rpc/create_gomosub", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          slug: draft.slug,
+          name: draft.name,
+          description: draft.description,
+          visibility: draft.visibility,
+          rules_markdown: draft.visibility === "private" ? null : draft.rules_markdown,
+          cover_image_url: null,
+          gomosub_avatar_url: draft.avatarPath ?? null,
+          gomosub_tags: [],
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      const board = data.data as { id?: string } | undefined;
+      // Preset channels — sequential so sort_order is respected. Failure of a
+      // channel is non-fatal: the sub exists, channels can be added manually.
+      for (const [i, ch] of draft.channels.entries()) {
+        try {
+          await fetch("/api/v1/channels", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              board_id: board?.id,
+              slug: ch.slug,
+              name: ch.name,
+              kind: ch.kind,
+              sort_order: i,
+              is_private: false,
+              category: null,
+            }),
+          });
+        } catch { /* non-fatal */ }
+      }
+      invalidateByPrefix("/api/v1/boards");
+      toast.success("G-саб создан");
+      navigate(`/g/${draft.slug}`);
+      return true;
+    } catch (error) {
+      toast.error(apiErrorMessage(error as Error, t, "error.generic"));
+      return false;
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto w-full px-3 sm:px-5 pb-32 md:pb-10">
       {step === "requirements" && (
@@ -359,7 +427,7 @@ const GomoSubCreate = () => {
                 const ready = guideRead;
                 return (
                   <Button
-                    onClick={() => setStep("form")}
+                    onClick={() => setWizardOpen(true)}
                     disabled={!canProceed}
                     className="mt-5 h-10 w-full rounded-full"
                   >
@@ -372,6 +440,12 @@ const GomoSubCreate = () => {
                 <button type="button" onClick={() => setShowImportDialog(true)} className="text-primary hover:underline inline-flex items-center gap-1">
                   <Upload className="h-3 w-3" />
                   импортировать саб из архива
+                </button>
+              </div>
+              <div className="mt-1.5 text-center text-xs text-muted-foreground/70">
+                Знаешь, что и как?{" "}
+                <button type="button" onClick={() => setStep("form")} className="underline-offset-2 hover:text-foreground hover:underline">
+                  Классический вариант создания
                 </button>
               </div>
             </div>
@@ -718,6 +792,8 @@ const GomoSubCreate = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      <GomoSubCreateWizard open={wizardOpen} onOpenChange={setWizardOpen} onSubmit={handleWizardCreate} />
     </div>
   );
 };
