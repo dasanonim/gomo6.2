@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
 import { NavigationLink } from "@/components/NavigationLink";
+import { warmRouteIntent } from "@/lib/routeChunks";
 import { api } from "@/integrations/api/compat";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -103,6 +104,9 @@ export const MobileMenu = ({ user, isModerator }: MobileMenuProps) => {
   const feedActive = explicitView === "feed" || (onHome && !homeTab);
 
   const go = (to: string) => {
+    // Menu rows navigate programmatically (no link intent): warm first so
+    // the instant swap lands on cache instead of a cold fetch.
+    warmRouteIntent(to);
     navigate(to);
     setOpen(false);
   };

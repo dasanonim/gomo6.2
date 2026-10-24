@@ -26,6 +26,7 @@ import { useSessionTime } from "@/hooks/useSessionTime";
 import { useProfileInvalidation } from "@/hooks/useProfileInvalidation";
 import { getCurrentUserMeta } from "@/utils/currentUserMeta";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ThreadFeedSkeleton } from "@/components/skeletons/ContentSkeletons";
 import { renderPreviewContent } from "@/utils/emojiUtils.tsx";
 import { renderTags } from "@/components/ThreadCard";
 import { LikeButton } from "@/components/LikeButton";
@@ -1005,11 +1006,15 @@ const Board = () => {
     invalidateGomosubMembership(board.id, user.id);
   };
 
-  // Cold board (no cached row): paint the bare background — no fake post
-  // skeleton, no loaders. The route preloader makes this state rare; a blank
-  // frame is quieter than skeleton → empty → pills → posts churn.
+  // Cold board (no cached row, e.g. a deep link with no intent prefetch):
+  // a shaped thread-list skeleton in the standard board container — same
+  // geometry the list takes — so content fades in without reflow.
   if (!board) {
-    return <div className="bg-background min-h-screen" />;
+    return (
+      <main className="max-w-5xl mx-auto p-2 sm:p-4 md:p-5 flex-1">
+        <ThreadFeedSkeleton count={3} />
+      </main>
+    );
   }
 
   if (privateAccessDenied) {

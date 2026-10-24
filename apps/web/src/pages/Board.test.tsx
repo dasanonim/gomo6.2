@@ -422,14 +422,14 @@ describe("Board (wall)", () => {
     expect(joinCall).toBeTruthy();
   });
 
-  it("paints the bare background on a cold board — no fake post skeleton", async () => {
+  it("holds the list layout with a shaped skeleton on a cold board", async () => {
     mockFetch.mockImplementation(() => new Promise(() => {}));
     const { container } = render(<BoardComponent />);
 
-    // Cold board: nothing renders (no skeleton, no loaders, no empty state) —
-    // the page waits for real data instead of flashing placeholders.
+    // Cold board: a thread-list-shaped skeleton keeps the layout (same
+    // geometry the list takes) — no bare background, no empty-state flash.
     await new Promise((r) => setTimeout(r, 50));
-    expect(container.querySelector("[data-testid='feed-skeleton']")).toBeNull();
+    expect(container.querySelector("[data-testid='feed-skeleton']")).not.toBeNull();
     expect(screen.queryByText("Записей пока нет")).not.toBeInTheDocument();
   });
 

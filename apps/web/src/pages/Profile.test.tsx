@@ -22,6 +22,26 @@ vi.mock("@/integrations/api/compat", () => ({
 vi.mock("@/utils/profileCustomization", () => ({ getProfileCustomization: () => Promise.resolve(null), parseCssToStyle: () => ({}) }));
 vi.mock("@/utils/storage", () => ({ storageUrl: () => null, uploadFile: vi.fn() }));
 
+// The route-data preloader module is mocked (importing it would hoist the
+// api/compat factory before its mock variables exist). `warmProfilePageRow`
+// reproduces the real facade through the global fetch stub, and `seed` lets a
+// test emulate the preloader's handoff: a warmed row the page peeks
+// synchronously on its first render.
+const pd = vi.hoisted(() => {
+  const seed = { current: null as any };
+  const warmProfilePageRow = vi.fn(async (_viewerId: string | undefined, param: string) => {
+    if (seed.current != null) return seed.current;
+    const res = await fetch(`/api/v1/profiles?id=eq.${param}`);
+    const json = await res.json();
+    return json.data?.[0] ?? null;
+  });
+  const peekWarmedProfilePageRow = vi.fn(() => seed.current);
+  return { seed, warmProfilePageRow, peekWarmedProfilePageRow };
+});
+vi.mock("@/routes/data/profileData", () => ({
+  warmProfilePageRow: pd.warmProfilePageRow,
+  peekWarmedProfilePageRow: pd.peekWarmedProfilePageRow,
+}));
 vi.mock("@/components/PentagramLoader", () => ({
   PentagramLoader: () => <div data-testid="pentagram-loader">Loading...</div>,
 }));
@@ -91,6 +111,7 @@ describe("Profile", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    pd.seed.current = null;
   });
 
   function setupOwnProfile() {
@@ -155,23 +176,16 @@ describe("Profile", () => {
     mockRpc.mockResolvedValue({ data: 0, error: null });
   }
 
-  it("never flashes a skeleton while the profile loads", () => {
-    vi.useFakeTimers();
-    try {
-      mockAuth.getSession.mockReturnValue(new Promise(() => {}));
-      mockAuth.getUser.mockReturnValue(new Promise(() => {}));
-      mockAuth.onAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } }, error: null });
+  it("holds the header layout with a shaped skeleton while cold", async () => {
+    // Cold (no warmed row, e.g. a deep link with no intent prefetch): the
+    // first frame keeps the header geometry instead of bare background, so
+    // the row fades in without reflow.
+    mockAuth.getSession.mockReturnValue(new Promise(() => {}));
+    mockAuth.getUser.mockReturnValue(new Promise(() => {}));
+    mockAuth.onAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } }, error: null });
 
-      const { container } = renderWithProviders(<ProfileComponent />);
-      // No skeleton, ever: the header loading bar is the only indicator, and
-      // the profile paints once its row has loaded.
-      act(() => {
-        vi.advanceTimersByTime(1000);
-      });
-      expect(container.querySelector(".animate-pulse")).not.toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
+    const { container } = renderWithProviders(<ProfileComponent />);
+    expect(container.querySelector('[data-testid="profile-skeleton"]')).toBeInTheDocument();
   });
 
   it("renders username after profile loads", async () => {
@@ -181,6 +195,25 @@ describe("Profile", () => {
     await waitFor(() => {
       expect(screen.getByText("testuser")).toBeInTheDocument();
     });
+  });
+
+  it("paints the pre-warmed profile row on the very first render", () => {
+    // Regression (iOS/PWA nav race): the page used to render an empty shell at
+    // the router swap — page background only — and the content popped in a
+    // later commit, un-animated, with the wall trailing after it. The route
+    // preloader fills the same viewer-scoped key, so the first render must
+    // paint the row instantly, before any async work lands.
+    setupOwnProfile();
+    pd.seed.current = {
+      id: "profile-user-1", username: "testuser", bio: "", is_anonymous: false,
+      thread_count: 0, post_count: 0, garma: 0,
+      avatar_url: null, is_online: false, last_seen_at: null,
+    };
+
+    renderWithProviders(<ProfileComponent />);
+
+    // Synchronous — no waitFor: no tick of async work may be needed.
+    expect(screen.getByText("testuser")).toBeInTheDocument();
   });
 
   it("shows achievements tab with count", async () => {

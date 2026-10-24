@@ -18,7 +18,7 @@ import { isValidThemeTokens, applyProfileThemeTokens } from "@/utils/profileThem
 import { getCurrentUserMeta } from "@/utils/currentUserMeta";
 import { useFriendsStore } from "@/stores/friendsStore";
 import { useProfileData } from "./profile/useProfileData";
-import { warmProfilePageRow } from "@/routes/data/profileData";
+import { warmProfilePageRow, peekWarmedProfilePageRow } from "@/routes/data/profileData";
 import { useProfileEditing } from "./profile/useProfileEditing";
 import { ProfileHeader } from "./profile/ProfileHeader";
 import { ProfileStats } from "./profile/ProfileStats";
@@ -31,6 +31,7 @@ import { hasUnreadCloseFriends } from "@/types/stories";
 import { UsernameDialog, AvatarGalleryDialog } from "./profile/ProfileDialogs";
 import type { Profile, ProfilePrivacyData } from "./profile/types";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { ProfileSkeleton } from "@/components/skeletons/ContentSkeletons";
 import {
   EASE_OUT_EXPO,
   hoverLift,
@@ -73,7 +74,21 @@ const Profile = () => {
     [location.state, navigationType],
   );
 
-  const [profile, setProfile] = useState<Profile | null>(null);
+  // The route preloader warmed this profile's row under the same viewer-scoped
+  // key the page reads (App keeps the previous screen until it resolves — see
+  // AppRoutes), so it is usually already cached at mount. Peek it
+  // SYNCHRONOUSLY so the header belongs to the very first painted frame.
+  // Without this the page first committed an empty shell — page background
+  // only — and on iOS/PWA (several frames of jank follow the swap) everything
+  // then popped in un-animated, with the wall cascade trailing behind it. The
+  // prewarmed values are safe to show: private content is stripped
+  // server-side, and the privacy/friendship guards below self-correct when
+  // their reads arrive. A missed peek degrades to loadProfile's own flow.
+  const peekWarmRow = () => peekWarmedProfilePageRow(userId ?? "");
+  const [profile, setProfile] = useState<Profile | null>(() => peekWarmRow());
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(() => peekWarmRow()?.avatar_url ?? null);
+  const [lastSeen, setLastSeen] = useState<string | null>(() => peekWarmRow()?.last_seen_at ?? null);
+  const [isOnline, setIsOnline] = useState<boolean>(() => peekWarmRow()?.is_online || false);
   // A route parameter can resolve to nothing (deleted account, or an old public
   // number that was reissued). Without this flag the page rendered an empty
   // <main> forever — a link to a dead profile used to look like a broken site.
@@ -84,9 +99,6 @@ const Profile = () => {
   const [currentUserColor, setCurrentUserColor] = useState("");
   const [customization, setCustomization] = useState<ProfileCustomization | null>(null);
   const [nicknameEmojiId, setNicknameEmojiId] = useState<string | null>(null);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [lastSeen, setLastSeen] = useState<string | null>(null);
-  const [isOnline, setIsOnline] = useState(false);
   const [showLastSeen, setShowLastSeen] = useState(true);
   const [showOnlineStatus, setShowOnlineStatus] = useState(true);
   const [showProfileWall, setShowProfileWall] = useState(true);
@@ -724,6 +736,10 @@ const Profile = () => {
   // The profile paints as soon as its row is loaded (the header loading bar
   // covers the wait); the parallel reads (privacy, friendship, achievements,
   // avatar history) fill the already-painted page in place.
+  // Cold (no warmed row, e.g. a deep link with no intent prefetch): a shaped
+  // header skeleton holds the layout — same geometry the real header takes —
+  // so the row fades in without reflow instead of popping over bare
+  // background.
 
   const headerElement = profile ? (
     <ProfileHeader
@@ -833,6 +849,11 @@ const Profile = () => {
             )}
           </>
         ) : null)}
+        {!profile && !notFound && (
+          <div className={transitionEnterClass(transitionStyle)} data-testid="profile-skeleton">
+            <ProfileSkeleton />
+          </div>
+        )}
         {!profile && notFound && (
           <motion.div
             initial={prefersReducedMotion ? false : { opacity: 0, y: 8 }}

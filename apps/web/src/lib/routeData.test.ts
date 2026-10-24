@@ -2,13 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Location } from "react-router-dom";
 
 import {
-  preloadRoute,
   prefetchRouteData,
   registerRouteData,
   matchedRouteData,
   shouldPrefetch,
   hasRouteData,
-  LOADER_TIMEOUT_MS,
   __resetRouteData,
 } from "./routeData";
 import { useLoadingBarStore } from "@/stores/loadingBarStore";
@@ -36,79 +34,74 @@ describe("routeData", () => {
     expect(matchedRouteData("/profile/42").map((e) => e.id)).toEqual(["profile"]);
     expect(matchedRouteData("/profile/42/wall/7")).toEqual([]);
 
-    await preloadRoute(location("/profile/42"));
-    expect(warm).toHaveBeenCalledTimes(1);
+    prefetchRouteData(location("/profile/42"));
+    await vi.waitFor(() => expect(warm).toHaveBeenCalledTimes(1));
     expect(warm.mock.calls[0][0].params).toEqual({ userId: "42" });
   });
 
-  it("resolves without warming when no entry matches", async () => {
+  it("warms nothing when no entry matches", async () => {
     const warm = vi.fn();
     registerRouteData({ id: "profile", match: "/profile/:userId", warm });
 
-    await expect(preloadRoute(location("/unrelated"))).resolves.toBeUndefined();
+    prefetchRouteData(location("/unrelated"));
+    await new Promise((r) => setTimeout(r, 10));
     expect(warm).not.toHaveBeenCalled();
   });
 
-  it("shares one in-flight warm-up for concurrent identical preloads", async () => {
+  it("shares one in-flight warm-up for concurrent identical prefetches", async () => {
     let resolve!: () => void;
     const warm = vi.fn(() => new Promise<void>((r) => { resolve = r; }));
     registerRouteData({ id: "thread", match: "/thread/:threadId", warm });
 
-    const a = preloadRoute(location("/thread/1"));
-    const b = preloadRoute(location("/thread/1"));
-    resolve();
-    await Promise.all([a, b]);
-
+    prefetchRouteData(location("/thread/1"));
+    prefetchRouteData(location("/thread/1"));
+    await new Promise((r) => setTimeout(r, 10));
     expect(warm).toHaveBeenCalledTimes(1);
+    resolve();
   });
 
-  it("does not cache a failed warm forever — the next preload retries", async () => {
+  it("does not cache a failed warm forever — the next prefetch retries", async () => {
     const warm = vi.fn()
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValue(undefined);
     registerRouteData({ id: "board", match: "/g/:slug", warm });
 
-    await preloadRoute(location("/g/test"));
-    await preloadRoute(location("/g/test"));
-
-    expect(warm).toHaveBeenCalledTimes(2);
+    prefetchRouteData(location("/g/test"));
+    await vi.waitFor(() => expect(warm).toHaveBeenCalledTimes(1));
+    // Let the rejection settle (in-flight entry released) before retrying.
+    await new Promise((r) => setTimeout(r, 10));
+    prefetchRouteData(location("/g/test"));
+    await vi.waitFor(() => expect(warm).toHaveBeenCalledTimes(2));
   });
 
-  it("drives the header loading bar for a preload, but not for intent prefetch", async () => {
+  it("never drives the header loading bar on intent prefetch", async () => {
     let release!: () => void;
     const warm = vi.fn(() => new Promise<void>((r) => { release = r; }));
     registerRouteData({ id: "slow", match: "/slow", warm });
 
     const before = useLoadingBarStore.getState().count;
-    const pending = preloadRoute(location("/slow"));
-    // Navigation reports progress while its loader is in flight…
-    expect(useLoadingBarStore.getState().count).toBe(before + 1);
-    release();
-    await pending;
-    expect(useLoadingBarStore.getState().count).toBe(before);
-
-    // …hover prefetch never touches the bar.
     prefetchRouteData(location("/slow"));
+    // Navigation is instant now — no progress reported while warming.
     expect(useLoadingBarStore.getState().count).toBe(before);
     release();
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(useLoadingBarStore.getState().count).toBe(before);
   });
 
   it("shows the bar when a navigation joins a bar-less intent prefetch", async () => {
+    // Intent prefetch never drives the bar — navigation is instant now, and
+    // the header bar belongs to the pages' own streaming loads.
     let release!: () => void;
     const warm = vi.fn(() => new Promise<void>((r) => { release = r; }));
     registerRouteData({ id: "joined", match: "/joined", warm });
 
     const before = useLoadingBarStore.getState().count;
     prefetchRouteData(location("/joined"));
+    prefetchRouteData(location("/joined"));
     expect(useLoadingBarStore.getState().count).toBe(before);
 
-    // The click reuses the in-flight prefetch — but must still show the bar.
-    const pending = preloadRoute(location("/joined"));
-    expect(useLoadingBarStore.getState().count).toBe(before + 1);
-
     release();
-    await pending;
+    await new Promise((r) => setTimeout(r, 10));
     expect(useLoadingBarStore.getState().count).toBe(before);
     expect(warm).toHaveBeenCalledTimes(1);
   });
@@ -148,7 +141,7 @@ describe("routeData", () => {
     expect(hasRouteData("/settings")).toBe(false);
   });
 
-  it("stops before the next entry once a newer navigation supersedes it", async () => {
+  it("stops before the next entry once a newer warm-up supersedes it", async () => {
     let releaseFirst!: () => void;
     const first = vi.fn(() => new Promise<void>((r) => { releaseFirst = r; }));
     const second = vi.fn().mockResolvedValue(undefined);
@@ -156,25 +149,13 @@ describe("routeData", () => {
     registerRouteData({ id: "second", match: "/g/one", warm: second });
     registerRouteData({ id: "other", match: "/g/two", warm: vi.fn().mockResolvedValue(undefined) });
 
-    const superseded = preloadRoute(location("/g/one"));
-    // A newer navigation bumps the token before the first entry settles.
-    await preloadRoute(location("/g/two"));
+    prefetchRouteData(location("/g/one"));
+    // A newer warm-up bumps the token before the first entry settles.
+    prefetchRouteData(location("/g/two"));
     releaseFirst();
-    await superseded;
+    await new Promise((r) => setTimeout(r, 10));
 
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).not.toHaveBeenCalled();
-  });
-
-  it("resolves within the loader timeout when a loader never settles", async () => {
-    vi.useFakeTimers();
-    const warm = vi.fn(() => new Promise<void>(() => {}));
-    registerRouteData({ id: "hang", match: "/hang", warm });
-
-    const pending = preloadRoute(location("/hang"));
-    await vi.advanceTimersByTimeAsync(LOADER_TIMEOUT_MS);
-
-    await expect(pending).resolves.toBeUndefined();
-    vi.useRealTimers();
   });
 });

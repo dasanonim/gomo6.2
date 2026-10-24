@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { Location } from "react-router-dom";
 
-import { matchedRouteData, preloadRoute } from "@/lib/routeData";
+import { matchedRouteData, prefetchRouteData } from "@/lib/routeData";
 // Importing the barrel registers every route-data preloader (App does this).
 import "./index";
 
@@ -32,13 +32,15 @@ describe("route data registration", () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ data: null }) });
     vi.stubGlobal("fetch", fetchMock);
 
-    await preloadRoute({
+    prefetchRouteData({
       pathname: "/g/create",
       search: "",
       hash: "",
       state: null,
       key: "test",
     } as Location);
+    // Fire-and-forget: give the warm-up a chance to run before asserting.
+    await new Promise((r) => setTimeout(r, 10));
 
     expect(fetchMock).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
