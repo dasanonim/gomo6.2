@@ -4,8 +4,7 @@ import { useTranslation } from "react-i18next";
 import { SubscriptionList } from "@/components/SubscriptionList";
 import { useFriendsStore } from "@/stores/friendsStore";
 import { SPRING } from "@/lib/motion";
-import { transitionEnterClass } from "@/lib/viewTransitions";
-import { useTransitionStyle } from "@/hooks/useTransitionStyle";
+import { ContentEnter } from "@/components/motion/ContentEnter";
 
 type Mode = "subscribers" | "subscriptions";
 
@@ -20,7 +19,6 @@ type Mode = "subscribers" | "subscriptions";
  */
 export const SubscriptionsPanel = ({ userId, limit }: { userId: string; limit?: number }) => {
   const { t } = useTranslation();
-  const transitionStyle = useTransitionStyle();
   const [mode, setMode] = useState<Mode>("subscribers");
 
   const profileSubscribers = useFriendsStore((s) => s.profileSubscribers);
@@ -59,7 +57,7 @@ export const SubscriptionsPanel = ({ userId, limit }: { userId: string; limit?: 
   ];
 
   return (
-    <div className={transitionEnterClass(transitionStyle)}>
+    <ContentEnter>
       <div className="mb-3 flex flex-wrap items-center gap-0.5 rounded-full bg-muted/60 p-0.5">
         {segments.map((segment) => {
           const active = mode === segment.key;
@@ -91,6 +89,6 @@ export const SubscriptionsPanel = ({ userId, limit }: { userId: string; limit?: 
       </div>
 
       <SubscriptionList kind={mode} limit={limit} />
-    </div>
+    </ContentEnter>
   );
 };

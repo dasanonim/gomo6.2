@@ -8,8 +8,7 @@ import type { GiftCatalogItem } from "@/components/GiftCard";
 import { UpgradedGiftCard } from "@/components/UpgradedGiftCard";
 import { GiftDetailPanel } from "@/components/GiftDetailPanel";
 import { formatDropsLabel } from "@/utils/formatDropsLabel";
-import { transitionEnterClass } from "@/lib/viewTransitions";
-import { useTransitionStyle } from "@/hooks/useTransitionStyle";
+import { ContentEnter } from "@/components/motion/ContentEnter";
 import { toast } from "sonner";
 
 interface UserGiftItem {
@@ -49,7 +48,6 @@ interface GiftsTabProps {
 }
 
 export function GiftsTab({ userId, isOwnProfile, giftCatalog, recipientUsername, onGiftSent }: GiftsTabProps) {
-  const transitionStyle = useTransitionStyle();
   const [gifts, setGifts] = useState<UserGiftItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [offset, setOffset] = useState(0);
@@ -195,7 +193,7 @@ export function GiftsTab({ userId, isOwnProfile, giftCatalog, recipientUsername,
   if (loading && gifts.length === 0) return null;
 
   return (
-    <div className={`relative ${transitionEnterClass(transitionStyle)}`}>
+    <ContentEnter className="relative">
       {gifts.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
           <Gift className="w-10 h-10 mb-3 opacity-50" />
@@ -437,6 +435,6 @@ export function GiftsTab({ userId, isOwnProfile, giftCatalog, recipientUsername,
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </ContentEnter>
   );
 }

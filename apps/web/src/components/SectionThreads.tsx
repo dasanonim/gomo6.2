@@ -9,6 +9,7 @@ import { QuietLoading } from "@/components/QuietLoading";
 import type { SectionWithSubsections, ThreadSubsection } from "@/hooks/useThreadSections";
 import { useLoadingBarStore } from "@/stores/loadingBarStore";
 import { fetchThreadLikesBatch, toFeedThread, type ThreadApiRow } from "@/utils/threadFeedItem";
+import { ContentEnter } from "@/components/motion/ContentEnter";
 
 const PAGE_SIZE = 20;
 
@@ -172,11 +173,10 @@ export const SectionThreads = ({
         };
         // All разделы (and their подразделы) share this one component instance,
         // so switching between them does NOT change the parent's shown-mode —
-        // the swap below IS the navigation. Wrap it in a view transition (the
-        // inner `.view-fade-in` covers the fade style) so the swap is what
-        // animates, instead of the content popping in and an empty transition
-        // playing afterwards. The key compares подраздел too: two подразделы of
-        // one раздел share the section id.
+        // the swap below IS the navigation. The keyed ContentEnter replays the
+        // dimensional morph on every swap, so the swap itself animates instead
+        // of the content popping in. The key compares подраздел too: two
+        // подразделы of one раздел share the section id.
         commit();
       } catch (error) {
         if (cancelled) return;
@@ -333,9 +333,8 @@ export const SectionThreads = ({
           <p className="mt-2 text-sm text-muted-foreground">Стань первым — создай тему в этом разделе</p>
         </div>
       ) : view === "compact" ? (
-        <div
+        <ContentEnter
           key={cacheKey(displayed.section.id, displayed.subsection?.id)}
-          className="view-fade-in"
         >
           <CompactThreadList
             rows={rows}
@@ -344,11 +343,11 @@ export const SectionThreads = ({
             currentUserId={currentUserId}
           />
           {loadMoreSentinel}
-        </div>
+        </ContentEnter>
       ) : (
-        <div
+        <ContentEnter
           key={cacheKey(displayed.section.id, displayed.subsection?.id)}
-          className="space-y-4 view-fade-in"
+          className="space-y-4"
         >
           {rows.map((row) => {
             const thread = toFeedThread(row);
@@ -371,7 +370,7 @@ export const SectionThreads = ({
           })}
 
           {loadMoreSentinel}
-        </div>
+        </ContentEnter>
       )}
 
       {galleryItems && (

@@ -7,8 +7,7 @@ import { storageUrl } from "@/utils/storage";
 import { Button } from "@/components/ui/button";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { useLoadingBarStore } from "@/stores/loadingBarStore";
-import { transitionEnterClass } from "@/lib/viewTransitions";
-import { useTransitionStyle } from "@/hooks/useTransitionStyle";
+import { ContentEnter } from "@/components/motion/ContentEnter";
 import { ProcessedContent } from "@/components/ProcessedContent";
 import { SpotifyNowPlaying } from "@/components/SpotifyNowPlaying";
 import { useUserRealtimeStatus } from "@/hooks/useRealtimeStatus";
@@ -67,7 +66,6 @@ const Profile = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const navigationType = useNavigationType();
-  const transitionStyle = useTransitionStyle();
   const prefersReducedMotion = useReducedMotion();
   const profileAvatarOrigin = useMemo(
     () => navigationType === "PUSH" ? readProfileAvatarOrigin(location.state) : null,
@@ -850,9 +848,9 @@ const Profile = () => {
           </>
         ) : null)}
         {!profile && !notFound && (
-          <div className={transitionEnterClass(transitionStyle)} data-testid="profile-skeleton">
+          <ContentEnter data-testid="profile-skeleton">
             <ProfileSkeleton />
-          </div>
+          </ContentEnter>
         )}
         {!profile && notFound && (
           <motion.div
@@ -869,7 +867,7 @@ const Profile = () => {
           </motion.div>
         )}
         {profile && (
-          <div className={transitionEnterClass(transitionStyle)}>
+          <ContentEnter>
           {/* Two-column forum layout: when a side is active, the relocated
               profile panel is rendered as a first-class column and the rest of
               the profile reflows beside it. The AnimatePresence stays mounted
@@ -1120,7 +1118,7 @@ const Profile = () => {
           </AnimatePresence>
             </div>
           </div>
-          </div>
+          </ContentEnter>
         )}
 
         {/* Avatar Gallery */}
