@@ -231,8 +231,25 @@ export const ThreadFeed = ({
         });
         setHasMore(hasMoreData);
       } else {
-        itemsRef.current = feedItems;
-        setItems(feedItems);
+        // Skip the commit when the fresh page is identical (same rows, same
+        // like state): a redundant setItems re-renders all twenty cards in
+        // the middle of the entrance and drops its frames.
+        const prev = itemsRef.current;
+        const unchanged =
+          prev.length === feedItems.length &&
+          feedItems.every((item, i) => {
+            const p = prev[i];
+            return (
+              p !== undefined &&
+              p.item_id === item.item_id &&
+              p.likes_count === item.likes_count &&
+              p.liked_by_viewer === item.liked_by_viewer
+            );
+          });
+        if (!unchanged) {
+          itemsRef.current = feedItems;
+          setItems(feedItems);
+        }
         setHasMore(hasMoreData);
         writeFeedPageCache(currentUserId, limit, feedItems, hasMoreData);
         if (feedItems.length > 0) advanceSeen(Math.max(...feedItems.map(createdMs)));

@@ -2,18 +2,22 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PostCardActions, PostCardHeading, PostCardShell } from "@/components/post/PostCardChrome";
 
 export function StoriesRailSkeleton() {
+  // Exact geometry of the live rail (nav.mb-4 > scroll px-1.5 py-1.5 >
+  // w-[76px] items, md avatars + 11px labels) so the swap never shifts layout.
   return (
     <div
-      className="mb-4 flex gap-4 overflow-hidden"
+      className="mb-4"
       aria-hidden="true"
       data-testid="stories-rail-skeleton"
     >
-      {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="flex w-[76px] shrink-0 flex-col items-center gap-2">
-          <Skeleton pulse={false} className="h-12 w-12 rounded-full" />
-          <Skeleton pulse={false} className="h-2 w-10" />
-        </div>
-      ))}
+      <div className="flex gap-4 overflow-hidden px-1.5 py-1.5">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="flex w-[76px] shrink-0 flex-col items-center gap-1.5">
+            <Skeleton pulse={false} className="h-12 w-12 rounded-full" />
+            <Skeleton pulse={false} className="h-4 w-10" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

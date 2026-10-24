@@ -55,12 +55,12 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Page-level entrance: a dimensional morph, not a bare fade (MOTION_DESIGN
-  // pattern 2 — голый opacity-fade это «веб-страница с CSS-переходами»).
-  // Content settles from scale 0.98 + 10px on the shared standard spring
-  // while opacity rides the expo light-twin. No remount: the controls
-  // retarget the live tree, so a re-tap mid-flight reverses from the current
-  // values with velocity instead of restarting.
+  // Page-level entrance: rise + expo fade, never scale. A scale on the whole
+  // <main> (twenty cards with images) forces the GPU to re-rasterize the
+  // giant layer every frame and the entrance stutters on entry; a translate
+  // only re-composites. No remount: the controls retarget the live tree, so
+  // a re-tap mid-flight reverses from the current values with velocity
+  // instead of restarting.
   const transitionStyle = useTransitionStyle();
   const reduceMotion = useReducedMotion();
   const enterControls = useAnimationControls();
@@ -73,14 +73,12 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
     // Index animates those itself.
     if (prev === location.pathname || (isFeedRoute(prev) && isFeedRoute(location.pathname))) return;
     if (transitionStyle === "none" || reduceMotion) return;
-    enterControls.set({ opacity: 0, scale: 0.98, y: 10 });
+    enterControls.set({ opacity: 0, y: 10 });
     void enterControls.start({
       opacity: 1,
-      scale: 1,
       y: 0,
       transition: {
         opacity: { duration: 0.16, ease: EASE_OUT_EXPO },
-        scale: springFor("standard", false),
         y: springFor("standard", false),
       },
     });
