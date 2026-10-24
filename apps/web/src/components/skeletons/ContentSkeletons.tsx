@@ -148,33 +148,74 @@ export function ConversationListSkeleton({
 }
 
 /**
- * Sidebar search pill — the exact `.sidebar-top` bar (40px pill, muted glass)
- * the live list always renders above the rows: search glyph + placeholder
- * line in the input's text box, 34px round button on the right.
+ * Chunk-fallback messenger sidebar: search pill + conversation rows.
+ *
+ * Deliberately Tailwind ONLY — never the `.messenger-*` classes. The
+ * fallback renders before the Messages chunk (and its messenger.css)
+ * arrives, so chunk-scoped classes would paint unstyled here (giant bare
+ * bars). Geometry mirrors messenger.css 1:1, including the phone-only
+ * search offset under the header (`--app-header-height + 10px`).
  */
-export function MessengerSearchSkeleton() {
+const FALLBACK_PREVIEW_WIDTHS = ["w-3/4", "w-1/2", "w-2/3", "w-5/6", "w-2/5", "w-3/5"];
+
+function MessengerFallbackRow({ previewWidth, withBadge = false }: { previewWidth: string; withBadge?: boolean }) {
   return (
-    <div className="sidebar-top" aria-hidden="true">
-      <div className="sidebar-search-wrap">
-        <Skeleton pulse={false} className="absolute left-[10px] h-[17px] w-[17px] rounded-full" />
-        <Skeleton pulse={false} className="ml-[34px] h-3.5 w-28" />
+    <div className="grid grid-cols-[44px_minmax(0,1fr)] items-center gap-[10px] px-[14px] py-[10px] max-[640px]:px-[10px] max-[640px]:py-2">
+      <Skeleton pulse={false} className="h-11 w-11 rounded-full" />
+      <div className="min-w-0 overflow-hidden">
+        <div className="flex items-center justify-between gap-2">
+          <Skeleton pulse={false} className="h-3.5 w-28" />
+          <Skeleton pulse={false} className="h-2.5 w-10 flex-none" />
+        </div>
+        <div className="mt-[3px] flex items-center justify-between gap-2">
+          <Skeleton pulse={false} className={`h-3 ${previewWidth}`} />
+          {withBadge && <Skeleton pulse={false} className="h-5 w-5 flex-none rounded-full" />}
+        </div>
       </div>
-      <Skeleton pulse={false} className="mr-[3px] h-[34px] w-[34px] flex-none rounded-full" />
+    </div>
+  );
+}
+
+export function MessengerFallbackSidebar({ count = 6 }: { count?: number }) {
+  return (
+    <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-card" aria-hidden="true">
+      {/* search pill: 40px, same margins as .sidebar-top */}
+      <div className="mx-[14px] mb-[10px] mt-3 flex h-10 items-center rounded-full border border-border/45 bg-muted/70 max-[980px]:mt-[calc(var(--app-header-height,70px)+10px)] max-[640px]:mx-[10px] max-[640px]:mb-2 max-[640px]:mt-[calc(var(--app-header-height,60px)+10px)]">
+        <div className="flex min-w-0 flex-1 items-center">
+          <Skeleton pulse={false} className="ml-[10px] h-[17px] w-[17px] flex-none rounded-full" />
+          <Skeleton pulse={false} className="ml-[7px] h-3.5 w-28" />
+        </div>
+        <Skeleton pulse={false} className="mr-[3px] h-[34px] w-[34px] flex-none rounded-full" />
+      </div>
+      {/* rows: notes card first, then conversations */}
+      <div className="grid content-start gap-0 overflow-hidden px-0 pb-2 pt-1" role="status" aria-label="Загружаем диалоги">
+        <span className="sr-only">Загружаем диалоги</span>
+        <MessengerFallbackRow previewWidth="w-2/3" />
+        {Array.from({ length: count }).map((_, i) => (
+          <MessengerFallbackRow
+            key={i}
+            previewWidth={FALLBACK_PREVIEW_WIDTHS[i % FALLBACK_PREVIEW_WIDTHS.length]}
+            withBadge={i === 1}
+          />
+        ))}
+      </div>
     </div>
   );
 }
 
 /**
- * Empty-chat hero — the same `.empty-thread.hero.chat-empty-state` card the
- * real ChatView renders with no conversation selected: icon disc, title
- * line, subtitle line, same margins.
+ * Chunk-fallback empty-chat hero: centered card, same footprint as
+ * `.empty-thread.hero.chat-empty-state`. Desktop only — on phones the chat
+ * panel slides in only when a conversation opens.
  */
-export function MessengerHeroSkeleton() {
+export function MessengerFallbackHero() {
   return (
-    <div className="empty-thread hero chat-empty-state" aria-hidden="true">
-      <Skeleton pulse={false} className="h-11 w-11 rounded-full" />
-      <Skeleton pulse={false} className="h-4 w-32" />
-      <Skeleton pulse={false} className="h-3 w-56 max-w-full" />
+    <div className="hidden min-h-0 place-items-center overflow-auto p-6 min-[981px]:grid" aria-hidden="true">
+      <div className="grid w-[min(480px,calc(100%-48px))] place-items-center gap-2.5 rounded-[var(--radius)] border border-border/70 bg-card/55 p-6 text-center">
+        <Skeleton pulse={false} className="h-11 w-11 rounded-full" />
+        <Skeleton pulse={false} className="h-4 w-32" />
+        <Skeleton pulse={false} className="h-3 w-56 max-w-full" />
+      </div>
     </div>
   );
 }

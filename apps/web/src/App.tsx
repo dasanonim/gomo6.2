@@ -8,9 +8,8 @@ import { AppLayout } from "@/components/AppLayout";
 import { LazyPage } from "@/components/LazyPage";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  ConversationListSkeleton,
-  MessengerHeroSkeleton,
-  MessengerSearchSkeleton,
+  MessengerFallbackHero,
+  MessengerFallbackSidebar,
   ProfileSkeleton,
   StoriesRailSkeleton,
   ThreadFeedSkeleton,
@@ -271,15 +270,12 @@ const FeedFallback = () => (
 );
 
 const MessagesFallback = () => (
-  <div className="messenger-app" data-kb-app>
-    <div className="messenger-shell">
-      <aside className="sidebar-panel is-open">
-        <MessengerSearchSkeleton />
-        <ConversationListSkeleton />
-      </aside>
-      <section className="chat-panel is-empty">
-        <MessengerHeroSkeleton />
-      </section>
+  // Self-sufficient: Tailwind only, no .messenger-* classes — the chunk CSS
+  // is not here yet when this paints.
+  <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background min-[981px]:rounded-[var(--radius)] min-[981px]:border" aria-hidden="true" data-kb-app>
+    <div className="grid min-h-0 w-full flex-1 grid-cols-1 min-[981px]:grid-cols-[320px_minmax(0,1fr)]">
+      <MessengerFallbackSidebar />
+      <MessengerFallbackHero />
     </div>
   </div>
 );
