@@ -6,6 +6,7 @@ import { AdminBadge } from "./AdminBadge";
 import { NicknameEmoji } from "./NicknameEmoji";
 import { useProfileCache } from "@/contexts/ProfileCacheContext";
 import { profileUrl } from "@/utils/entityUrl";
+import { warmRouteIntent } from "@/lib/routeChunks";
 
 interface CachedProfile {
   username: string;
@@ -53,7 +54,12 @@ export const HeaderUsername = memo(({ userId, className = "" }: HeaderUsernamePr
     <ProfileHoverCard userId={userId} showDrops>
       <span
         className={`inline-flex items-center gap-1 cursor-pointer group ${className}`}
-        onClick={() => navigate(profileUrl({ id: userId, public_id: profileData.public_id }))}
+        onClick={() => {
+          const to = profileUrl({ id: userId, public_id: profileData.public_id });
+          // A span, not a link — no hover intent to warm from.
+          warmRouteIntent(to);
+          navigate(to);
+        }}
         style={{ userSelect: 'none' }}
       >
         <span className={`${usernameClassName} relative inline-block transition-transform duration-200 group-hover:translate-x-0.5`} style={usernameStyle}>

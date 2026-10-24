@@ -26,6 +26,7 @@ import { useSessionTime } from "@/hooks/useSessionTime";
 import { useProfileInvalidation } from "@/hooks/useProfileInvalidation";
 import { getCurrentUserMeta } from "@/utils/currentUserMeta";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ThreadFeedSkeleton } from "@/components/skeletons/ContentSkeletons";
 import { renderPreviewContent } from "@/utils/emojiUtils.tsx";
 import { renderTags } from "@/components/ThreadCard";
 import { LikeButton } from "@/components/LikeButton";
@@ -79,6 +80,7 @@ interface Thread {
     display_name?: string | null;
     nickname_emoji_id?: string | null;
     is_anonymous: boolean;
+    avatar_url?: string | null;
   } | null;
   latest_post?: {
     content: string;
@@ -90,6 +92,7 @@ interface Thread {
       display_name?: string | null;
       nickname_emoji_id?: string | null;
       is_anonymous: boolean;
+      avatar_url?: string | null;
     } | null;
   };
 }
@@ -343,12 +346,12 @@ const Board = () => {
     allLatestPosts.forEach((p: Record<string, unknown>) => { if (p.user_id) userIds.add(p.user_id as string); });
 
     // Batch fetch all profiles (for is_anonymous + username)
-    const profilesMap = new Map<string, { id: string; username: string; display_name?: string | null; nickname_emoji_id?: string | null; is_anonymous: boolean }>();
+    const profilesMap = new Map<string, { id: string; username: string; display_name?: string | null; nickname_emoji_id?: string | null; is_anonymous: boolean; avatar_url?: string | null }>();
     const userIdArray = [...userIds];
     if (userIdArray.length > 0) {
       const profilesResponse = await fetch(`/api/v1/profiles?id=in.(${userIdArray.join(',')})`);
       const profilesResult = await profilesResponse.json();
-      (profilesResult.data || []).forEach((p: { id: string; username: string; display_name?: string | null; nickname_emoji_id?: string | null; is_anonymous: boolean }) => profilesMap.set(p.id, p));
+      (profilesResult.data || []).forEach((p: { id: string; username: string; display_name?: string | null; nickname_emoji_id?: string | null; is_anonymous: boolean; avatar_url?: string | null }) => profilesMap.set(p.id, p));
     }
 
     // Build result with profiles and latest posts
@@ -367,13 +370,13 @@ const Board = () => {
 
       return {
         ...thread,
-        profiles: profile ? { username: profile.username, display_name: profile.display_name, nickname_emoji_id: profile.nickname_emoji_id, is_anonymous: profile.is_anonymous } : null,
+        profiles: profile ? { username: profile.username, display_name: profile.display_name, nickname_emoji_id: profile.nickname_emoji_id, is_anonymous: profile.is_anonymous, avatar_url: profile.avatar_url } : null,
         latest_post: post ? {
           content: post.content,
           created_at: post.created_at,
           is_private: post.is_private,
           user_id: post.user_id,
-          profiles: postProfile ? { username: postProfile.username, display_name: postProfile.display_name, nickname_emoji_id: postProfile.nickname_emoji_id, is_anonymous: postProfile.is_anonymous } : null,
+          profiles: postProfile ? { username: postProfile.username, display_name: postProfile.display_name, nickname_emoji_id: postProfile.nickname_emoji_id, is_anonymous: postProfile.is_anonymous, avatar_url: postProfile.avatar_url } : null,
         } : undefined,
       };
     });
@@ -1003,11 +1006,15 @@ const Board = () => {
     invalidateGomosubMembership(board.id, user.id);
   };
 
-  // Cold board (no cached row): paint the bare background — no fake post
-  // skeleton, no loaders. The route preloader makes this state rare; a blank
-  // frame is quieter than skeleton → empty → pills → posts churn.
+  // Cold board (no cached row, e.g. a deep link with no intent prefetch):
+  // a shaped thread-list skeleton in the standard board container — same
+  // geometry the list takes — so content fades in without reflow.
   if (!board) {
-    return <div className="bg-background min-h-screen" />;
+    return (
+      <main className="max-w-5xl mx-auto p-2 sm:p-4 md:p-5 flex-1">
+        <ThreadFeedSkeleton count={3} />
+      </main>
+    );
   }
 
   if (privateAccessDenied) {

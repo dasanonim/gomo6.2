@@ -6,6 +6,12 @@ import { logClientError } from '@/lib/logging';
 
 interface LazyPageProps {
   component: ComponentType;
+  /**
+   * Shown while the route's chunk parses (usually a blink — chunks are
+   * PWA-precached; intent prefetch warms the rest). Shaped per route so a
+   * cold first visit still lands on a layout-matching frame, not a spinner.
+   */
+  fallback?: ReactNode;
 }
 
 interface LazyErrorBoundaryState {
@@ -68,12 +74,14 @@ class LazyErrorBoundary extends Component<{ children: ReactNode }, LazyErrorBoun
   }
 }
 
-export const LazyPage = memo(({ component: Component }: LazyPageProps) => (
+export const LazyPage = memo(({ component: Component, fallback }: LazyPageProps) => (
   <Suspense
     fallback={
-      <div className="bg-background flex items-center justify-center min-h-screen">
-        <PentagramLoader size="lg" />
-      </div>
+      fallback ?? (
+        <div className="bg-background flex items-center justify-center min-h-screen">
+          <PentagramLoader size="lg" />
+        </div>
+      )
     }
   >
     <LazyErrorBoundary>

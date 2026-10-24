@@ -4,8 +4,7 @@ import { toast } from "sonner";
 
 import { ThreadCard } from "@/components/ThreadCard";
 import { useLoadingBarStore } from "@/stores/loadingBarStore";
-import { transitionEnterClass } from "@/lib/viewTransitions";
-import { useTransitionStyle } from "@/hooks/useTransitionStyle";
+import { ContentEnter } from "@/components/motion/ContentEnter";
 
 interface ProfileThreadsTabProps {
   userId: string;
@@ -67,7 +66,6 @@ export const ProfileThreadsTab = ({
   currentUserColor,
 }: ProfileThreadsTabProps) => {
   const { t } = useTranslation();
-  const transitionStyle = useTransitionStyle();
 
   const [threads, setThreads] = useState<ThreadRow[]>([]);
   const [likesMap, setLikesMap] = useState<Map<string, { count: number; isLiked: boolean }>>(new Map());
@@ -184,7 +182,7 @@ export const ProfileThreadsTab = ({
   if (!loaded) return null;
 
   return (
-    <div className={transitionEnterClass(transitionStyle)}>
+    <ContentEnter>
       {threads.length === 0 ? (
         <p className="text-muted-foreground">{t("profile.noThreads")}</p>
       ) : (
@@ -209,6 +207,6 @@ export const ProfileThreadsTab = ({
 
       {/* Scroll sentinel — invisible; the observer watches it. */}
       {hasMore && <div ref={sentinelRef} className="h-px" aria-hidden="true" />}
-    </div>
+    </ContentEnter>
   );
 };

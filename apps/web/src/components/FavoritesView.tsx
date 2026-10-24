@@ -10,6 +10,7 @@ import { QuietLoading } from "@/components/QuietLoading";
 import { favoriteKey, useFavoritesStore } from "@/stores/favoritesStore";
 import { useLoadingBarStore } from "@/stores/loadingBarStore";
 import type { WallPost } from "@/utils/wallNormalizers";
+import { ContentEnter } from "@/components/motion/ContentEnter";
 
 const PAGE_SIZE = 30;
 
@@ -186,7 +187,7 @@ export const FavoritesView = ({
           </p>
         </div>
       ) : (
-        <div className="space-y-4 view-fade-in">
+        <ContentEnter className="space-y-4">
           {body}
 
           {hasMore && (
@@ -201,7 +202,7 @@ export const FavoritesView = ({
               </button>
             </div>
           )}
-        </div>
+        </ContentEnter>
       )}
 
       {galleryItems && (

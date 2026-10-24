@@ -1,11 +1,19 @@
-import { useEffect, useState, lazy, type ComponentType } from "react";
+import { useEffect, useRef, lazy, type ComponentType } from "react";
 import { Toaster as Sonner, toast } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/integrations/api/queryClient";
-import { BrowserRouter, Routes, Route, Outlet, Navigate, useLocation, type Location } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Outlet, Navigate, useLocation, useNavigationType, type Location } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { LazyPage } from "@/components/LazyPage";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  MessengerFallbackHero,
+  MessengerFallbackSidebar,
+  ProfileSkeleton,
+  StoriesRailSkeleton,
+  ThreadFeedSkeleton,
+} from "@/components/skeletons/ContentSkeletons";
 import { AuthGuard } from "@/components/AuthGuard";
 import { VideoEditorHost } from "@/components/VideoEditorHost";
 import { StoryComposer } from "@/components/stories/StoryComposer";
@@ -13,11 +21,8 @@ import { StoryViewer } from "@/components/stories/StoryViewer";
 import { ThemeSync } from "@/components/ThemeSync";
 import { applyTheme, getStoredPrefs, syncSharedAppearanceCookies, watchSystemMode } from "@/theme";
 import { applyCustomFont, getStoredCustomFont } from "@/lib/customFont";
-import { isFeedRoute } from "@/lib/viewTransitions";
-import { preloadRoute } from "@/lib/routeData";
-import { loadRouteChunk } from "@/lib/routeChunks";
 import { MotionGate } from "@/hooks/MotionGate";
-// Registers the per-route data preloaders (stale-view retention).
+// Registers the per-route data preloaders (intent prefetch).
 import "@/routes/data";
 import { wsService } from "./services/websocket";
 import { useSpotifyAuthorPolling } from "@/hooks/useSpotifyAuthorPolling";
@@ -246,69 +251,144 @@ const App = () => {
   );
 };
 
+// Chunk-level fallbacks: shaped per main tab (same skeletons the pages show
+// for cold data), so even a cold first visit lands on a layout-matching
+// frame instead of a full-screen spinner. Data-cold states are handled inside
+// the pages themselves.
+const FeedFallback = () => (
+  <div className="bg-background min-h-screen">
+    <div className="max-w-6xl mx-auto px-4 py-6">
+      <div className="flex flex-col lg:grid lg:grid-cols-4 gap-6">
+        <div className="lg:col-span-3">
+          <StoriesRailSkeleton />
+          <ThreadFeedSkeleton />
+        </div>
+        <div className="hidden lg:block lg:col-span-1" aria-hidden="true" />
+      </div>
+    </div>
+  </div>
+);
+
+const MessagesFallback = () => (
+  // Self-sufficient: Tailwind only, no .messenger-* classes — the chunk CSS
+  // is not here yet when this paints. Mirrors .messenger-app: bordered card
+  // on desktop, fixed full-viewport surface on phones (≤980px) — without the
+  // fixed positioning the in-flow offset stacks with the pill's own
+  // header+10 margin and the search lands too low.
+  <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background min-[981px]:rounded-[var(--radius)] min-[981px]:border max-[980px]:fixed max-[980px]:inset-0 max-[980px]:overflow-x-hidden" aria-hidden="true" data-kb-app>
+    <div className="grid min-h-0 w-full flex-1 grid-cols-1 min-[981px]:grid-cols-[320px_minmax(0,1fr)]">
+      <MessengerFallbackSidebar />
+      <MessengerFallbackHero />
+    </div>
+  </div>
+);
+
+const GomoSubsFallback = () => (
+  <div className="max-w-6xl mx-auto w-full px-3 sm:px-5">
+    {/* search + view controls strip */}
+    <div className="sticky top-[var(--app-header-pad,60px)] z-30 py-2.5" aria-hidden="true">
+      <div className="rounded-2xl border border-border/50 bg-surface/85 p-2 shadow-sm">
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-9 flex-1 rounded-full" pulse={false} />
+          <Skeleton className="h-9 w-9 shrink-0 rounded-full" pulse={false} />
+        </div>
+      </div>
+    </div>
+    {/* joined rail */}
+    <section aria-hidden="true">
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-4 w-32" pulse={false} />
+        <Skeleton className="h-8 w-8 rounded-full" pulse={false} />
+      </div>
+      <div className="mt-2 flex gap-2 overflow-hidden pb-1">
+        {[112, 96, 120].map((w, i) => (
+          <span
+            key={i}
+            className="flex shrink-0 items-center gap-2 rounded-full border border-border/60 bg-surface py-1.5 pl-2 pr-3.5"
+          >
+            <Skeleton className="h-7 w-7 rounded-full" pulse={false} />
+            <Skeleton className="h-4" style={{ width: w }} pulse={false} />
+          </span>
+        ))}
+      </div>
+    </section>
+    {/* catalog grid */}
+    <main className="mt-4 pb-10">
+      <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="overflow-hidden rounded-2xl border border-border/70 bg-surface">
+            <Skeleton className="h-24 w-full rounded-none sm:h-28" pulse={false} />
+            <div className="space-y-2.5 px-4 pb-4 pt-10">
+              <Skeleton className="h-4 w-2/3" pulse={false} />
+              <Skeleton className="h-3 w-1/3" pulse={false} />
+              <Skeleton className="h-3 w-full" pulse={false} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </main>
+  </div>
+);
+
+const ProfileFallback = () => (
+  <div className="mx-auto p-4" style={{ maxWidth: 672 }}>
+    <ProfileSkeleton />
+  </div>
+);
+
+// Shared element so every feed-ish route shows the same chunk fallback.
+const feedFallback = <FeedFallback />;
+
 // The route tree. Wall posts opened from the profile/feed use the "background
 // location" pattern: the previous page (profile or feed) is kept mounted under
 // the post, and the post renders as a full-screen overlay that can be dragged
 // away over it. A direct link falls back to the plain in-layout page.
 function AppRoutes() {
   const location = useLocation();
+  const navigationType = useNavigationType();
   const backgroundLocation = (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation ?? null;
 
-  // Page-level transitions keep stale-view retention: the router keeps
-  // rendering the previous location until the target route's chunk AND data
-  // resolve, then swaps plainly and lets the shared `.view-fade-in` entrance
-  // play (Settings can switch animations off entirely).
-  const [displayLocation, setDisplayLocation] = useState(location);
+  const prevPathRef = useRef(location.pathname);
 
+  // Instant navigation: the URL and the view swap in the same commit — the
+  // previous screen is never held. First paint comes from cache (intent
+  // prefetch + per-page synchronous peeks) or a shaped skeleton; the header
+  // loading bar covers the streaming rest. PUSH to a new path resets the
+  // scroll (native-app feel); POP keeps it, overlays never scroll the page.
   useEffect(() => {
-    if (location === displayLocation) return;
-    // The wall-post overlay keeps the page underneath; don't animate the swap.
-    if (backgroundLocation) {
-      setDisplayLocation(location);
-      return;
-    }
-    // Feed + раздел routes animate their own views (Index/usePendingView).
-    if (isFeedRoute(displayLocation.pathname) && isFeedRoute(location.pathname)) {
-      setDisplayLocation(location);
-      return;
-    }
-
-    let cancelled = false;
-    Promise.all([preloadRoute(location), loadRouteChunk(location.pathname)]).then(() => {
-      if (cancelled) return;
-      setDisplayLocation(location);
-    });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location]);
+    const prev = prevPathRef.current;
+    prevPathRef.current = location.pathname;
+    if (backgroundLocation) return;
+    if (navigationType !== "PUSH") return;
+    if (prev === location.pathname) return;
+    window.scrollTo(0, 0);
+  }, [location, backgroundLocation, navigationType]);
 
   return (
     <>
-      <Routes location={backgroundLocation ?? displayLocation}>
+      <Routes location={backgroundLocation ?? location}>
         {/* Special pages without layout */}
         <Route path="/auth" element={<LazyPage component={Auth} />} />
         <Route path="/oauth/consent" element={<LazyPage component={OAuthConsent} />} />
 
         {/* Pages with layout */}
         <Route path="/" element={<AppLayout><Outlet /></AppLayout>}>
-          <Route index element={<LazyPage component={Index} />} />
+          <Route index element={<LazyPage component={Index} fallback={feedFallback} />} />
           {/* App views and разделы as real paths. «c» = category, the
               Discourse-style prefix for a category→subcategory hierarchy (our
               раздел→подраздел). It also keeps раздел slugs out of the reserved
               top-level namespace (/search, /create, /settings, /thread, …), so
               no slug can ever shadow a route. */}
-          <Route path="feed" element={<LazyPage component={Index} />} />
-          <Route path="mine" element={<LazyPage component={Index} />} />
-          <Route path="history" element={<LazyPage component={Index} />} />
-          <Route path="favorites" element={<LazyPage component={Index} />} />
-          <Route path="c/:sectionSlug" element={<LazyPage component={Index} />} />
-          <Route path="c/:sectionSlug/:subSlug" element={<LazyPage component={Index} />} />
-          <Route path="messages" element={<AuthGuard><LazyPage component={Messages} /></AuthGuard>} />
+          <Route path="feed" element={<LazyPage component={Index} fallback={feedFallback} />} />
+          <Route path="mine" element={<LazyPage component={Index} fallback={feedFallback} />} />
+          <Route path="history" element={<LazyPage component={Index} fallback={feedFallback} />} />
+          <Route path="favorites" element={<LazyPage component={Index} fallback={feedFallback} />} />
+          <Route path="c/:sectionSlug" element={<LazyPage component={Index} fallback={feedFallback} />} />
+          <Route path="c/:sectionSlug/:subSlug" element={<LazyPage component={Index} fallback={feedFallback} />} />
+          <Route path="messages" element={<AuthGuard><LazyPage component={Messages} fallback={<MessagesFallback />} /></AuthGuard>} />
           <Route path="achievements/:userId" element={<LazyPage component={Achievements} />} />
           <Route path="profile/:userId/wall/:postId" element={<LazyPage component={WallPost} />} />
-          <Route path="profile/:userId" element={<LazyPage component={Profile} />} />
+          <Route path="profile/:userId" element={<LazyPage component={Profile} fallback={<ProfileFallback />} />} />
           <Route path="moderation" element={<AuthGuard><LazyPage component={ModerationDashboard} /></AuthGuard>} />
           <Route path="moderation/reports" element={<AuthGuard><LazyPage component={ModerationPosts} /></AuthGuard>} />
           <Route path="moderation/reports/:reportId" element={<AuthGuard><LazyPage component={ModerationReport} /></AuthGuard>} />
@@ -346,8 +426,8 @@ function AppRoutes() {
           {/* Правовые документы: /legal и /legal/:docId */}
           <Route path="legal" element={<LazyPage component={Legal} />} />
           <Route path="legal/:docId" element={<LazyPage component={Legal} />} />
-          <Route path="gomosubs" element={<LazyPage component={GomoSubs} />} />
-          <Route path="g" element={<LazyPage component={GomoSubs} />} />
+          <Route path="gomosubs" element={<LazyPage component={GomoSubs} fallback={<GomoSubsFallback />} />} />
+          <Route path="g" element={<LazyPage component={GomoSubs} fallback={<GomoSubsFallback />} />} />
           <Route path="g/create" element={<AuthGuard><LazyPage component={GomoSubCreate} /></AuthGuard>} />
           <Route path="g/:slug/create" element={<AuthGuard><LazyPage component={CreateGomoThread} /></AuthGuard>} />
           <Route path="g/:slug/c/:channelSlug/create" element={<AuthGuard><LazyPage component={CreateGomoThread} /></AuthGuard>} />

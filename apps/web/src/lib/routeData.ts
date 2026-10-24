@@ -4,20 +4,21 @@
  * the page reads on mount (TanStack via `warmQuery`, the URL cache via
  * `getCached`), using the SAME key. Then:
  *
- *   • `preloadRoute(location)` — run before the router swaps views (retention):
- *     the previous page stays on screen until the target's data is ready.
- *   • `prefetchRouteData(location)` — fire-and-forget on link intent (hover):
- *     the data is already cached by the time the click lands.
+ *   • `prefetchRouteData(location)` — fire-and-forget on link intent (hover,
+ *     focus, touch, viewport): the data is already cached by the time the
+ *     click lands and the swap is instant.
  *
- * This replaces the single-purpose `lib/routePreload.ts`. It deliberately does
- * NOT use React Router's data router: the project already has a bespoke
- * transition engine (see `lib/viewTransitions.ts`) and four caches, and the
- * registry gives the same loader semantics without duplicating either.
+ * Navigation never waits for warm-up: the router swaps immediately and the
+ * page paints from cache (or a shaped skeleton) on its first frame.
+ *
+ * This deliberately does NOT use React Router's data router: the project
+ * already has a bespoke transition engine (see `lib/viewTransitions.ts`) and
+ * four caches, and the registry gives the same loader semantics without
+ * duplicating either.
  */
 import { matchPath, type Location } from "react-router-dom";
 
 import { queryClient } from "@/integrations/api/queryClient";
-import { useLoadingBarStore } from "@/stores/loadingBarStore";
 
 export interface RouteDataContext {
   location: Location;
@@ -98,32 +99,12 @@ const paramsFor = (entry: RouteDataEntry, pathname: string): Record<string, stri
 const locationKey = (location: Location): string => `${location.pathname}${location.search}`;
 
 // Concurrent warm-ups for the same location share one promise (an intent
-// prefetch followed by the click must not double-fetch). Keys whose in-flight
-// warm reports progress are tracked so a navigation joining a bar-less intent
-// prefetch still shows the loading bar.
+// prefetch followed by a viewport prefetch must not double-fetch).
 const inflight = new Map<string, Promise<void>>();
-const inflightReportsProgress = new Set<string>();
 
-// Only the newest navigation may keep warming; a superseded one stops between
-// entries so a fast click-through never blocks on abandoned work.
+// Only the newest warm-up keeps warming; a superseded one stops between
+// entries so a fast scroll-through never blocks on abandoned work.
 let latestToken = 0;
-
-/**
- * A hung preloader must not pin the previous view forever — the swap waits for
- * `preloadRoute`, so each loader is raced against this. A late resolution still
- * fills the cache; only the wait is bounded.
- */
-export const LOADER_TIMEOUT_MS = 8000;
-
-const withTimeout = (promise: Promise<unknown>, ms: number): Promise<void> =>
-  new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    const settle = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    promise.then(settle, settle);
-  });
 
 // Dev-only coverage signal: a navigation to a route with no preloader is not
 // necessarily wrong (auth/settings/legal legitimately have none), so this is a
@@ -137,42 +118,31 @@ function noteMissingPreloader(pathname: string): void {
   );
 }
 
-async function warmRoute(location: Location, reportProgress: boolean): Promise<void> {
+async function warmRoute(location: Location): Promise<void> {
   const key = locationKey(location);
   const pending = inflight.get(key);
   if (pending) return pending;
 
   const token = ++latestToken;
   const promise = (async () => {
-    const { begin, end } = useLoadingBarStore.getState();
-    if (reportProgress) begin();
     try {
       for (const entry of matchedRouteData(location.pathname)) {
         if (token !== latestToken) break;
         try {
-          await withTimeout(
-            Promise.resolve(
-              entry.warm({
-                location,
-                params: paramsFor(entry, location.pathname),
-              }),
-            ),
-            LOADER_TIMEOUT_MS,
-          );
+          await entry.warm({
+            location,
+            params: paramsFor(entry, location.pathname),
+          });
         } catch {
-          // Best-effort: the page refetches on mount, the swap must not hang.
+          // Best-effort: the page reads through the same cache on mount and
+          // refetches a miss — a failed prefetch must never surface.
         }
       }
     } finally {
-      if (reportProgress) {
-        end();
-        inflightReportsProgress.delete(key);
-      }
       inflight.delete(key);
     }
   })();
 
-  if (reportProgress) inflightReportsProgress.add(key);
   inflight.set(key, promise);
   return promise;
 }
@@ -183,36 +153,15 @@ export function hasRouteData(pathname: string): boolean {
 }
 
 /**
- * Run the target route's preloaders. The caller (App) keeps the previous view
- * on screen until this resolves, then animates the swap. Shows the header
- * loading bar while it runs.
- */
-export function preloadRoute(location: Location): Promise<void> {
-  if (!hasRouteData(location.pathname)) noteMissingPreloader(location.pathname);
-
-  // A navigation may join an in-flight intent prefetch (whose promise is
-  // already in `inflight`), which reports no progress. Wrap it so the header
-  // loading bar still appears — otherwise a slow prefetch would leave the user
-  // with no cue.
-  const key = locationKey(location);
-  const pending = inflight.get(key);
-  if (pending && !inflightReportsProgress.has(key)) {
-    const { begin, end } = useLoadingBarStore.getState();
-    begin();
-    return pending.finally(end);
-  }
-
-  return warmRoute(location, true);
-}
-
-/**
- * Fire-and-forget warm-up for link intent (hover/focus). Same cache fills as
- * `preloadRoute`, but never touches the loading bar and respects the user's
- * network preferences.
+ * Fire-and-forget warm-up for link intent (hover/focus/touch/viewport). Same
+ * cache fills as the page reads on mount, but never touches the loading bar
+ * and respects the user's network preferences. Navigation never awaits this —
+ * the swap is instant and the page paints from whatever is warm.
  */
 export function prefetchRouteData(location: Location): void {
   if (!shouldPrefetch()) return;
-  void warmRoute(location, false);
+  if (!hasRouteData(location.pathname)) noteMissingPreloader(location.pathname);
+  void warmRoute(location);
 }
 
 /**

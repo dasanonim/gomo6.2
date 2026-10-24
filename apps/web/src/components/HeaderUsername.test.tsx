@@ -18,6 +18,12 @@ vi.mock("@/contexts/ProfileCacheContext", () => ({
   }),
 }));
 
+// Click-through warming is irrelevant here — and the real helper would pull
+// the router's matchPath through the react-router-dom mock below.
+vi.mock("@/lib/routeChunks", () => ({
+  warmRouteIntent: vi.fn(),
+}));
+
 vi.mock("@/components/ProfileHoverCard", () => ({
   ProfileHoverCard: ({ children }: any) => <div data-testid="hover-card">{children}</div>,
 }));

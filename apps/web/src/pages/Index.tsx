@@ -24,7 +24,8 @@ import { ModerationNavCard } from "@/components/ModerationNavCard";
 import { AddTabDialog } from "@/components/AddTabDialog";
 import { Spotlight } from "@/components/Spotlight";
 import { useSidebarTabsStore } from "@/stores/sidebarTabsStore";
-import { usePendingView, pendingViewClass } from "@/hooks/usePendingView";
+import { usePendingView } from "@/hooks/usePendingView";
+import { PendingViewEnter } from "@/components/motion/ContentEnter";
 import { useTransitionStyle } from "@/hooks/useTransitionStyle";
 
 interface GomoSub {
@@ -350,7 +351,7 @@ const Index = () => {
                 stays hidden until it reports ready, so the previous view
                 remains visible instead of a skeleton. */}
             {view.isRendered("feed") && (
-              <div className={pendingViewClass(view.isShown("feed"), transitionStyle)}>
+              <PendingViewEnter shown={view.isShown("feed")}>
                 {/* Stories rail: only on the feed itself, above the cards. */}
                 {view.isShown("feed") && <StoriesRail />}
                 <ThreadFeed
@@ -361,10 +362,10 @@ const Index = () => {
                   animateEntrance={transitionStyle !== "none"}
                   onReady={view.readyFor("feed")}
                 />
-              </div>
+              </PendingViewEnter>
             )}
             {view.isRendered("section") && (
-              <div className={pendingViewClass(view.isShown("section"), transitionStyle)}>
+              <PendingViewEnter shown={view.isShown("section")}>
                 {renderedSection ? (
                   <SectionThreads
                     section={renderedSection}
@@ -382,37 +383,37 @@ const Index = () => {
                     <p className="mt-2 text-sm text-muted-foreground">Возможно, ссылка устарела.</p>
                   </div>
                 )}
-              </div>
+              </PendingViewEnter>
             )}
             {view.isRendered("mine") && (
-              <div className={pendingViewClass(view.isShown("mine"), transitionStyle)}>
+              <PendingViewEnter shown={view.isShown("mine")}>
                 <MyPosts
                   currentUserId={user?.id ?? null}
                   currentUsername={currentUserUsername}
                   currentUserColor={currentUserColor}
                   onReady={view.readyFor("mine")}
                 />
-              </div>
+              </PendingViewEnter>
             )}
             {view.isRendered("history") && (
-              <div className={pendingViewClass(view.isShown("history"), transitionStyle)}>
+              <PendingViewEnter shown={view.isShown("history")}>
                 <HistoryView
                   currentUserId={user?.id ?? null}
                   currentUsername={currentUserUsername}
                   currentUserColor={currentUserColor}
                   onReady={view.readyFor("history")}
                 />
-              </div>
+              </PendingViewEnter>
             )}
             {view.isRendered("favorites") && (
-              <div className={pendingViewClass(view.isShown("favorites"), transitionStyle)}>
+              <PendingViewEnter shown={view.isShown("favorites")}>
                 <FavoritesView
                   currentUserId={user?.id ?? null}
                   currentUsername={currentUserUsername}
                   currentUserColor={currentUserColor}
                   onReady={view.readyFor("favorites")}
                 />
-              </div>
+              </PendingViewEnter>
             )}
           </div>
 

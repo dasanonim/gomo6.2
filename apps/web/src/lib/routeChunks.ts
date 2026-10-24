@@ -10,6 +10,8 @@
 import type { ComponentType } from "react";
 import { matchPath } from "react-router-dom";
 
+import { prefetchRouteData, shouldPrefetch } from "@/lib/routeData";
+
 type RouteModule = { default: ComponentType<Record<string, unknown>> };
 
 interface RouteChunk {
@@ -108,3 +110,24 @@ function noteMissingChunk(pathname: string): void {
 export function prefetchRouteChunk(pathname: string): void {
   void loadRouteChunk(pathname);
 }
+
+/**
+ * Warm a route's chunk + data without a link — for programmatic
+ * `navigate()` call sites (header buttons, menus) that otherwise skip the
+ * intent prefetch entirely. Fire-and-forget, respects Save-Data/2G.
+ */
+export const warmRouteIntent = (to: string): void => {
+  if (!shouldPrefetch()) return;
+  const queryIndex = to.indexOf("?");
+  const pathname = queryIndex === -1 ? to : to.slice(0, queryIndex);
+  const search = queryIndex === -1 ? "" : to.slice(queryIndex);
+  if (!pathname) return;
+  prefetchRouteChunk(pathname);
+  prefetchRouteData({
+    pathname,
+    search,
+    hash: "",
+    state: null,
+    key: "intent",
+  } as Parameters<typeof prefetchRouteData>[0]);
+};

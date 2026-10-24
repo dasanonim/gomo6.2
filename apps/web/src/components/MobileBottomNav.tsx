@@ -231,6 +231,10 @@ export function MobileBottomNav({ user, chromeHidden = false }: MobileBottomNavP
               data-mobile-tab={id}
               draggable={false}
               prefetchData={id !== "profile" || !!user}
+              // Tabs are always in the viewport on mobile: warm chunk + data
+              // on mount, so the first tap swaps onto cache instead of a cold
+              // fetch. Save-Data/2G still opt out inside the link.
+              prefetchOnViewport
               aria-current={id === activeTab ? "page" : undefined}
               aria-label={
                 id === "chats" && unreadCount > 0

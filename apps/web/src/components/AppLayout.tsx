@@ -2,9 +2,10 @@ import { useEffect, useLayoutEffect, useState, useRef, useCallback, type FormEve
 import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
 import { NavigationLink } from "@/components/NavigationLink";
-import { motion, AnimatePresence, useScroll, useMotionValueEvent, useMotionValue, useTransform, animate } from "motion/react";
+import { motion, AnimatePresence, useScroll, useMotionValueEvent, useMotionValue, useTransform, animate, useReducedMotion, useAnimationControls } from "motion/react";
 import { SPRING } from "@/lib/motion";
-import { transitionEnterClass, isFeedRoute } from "@/lib/viewTransitions";
+import { isFeedRoute } from "@/lib/viewTransitions";
+import { springFor, EASE_OUT_EXPO } from "@/lib/motion";
 import { useTransitionStyle } from "@/hooks/useTransitionStyle";
 import { useProfileCache } from "@/contexts/ProfileCacheContext";
 import { Button } from "@/components/ui/button";
@@ -54,29 +55,34 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Page-level enter animation for the CSS transition styles (fade/rise). The
-  // View-Transitions styles are animated by the browser in AppRoutes instead, so
-  // transitionEnterClass returns "" for them (and for "none").
+  // Page-level entrance: rise + expo fade, never scale. A scale on the whole
+  // <main> (twenty cards with images) forces the GPU to re-rasterize the
+  // giant layer every frame and the entrance stutters on entry; a translate
+  // only re-composites. No remount: the controls retarget the live tree, so
+  // a re-tap mid-flight reverses from the current values with velocity
+  // instead of restarting.
   const transitionStyle = useTransitionStyle();
-  const [enterClass, setEnterClass] = useState("");
+  const reduceMotion = useReducedMotion();
+  const enterControls = useAnimationControls();
   const prevPathRef = useRef(location.pathname);
 
   useEffect(() => {
     const prev = prevPathRef.current;
     prevPathRef.current = location.pathname;
-    const cls = transitionEnterClass(transitionStyle);
-    // No animation on the very first render, and none for feed↔раздел hops —
+    // No entrance on the very first render, and none for feed↔раздел hops —
     // Index animates those itself.
-    if (!cls || prev === location.pathname || (isFeedRoute(prev) && isFeedRoute(location.pathname))) {
-      setEnterClass("");
-      return;
-    }
-    // Clear then re-add on the next frame so the CSS animation restarts on every
-    // navigation — without remounting the page (which would drop its state).
-    setEnterClass("");
-    const id = window.requestAnimationFrame(() => setEnterClass(cls));
-    return () => window.cancelAnimationFrame(id);
-  }, [location.pathname, transitionStyle]);
+    if (prev === location.pathname || (isFeedRoute(prev) && isFeedRoute(location.pathname))) return;
+    if (transitionStyle === "none" || reduceMotion) return;
+    enterControls.set({ opacity: 0, y: 10 });
+    void enterControls.start({
+      opacity: 1,
+      y: 0,
+      transition: {
+        opacity: { duration: 0.16, ease: EASE_OUT_EXPO },
+        y: springFor("standard", false),
+      },
+    });
+  }, [location.pathname, transitionStyle, reduceMotion, enterControls]);
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   const { user } = useAuth(); // Use cached auth hook instead of local state
@@ -1637,8 +1643,10 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
       <motion.main
         id="main-content"
         tabIndex={-1}
-        className={`flex-1 min-h-0 outline-none${isMessengerPage ? " is-messenger-page" : ""}${showBottomNavigation ? " has-mobile-bottom-nav" : ""}${hideMessengerChrome && !isMessengerPage ? " is-app-surface" : ""}${enterClass ? ` ${enterClass}` : ""}`}
+        className={`flex-1 min-h-0 outline-none${isMessengerPage ? " is-messenger-page" : ""}${showBottomNavigation ? " has-mobile-bottom-nav" : ""}${hideMessengerChrome && !isMessengerPage ? " is-app-surface" : ""}`}
         style={{ paddingTop: contentPad }}
+        initial={false}
+        animate={enterControls}
       >
         {children}
       </motion.main>

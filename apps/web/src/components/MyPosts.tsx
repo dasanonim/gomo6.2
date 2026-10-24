@@ -12,6 +12,7 @@ import {
   type WallPost,
 } from "@/utils/wallNormalizers";
 import { fetchThreadLikesBatch, toFeedThread, type ThreadApiRow } from "@/utils/threadFeedItem";
+import { ContentEnter } from "@/components/motion/ContentEnter";
 
 const PAGE_SIZE = 50;
 
@@ -175,7 +176,7 @@ export const MyPosts = ({
           </p>
         </div>
       ) : (
-        <div className="space-y-4 view-fade-in">
+        <ContentEnter className="space-y-4">
           {body}
 
           {hasMore && (
@@ -190,7 +191,7 @@ export const MyPosts = ({
               </button>
             </div>
           )}
-        </div>
+        </ContentEnter>
       )}
 
       {galleryItems && (

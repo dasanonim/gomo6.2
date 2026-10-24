@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { useLoadingBarStore } from "@/stores/loadingBarStore";
 import type { WallPost } from "@/utils/wallNormalizers";
+import { ContentEnter } from "@/components/motion/ContentEnter";
 
 const PAGE_SIZE = 30;
 
@@ -208,7 +209,7 @@ export const HistoryView = ({
           </p>
         </div>
       ) : (
-        <div className="space-y-4 view-fade-in">
+        <ContentEnter className="space-y-4">
           {body}
 
           {hasMore && (
@@ -223,7 +224,7 @@ export const HistoryView = ({
               </button>
             </div>
           )}
-        </div>
+        </ContentEnter>
       )}
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>

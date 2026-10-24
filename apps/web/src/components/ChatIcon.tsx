@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { useMessengerStore } from "@/stores/messengerStore";
 import { messengerWs } from "@/services/messengerWebSocket";
 import { eventManager } from "@/services/eventManager";
+import { warmRouteIntent } from "@/lib/routeChunks";
 import { UnreadBadge } from "@/components/UnreadBadge";
 
 export const ChatIcon = ({ userId }: { userId: string }) => {
@@ -45,7 +46,12 @@ export const ChatIcon = ({ userId }: { userId: string }) => {
     <Button
       variant="ghost"
       className="relative h-8 w-8 p-0 hover:bg-[oklch(var(--foreground)/0.12)] transition-colors group"
-      onClick={() => navigate("/messages")}
+      onClick={() => {
+        // No hover intent on a button: warm the chunk + data first so the
+        // instant swap lands on cache instead of a cold fetch.
+        warmRouteIntent("/messages");
+        navigate("/messages");
+      }}
       aria-label="Открыть мессенджер"
     >
       <MessageCircle className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
