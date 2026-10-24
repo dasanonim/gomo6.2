@@ -147,6 +147,38 @@ export function ConversationListSkeleton({
   );
 }
 
+/**
+ * Sidebar search pill — the exact `.sidebar-top` bar (40px pill, muted glass)
+ * the live list always renders above the rows: search glyph + placeholder
+ * line in the input's text box, 34px round button on the right.
+ */
+export function MessengerSearchSkeleton() {
+  return (
+    <div className="sidebar-top" aria-hidden="true">
+      <div className="sidebar-search-wrap">
+        <Skeleton pulse={false} className="absolute left-[10px] h-[17px] w-[17px] rounded-full" />
+        <Skeleton pulse={false} className="ml-[34px] h-3.5 w-28" />
+      </div>
+      <Skeleton pulse={false} className="mr-[3px] h-[34px] w-[34px] flex-none rounded-full" />
+    </div>
+  );
+}
+
+/**
+ * Empty-chat hero — the same `.empty-thread.hero.chat-empty-state` card the
+ * real ChatView renders with no conversation selected: icon disc, title
+ * line, subtitle line, same margins.
+ */
+export function MessengerHeroSkeleton() {
+  return (
+    <div className="empty-thread hero chat-empty-state" aria-hidden="true">
+      <Skeleton pulse={false} className="h-11 w-11 rounded-full" />
+      <Skeleton pulse={false} className="h-4 w-32" />
+      <Skeleton pulse={false} className="h-3 w-56 max-w-full" />
+    </div>
+  );
+}
+
 export function ProfileSkeleton() {
   // Mirrors the real social layout 1:1 (ProfileHeader + inline ProfileStats
   // row + bio + tab bar pills) so the row fades in without reflow.
