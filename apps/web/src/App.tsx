@@ -272,6 +272,13 @@ const MessagesFallback = () => (
   <div className="messenger-app" data-kb-app>
     <div className="messenger-shell">
       <aside className="sidebar-panel is-open">
+        {/* search pill: same 40px bar as the live sidebar-top */}
+        <div className="sidebar-top" aria-hidden="true">
+          <div className="sidebar-search-wrap">
+            <Skeleton pulse={false} className="ml-[34px] h-3.5 w-24" />
+          </div>
+          <Skeleton pulse={false} className="mr-[3px] h-[34px] w-[34px] flex-none rounded-full" />
+        </div>
         <ConversationListSkeleton />
       </aside>
       <section className="chat-panel is-empty" aria-hidden="true" />
