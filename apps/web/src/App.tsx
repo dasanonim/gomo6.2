@@ -271,8 +271,11 @@ const FeedFallback = () => (
 
 const MessagesFallback = () => (
   // Self-sufficient: Tailwind only, no .messenger-* classes — the chunk CSS
-  // is not here yet when this paints.
-  <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background min-[981px]:rounded-[var(--radius)] min-[981px]:border" aria-hidden="true" data-kb-app>
+  // is not here yet when this paints. Mirrors .messenger-app: bordered card
+  // on desktop, fixed full-viewport surface on phones (≤980px) — without the
+  // fixed positioning the in-flow offset stacks with the pill's own
+  // header+10 margin and the search lands too low.
+  <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background min-[981px]:rounded-[var(--radius)] min-[981px]:border max-[980px]:fixed max-[980px]:inset-0 max-[980px]:overflow-x-hidden" aria-hidden="true" data-kb-app>
     <div className="grid min-h-0 w-full flex-1 grid-cols-1 min-[981px]:grid-cols-[320px_minmax(0,1fr)]">
       <MessengerFallbackSidebar />
       <MessengerFallbackHero />
