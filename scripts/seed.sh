@@ -216,9 +216,9 @@ note "demo↔alice, demo↔bob, alice↔bob"
 ok "topic + posts"
 DEMO_TOKEN="${U_TOKEN[0]}"; DEMO_ID="${U_ID[0]}"
 
-section_id="$(req_get_sql "/api/v1/thread_sections?slug=eq.games" | jq_get data.0.id)"
-subsection_id="$(req_get_sql "/api/v1/thread_subsections?slug=eq.pc" | jq_get data.0.id)"
-[ -n "$section_id" ] || die "cannot find the 'games' section — is migration 114 applied?"
+section_id="$(req_get_sql "/api/v1/thread_sections?slug=eq.general" | jq_get data.0.id)"
+subsection_id=""
+[ -n "$section_id" ] || die "cannot find the 'general' section — is migration 142 applied?"
 
 TOPIC_TITLE="Демо-тема: во что играем?"
 thread_id="$(req_get "/api/v1/threads?section_id=eq.$section_id" | json_find data title "$TOPIC_TITLE")"
