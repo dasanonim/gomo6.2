@@ -241,6 +241,138 @@ func TestPublicIDsMigration(t *testing.T) {
 	}
 }
 
+// noReserveMigrationSQL reads the 143 migration that removes the reserved bands.
+func noReserveMigrationSQL(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "migrations", "143_public_id_no_reserve.sql"))
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	return string(raw)
+}
+
+// TestPublicIDsNoReserve applies 128 and then the real 143_public_id_no_reserve.sql
+// and asserts the launch simplification:
+//   - every line is renumbered from 1 (no 1..9 / 1..99 holes);
+//   - the service row keeps no human number (NULL, column is nullable);
+//   - the transfers ledger is gone;
+//   - new inserts continue at MAX+1.
+func TestPublicIDsNoReserve(t *testing.T) {
+	h := applyPublicIDsMigration(t, testSchemaPublicIDs+"_noreserve")
+
+	h.exec(usersFixtureDDL)
+	h.exec(`CREATE TABLE threads (id UUID PRIMARY KEY, created_at TIMESTAMPTZ)`)
+	h.exec(`CREATE TABLE profile_wall_posts (id UUID PRIMARY KEY, created_at TIMESTAMPTZ)`)
+
+	h.exec(`
+		INSERT INTO users (id, username, created_at) VALUES
+		('00000000-0000-0000-0000-0000000000a1', 'newest', '2022-01-01'),
+		('00000000-0000-0000-0000-0000000000a2', 'oldest', '2020-01-01')`)
+	h.exec(`
+		INSERT INTO threads (id, created_at) VALUES
+		('00000000-0000-0000-0000-0000000000b1', '2020-01-01'),
+		('00000000-0000-0000-0000-0000000000b2', '2021-01-01')`)
+	h.exec(`
+		INSERT INTO profile_wall_posts (id, created_at) VALUES
+		('00000000-0000-0000-0000-0000000000c1', '2020-01-01')`)
+
+	h.exec(publicIDsMigrationSQL(t))
+
+	// Simulate prod: the service row seeded with the old -1 sentinel, plus a
+	// transfers-ledger row from the removed market mechanic.
+	h.exec(`INSERT INTO users (id, username, public_id, created_at) VALUES
+		('00000000-0000-0000-0000-000000000000', '__system__', -1, '2019-01-01')`)
+	h.exec(`CREATE TABLE public_id_transfers (id BIGSERIAL PRIMARY KEY, public_id BIGINT NOT NULL)`)
+
+	h.exec(noReserveMigrationSQL(t))
+
+	// ── Numbering restarts at 1 on every line ────────────────────────────
+	for _, tc := range []struct {
+		table string
+		want  []int64
+	}{
+		{"users", []int64{1, 2}},
+		{"threads", []int64{1, 2}},
+		{"profile_wall_posts", []int64{1}},
+	} {
+		rows, err := h.tx.Query(`SELECT public_id FROM ` + tc.table + ` WHERE public_id IS NOT NULL ORDER BY public_id`)
+		if err != nil {
+			t.Fatalf("query %s: %v", tc.table, err)
+		}
+		var got []int64
+		for rows.Next() {
+			var n int64
+			if err := rows.Scan(&n); err != nil {
+				t.Fatalf("scan %s: %v", tc.table, err)
+			}
+			got = append(got, n)
+		}
+		_ = rows.Close()
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s: got %v, want %v", tc.table, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Fatalf("%s: got %v, want %v", tc.table, got, tc.want)
+			}
+		}
+	}
+
+	// Oldest human still gets the lowest number.
+	var oldestPublicID int64
+	if err := h.queryRow(`SELECT public_id FROM users WHERE id = '00000000-0000-0000-0000-0000000000a2'`).
+		Scan(&oldestPublicID); err != nil {
+		t.Fatalf("query oldest user: %v", err)
+	}
+	if oldestPublicID != 1 {
+		t.Errorf("oldest user public_id = %d, want 1", oldestPublicID)
+	}
+
+	// ── Service row has no number; the column accepts NULL ───────────────
+	var servicePublicID sql.NullInt64
+	if err := h.queryRow(`SELECT public_id FROM users WHERE id = '00000000-0000-0000-0000-000000000000'`).
+		Scan(&servicePublicID); err != nil {
+		t.Fatalf("query service row: %v", err)
+	}
+	if servicePublicID.Valid {
+		t.Errorf("service row public_id = %d, want NULL", servicePublicID.Int64)
+	}
+	var isNullable string
+	if err := h.queryRow(`
+		SELECT is_nullable FROM information_schema.columns
+		WHERE table_schema = $1 AND table_name = 'users' AND column_name = 'public_id'`,
+		testSchemaPublicIDs+"_noreserve").Scan(&isNullable); err != nil {
+		t.Fatalf("inspect users.public_id: %v", err)
+	}
+	if isNullable != "YES" {
+		t.Errorf("users.public_id is_nullable = %q, want YES", isNullable)
+	}
+
+	// ── Ledger is gone ───────────────────────────────────────────────────
+	var ledgerCount int
+	if err := h.queryRow(`
+		SELECT COUNT(*) FROM pg_tables WHERE schemaname = $1 AND tablename = 'public_id_transfers'`,
+		testSchemaPublicIDs+"_noreserve").Scan(&ledgerCount); err != nil {
+		t.Fatalf("query pg_tables: %v", err)
+	}
+	if ledgerCount != 0 {
+		t.Errorf("public_id_transfers still exists")
+	}
+
+	// ── New inserts continue at MAX+1 ────────────────────────────────────
+	h.exec(`INSERT INTO users (id, username, created_at)
+		VALUES ('00000000-0000-0000-0000-0000000000a4', 'fresh', NOW())`)
+	var fresh int64
+	if err := h.queryRow(`SELECT public_id FROM users WHERE id = '00000000-0000-0000-0000-0000000000a4'`).
+		Scan(&fresh); err != nil {
+		t.Fatalf("query fresh user: %v", err)
+	}
+	if fresh != 3 {
+		t.Errorf("new user public_id = %d, want 3", fresh)
+	}
+}
+
+// with no rows to backfill, setval must NOT fire, so the very first insert lands
 // TestPublicIDsMigration_EmptyTablesStartAtBase is the fresh-deployment case:
 // with no rows to backfill, setval must NOT fire, so the very first insert lands
 // exactly on the line's base (10 / 100 / 1) instead of base+1. This pins the

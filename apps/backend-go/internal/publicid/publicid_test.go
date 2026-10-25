@@ -9,8 +9,8 @@ func TestParse(t *testing.T) {
 		want int64
 		ok   bool
 	}{
-		{"base of the user line", "10", 10, true},
-		{"base of the thread line", "100", 100, true},
+		{"small number", "10", 10, true},
+		{"three-digit number", "100", 100, true},
 		{"single digit", "7", 7, true},
 		{"large id", "9007199254740993", 9007199254740993, true},
 		{"empty", "", 0, false},
@@ -110,19 +110,13 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
-// Service rows carry a negative sentinel instead of a human number: it must never
-// be rendered as a link parameter.
-func TestNormalize_ServiceSentinel(t *testing.T) {
-	for _, sentinel := range []int64{-1, 0, -100} {
-		if !IsServiceSentinel(sentinel) {
-			t.Errorf("IsServiceSentinel(%d) = false, want true", sentinel)
-		}
-		v := sentinel
+// Non-positive numbers are not addressable and must never be rendered as a
+// link parameter — Normalize falls back to the UUID for them.
+func TestNormalize_NonPositive(t *testing.T) {
+	for _, n := range []int64{-1, 0, -100} {
+		v := n
 		if got := Normalize(&v, "uuid-here"); got != "uuid-here" {
-			t.Errorf("Normalize(%d) = %q, want the UUID fallback", sentinel, got)
+			t.Errorf("Normalize(%d) = %q, want the UUID fallback", n, got)
 		}
-	}
-	if IsServiceSentinel(42) {
-		t.Error("a positive number is not a service sentinel")
 	}
 }

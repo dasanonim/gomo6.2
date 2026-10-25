@@ -179,29 +179,22 @@ func SeedDevDashboardApp(db *sql.DB) {
 
 	// First ensure a system user exists to satisfy the owner_id FK constraint.
 	//
-	// public_id is set explicitly to -1: infrastructure has no human number.
-	// A service row must not consume an organic number, and it must not squat the
-	// low band either — #1..9 are held for the founder and the first accounts.
-	// Negative values are reserved for service rows: the sequence only allocates
-	// positive numbers (it starts at 10, docs/wiki/PUBLIC_IDS.md) and the public
-	// resolver rejects anything that is not a positive decimal, so this row is
-	// unreachable through /profile/<n>. An explicit value is possible because
-	// public_id is a sequence default rather than an identity column; the DO UPDATE
-	// branch also moves an install that already handed this row an organic number
-	// (or the low band, as an earlier revision did).
-	const systemPublicID = -1
+	// public_id is NULL: infrastructure has no human number. The resolver only
+	// accepts positive decimals and the frontend falls back to the UUID link,
+	// so this row is unreachable through /profile/<n>. NULL is possible because
+	// users.public_id is nullable (143); the NOT NULL era with the -1 sentinel
+	// is gone.
 	_, err = db.Exec(`
 		INSERT INTO users (id, public_id, username, email, password_hash, domain, wallet_address)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, NULL, $3, $4, $5, $6, $7)
 		ON CONFLICT (id) DO UPDATE SET
 			username = EXCLUDED.username,
 			email = EXCLUDED.email,
 			domain = EXCLUDED.domain,
 			wallet_address = EXCLUDED.wallet_address,
-			public_id = EXCLUDED.public_id
+			public_id = NULL
 	`,
 		systemUserID,
-		systemPublicID,
 		"__system__",
 		"system@gomo6.local",
 		string(hashedPassword),
