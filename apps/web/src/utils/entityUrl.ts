@@ -33,9 +33,9 @@ export const isPublicId = (value: string | null | undefined): boolean =>
  * UUID, else an empty string when the row carries neither.
  */
 export const entityParam = (row: Identifiable | null | undefined): string => {
-  // Only positive numbers are addressable: the backend reserves negative values
-  // as sentinels for service rows (SeedDevDashboardApp), and such a row has no
-  // human number — it must fall back to the UUID instead of emitting /profile/-1.
+  // Only positive numbers are addressable: zero and negatives are never
+  // allocated (service rows carry NULL), so such a value must fall back to
+  // the UUID instead of emitting a bogus /profile/-1.
   if (row && typeof row.public_id === 'number' && Number.isFinite(row.public_id) && row.public_id > 0) {
     return String(row.public_id);
   }

@@ -68,9 +68,10 @@ func ParseParamStrict(raw string) Param {
 
 // Parse reports whether raw is a public_id and returns its value.
 //
-// Public ids are strictly positive decimals: the sequences allocate from 1 up, and
-// negative values are reserved as sentinels for service rows (see
-// SeedDevDashboardApp), so "-1" and "0" are not numbers a URL can address.
+// Public ids are strictly positive decimals: every line numbers from 1 up, so
+// "0" and anything non-positive can only be a typo or garbage — never a URL a
+// row can be addressed by. Service rows carry NULL instead of a number and
+// never reach this function.
 func Parse(raw string) (int64, bool) {
 	if raw == "" || len(raw) > 18 {
 		return 0, false
@@ -91,24 +92,20 @@ func Parse(raw string) (int64, bool) {
 	return n, true
 }
 
-// IsServiceSentinel reports whether a stored public_id is NOT an addressable
-// number: negatives mark service rows (SeedDevDashboardApp) and zero is never
-// allocated. Callers that build links must fall back to the UUID for such a row.
-func IsServiceSentinel(publicID int64) bool { return publicID <= 0 }
+// Normalize returns the canonical URL parameter for a row: its public_id when
+// present, otherwise the UUID. Used by server-side link building so a missing
+// public_id (e.g. a service row) degrades to the legacy UUID link instead of an
+// empty one.
+func Normalize(publicID *int64, uuid string) string {
+	if publicID != nil && *publicID > 0 {
+		return strconv.FormatInt(*publicID, 10)
+	}
+	return uuid
+}
 
 // IsNumber reports whether raw looks like a public_id. Convenience for callers
 // that only need the shape (e.g. deciding on a URL form in tests).
 func IsNumber(raw string) bool {
 	_, ok := Parse(raw)
 	return ok
-}
-
-// Normalize returns the canonical URL parameter for a row: its public_id when
-// present, otherwise the UUID. Used by server-side link building so a missing
-// public_id degrades to the legacy UUID link instead of an empty one.
-func Normalize(publicID *int64, uuid string) string {
-	if publicID != nil && !IsServiceSentinel(*publicID) {
-		return strconv.FormatInt(*publicID, 10)
-	}
-	return uuid
 }
