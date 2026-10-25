@@ -138,20 +138,21 @@ WALL_PID="$(psql_scratch "SELECT public_id FROM profile_wall_posts WHERE id = '$
 echo "    assigned numbers: user=$USER_PID thread=$THREAD_PID wall_post=$WALL_PID"
 
 # The service row (owner of the dashboard OAuth app) must stay OUT of the human
-# numbering: it holds the negative sentinel, so no real account is displaced and
-# its row is unreachable through /profile/<n>.
-SYSTEM_PID="$(psql_scratch "SELECT public_id FROM users WHERE username = '__system__'")"
-[ "$SYSTEM_PID" = "-1" ] || fail "the service account holds $SYSTEM_PID, expected the -1 sentinel"
+# numbering: it holds NULL instead of a number, so no real account is displaced
+# and its row is unreachable through /profile/<n> (the resolver only accepts
+# positive decimals, the frontend falls back to the UUID link).
+SYSTEM_PID="$(psql_scratch "SELECT COALESCE(public_id::text, 'null') FROM users WHERE username = '__system__'")"
+[ "$SYSTEM_PID" = "null" ] || fail "the service account holds $SYSTEM_PID, expected NULL"
 for sentinel in -1 0; do
   GOT="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/profiles/$sentinel")"
   [ "$GOT" = "404" ] || fail "/profiles/$sentinel: expected 404, got $GOT"
 done
-pass "the service account is outside the human numbering (public_id = -1, /profiles/-1 → 404)"
+pass "the service account is outside the human numbering (public_id = NULL, /profiles/-1 → 404)"
 
-[ "$USER_PID" = "10" ]   || fail "users base: expected 10, got $USER_PID"
-[ "$THREAD_PID" = "100" ] || fail "threads base: expected 100, got $THREAD_PID"
+[ "$USER_PID" = "1" ]   || fail "users base: expected 1, got $USER_PID"
+[ "$THREAD_PID" = "1" ] || fail "threads base: expected 1, got $THREAD_PID"
 [ "$WALL_PID" = "1" ]    || fail "wall posts base: expected 1, got $WALL_PID"
-pass "bases are right on a fresh database (10 / 100 / 1)"
+pass "numbering starts at 1 on a fresh database (1 / 1 / 1)"
 
 # ── helpers ───────────────────────────────────────────────────────────────
 json_data() { python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin).get("data"), sort_keys=True, ensure_ascii=False))'; }
@@ -260,57 +261,13 @@ check_status 403 "PUT /profiles/<number> (writes are UUID-only)" -X PUT \
   "$BASE/api/v1/profiles/$WRITER_PID" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{"bio":"nope"}'
 
-# ── 8. Admin assignment / transfer (phase 5) ──────────────────────────────
-# The route is commented out in routes.go until the product decision is made, so
-# probe it first: a 404 means the whole block is skipped rather than failed.
-ASSIGN_PROBE="$(status_of -X POST "$BASE/api/v1/admin/public-id/assign" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d "{\"user_id\":\"$USER_UUID\",\"public_id\":5}")"
-if [ "$ASSIGN_PROBE" = "404" ]; then
-  info "public-id assignment is disabled (route commented out) — skipping the phase-5 checks"
-else
-# A non-admin must not be able to hand out numbers.
-check_status 403 "POST /admin/public-id/assign as a non-admin" -X POST \
+# ── 8. Number market: removed ─────────────────────────────────────────────
+# The assign/transfer mechanic (AssignPublicID handler + public_id_transfers
+# ledger, migration 143) is gone: numbers are allocated once from 1 and never
+# move. The endpoint must not exist.
+check_status 404 "POST /admin/public-id/assign is gone" -X POST \
   "$BASE/api/v1/admin/public-id/assign" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d "{\"user_id\":\"$USER_UUID\",\"public_id\":5}"
-
-psql_scratch "INSERT INTO user_roles (user_id, role) VALUES ('$WRITER_UUID', 'admin')
-               ON CONFLICT (user_id, role) DO NOTHING" >/dev/null || fail "could not promote the writer to admin"
-
-# Hand out a reserved number (inside the band the sequence can never reach).
-ASSIGN="$(curl -s -X POST "$BASE/api/v1/admin/public-id/assign" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d "{\"user_id\":\"$WRITER_UUID\",\"public_id\":5,\"note\":\"acceptance\"}")"
-echo "$ASSIGN" | grep -q '"success":true' || fail "assign failed: $ASSIGN"
-check_status 200 "/api/v1/profiles/5 now resolves" "$BASE/api/v1/profiles/5"
-OWNER="$(curl -sf "$BASE/api/v1/profiles/5" | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["id"])')"
-[ "$OWNER" = "$WRITER_UUID" ] || fail "/profile/5 belongs to $OWNER, expected the writer"
-pass "the reserved number 5 was handed to the writer"
-
-# A real transfer: take the first user's number. The displaced owner must be
-# re-numbered in the same transaction — here they receive the writer's old
-# number (a clean exchange that burns no sequence value).
-ASSIGN="$(curl -s -X POST "$BASE/api/v1/admin/public-id/assign" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d "{\"user_id\":\"$WRITER_UUID\",\"public_id\":$USER_PID,\"note\":\"acceptance swap\"}")"
-echo "$ASSIGN" | grep -q '"success":true' || fail "transfer failed: $ASSIGN"
-DB_OWNER="$(psql_scratch "SELECT id FROM users WHERE public_id = $USER_PID")"
-[ "$DB_OWNER" = "$WRITER_UUID" ] || fail "the database still maps $USER_PID to $DB_OWNER"
-pass "the database moved $USER_PID to the new owner"
-
-OWNER="$(curl -sf "$BASE/api/v1/profiles/$USER_PID" | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["id"])')"
-[ "$OWNER" = "$WRITER_UUID" ] || fail "/profile/$USER_PID serves $OWNER after the transfer (stale cache?)"
-pass "/profile/$USER_PID now points at the new owner"
-
-DISPLACED="$(psql_scratch "SELECT public_id FROM users WHERE id = '$USER_UUID'")"
-[ "$DISPLACED" = "5" ] || fail "the displaced owner got $DISPLACED, expected the exchanged number 5"
-pass "the displaced owner was re-numbered to $DISPLACED (clean exchange)"
-
-LEDGER="$(psql_scratch "SELECT count(*) FROM public_id_transfers")"
-[ "$LEDGER" -ge 3 ] || fail "expected at least 3 ledger rows, got $LEDGER"
-pass "the ledger recorded every movement ($LEDGER rows)"
-
-fi
 
 # ── 9. Auth-only surfaces ─────────────────────────────────────────────────
 # Notifications, friends (list + incoming requests), favorites, history and the
@@ -406,8 +363,7 @@ NEXT_PID="$(psql_scratch "
   INSERT INTO users (id, username, email, password_hash, wallet_address)
   VALUES (gen_random_uuid(), 'accept_next', 'accept-next@test.local', 'x', '0xacceptnext')
   RETURNING public_id" | head -1)"
-# After the transfer the highest number handed out is still USER_PID (the swap
-# exchanged existing numbers, it did not allocate a new one).
+# The next organic row must continue after the highest allocated number.
 EXPECTED=$((USER_PID + 1))
 [ "$NEXT_PID" -ge "$EXPECTED" ] \
   || fail "the sequence did not continue (got $NEXT_PID, expected at least $EXPECTED)"
