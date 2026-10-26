@@ -388,11 +388,11 @@
 }
 
 [data-theme="dracula"][data-mode="dark"] {
-  --background: 0.205 0.018 290;
+  --background: 0.3 0.018 290;
   --foreground: 0.93 0.016 290;
-  --card: 0.245 0.014 290;
+  --card: 0.34 0.014 290;
   --card-foreground: 0.93 0.016 290;
-  --popover: 0.245 0.014 290;
+  --popover: 0.34 0.014 290;
   --popover-foreground: 0.93 0.016 290;
   --primary: 0.66 0.2 290;
   --primary-foreground: 0.18 0 0;
@@ -423,11 +423,11 @@
 }
 
 [data-theme="gruvbox"][data-mode="light"] {
-  --background: 0.935 0.014 62;
+  --background: 0.951 0.014 62;
   --foreground: 0.24 0.02 62;
-  --card: 0.968 0.012 62;
+  --card: 0.978 0.012 62;
   --card-foreground: 0.24 0.02 62;
-  --popover: 0.968 0.012 62;
+  --popover: 0.978 0.012 62;
   --popover-foreground: 0.24 0.02 62;
   --primary: 0.55 0.13 62;
   --primary-foreground: 1 0 0;
@@ -458,11 +458,11 @@
 }
 
 [data-theme="gruvbox"][data-mode="dark"] {
-  --background: 0.19 0.018 62;
+  --background: 0.3 0.018 62;
   --foreground: 0.93 0.0156 62;
-  --card: 0.235 0.014 62;
+  --card: 0.34 0.014 62;
   --card-foreground: 0.93 0.0156 62;
-  --popover: 0.235 0.014 62;
+  --popover: 0.34 0.014 62;
   --popover-foreground: 0.93 0.0156 62;
   --primary: 0.66 0.13 62;
   --primary-foreground: 0.16 0 0;

@@ -13,14 +13,17 @@ import { THEME_TOKEN_NAMES } from "./tokens";
 
 export type SeedStyle = "soft" | "pastel" | "mono";
 /** Surface depth ramp for tonal neutrals (light/dark background + card L). */
-export type SeedTone = "default" | "paper" | "soft" | "deep";
+export type SeedTone = "default" | "paper" | "soft" | "deep" | "lifted";
 export type ThemeModeName = "light" | "dark";
 
+/** Lifted darks (Nord, Everforest, One Dark, Dracula) live here: their
+ *  identity is a medium-dark background, deep tones would misrender them. */
 const TONES: Record<SeedTone, { lightBg: number; lightCard: number; darkBg: number; darkCard: number }> = {
   default: { lightBg: 0.966, lightCard: 0.994, darkBg: 0.16, darkCard: 0.205 },
   paper: { lightBg: 0.978, lightCard: 1, darkBg: 0.205, darkCard: 0.245 },
   soft: { lightBg: 0.935, lightCard: 0.968, darkBg: 0.19, darkCard: 0.235 },
   deep: { lightBg: 0.885, lightCard: 0.925, darkBg: 0.125, darkCard: 0.165 },
+  lifted: { lightBg: 0.951, lightCard: 0.978, darkBg: 0.3, darkCard: 0.34 },
 };
 
 export interface SeedColor {

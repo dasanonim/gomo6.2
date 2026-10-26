@@ -215,8 +215,8 @@ const SEED_THEMES: SeedTheme[] = [
   // Community ports — widely loved palettes tuned to the seed engine
   // (light flavour first, dark second, like the upstreams ship them).
   { id: "catppuccin", group: "calm", nameKey: "themeCatppuccin", seed: { L: 0.62, C: 0.15, H: 292 }, style: "soft", modes: ["light", "dark"], radius: "1rem", font: "rounded" },
-  { id: "dracula", group: "neon", nameKey: "themeDracula", seed: { L: 0.6, C: 0.2, H: 290 }, style: "soft", tone: "paper", modes: ["dark"], radius: "0.5rem" },
-  { id: "gruvbox", group: "retro", nameKey: "themeGruvbox", seed: { L: 0.62, C: 0.13, H: 62 }, style: "soft", tone: "soft", modes: ["light", "dark"], radius: "0.125rem" },
+  { id: "dracula", group: "neon", nameKey: "themeDracula", seed: { L: 0.6, C: 0.2, H: 290 }, style: "soft", tone: "lifted", modes: ["dark"], radius: "0.5rem" },
+  { id: "gruvbox", group: "retro", nameKey: "themeGruvbox", seed: { L: 0.62, C: 0.13, H: 62 }, style: "soft", tone: "lifted", modes: ["light", "dark"], radius: "0.125rem" },
   // Pastel
   { id: "blush", group: "pastel", nameKey: "themeBlush", seed: { L: 0.72, C: 0.11, H: 355 }, style: "pastel", modes: ["light", "dark"], radius: "1.25rem", font: "rounded" },
   { id: "sage", group: "pastel", nameKey: "themeSage", seed: { L: 0.72, C: 0.09, H: 150 }, style: "pastel", modes: ["light", "dark"], radius: "1.25rem", font: "rounded" },
