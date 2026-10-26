@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, useLocation, useNavigationType } from "react-router-dom";
-import { ImagePlus, Plus, Trash2 } from "lucide-react";
+import { ImagePlus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "@/integrations/api/compat";
 import { storageUrl } from "@/utils/storage";
@@ -33,13 +33,12 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ProfileSkeleton } from "@/components/skeletons/ContentSkeletons";
 import {
   EASE_OUT_EXPO,
-  hoverLift,
   morphOrigin,
   morphTransition,
-  pressFeedback,
   springFor,
 } from "@/lib/motion";
 import { AvatarMorph } from "@/components/profile/AvatarMorph";
+import { CreateFab } from "@/components/CreateFab";
 import { isAnimatedAvatarUrl } from "@/components/UserAvatar";
 import { RecedeOnScroll } from "@/components/profile/RecedeOnScroll";
 import { toViewportRect, type ViewportRect } from "@/utils/domRect";
@@ -1176,35 +1175,12 @@ const Profile = () => {
             content column (which shifts when the forum panel is open); on
             narrow screens it falls back to a normal corner FAB. */}
         {canPostOnWall && (
-          <motion.div
-            className="profile-wall-fab fixed z-40"
-            style={{
-              // `right` is the distance from the viewport's right edge, so a
-              // LARGER constant moves the button further right. `bottom` lives
-              // in MobileBottomNav.css: the bottom nav must never cover the
-              // button on a phone.
-              right: fabRight,
-            }}
-            {...hoverLift(prefersReducedMotion, 1.04)}
-            {...pressFeedback(prefersReducedMotion, 0.9)}
-            transition={springFor("snappy", prefersReducedMotion)}
-          >
-            <Button
-              variant="default"
-              size="icon"
-              onClick={handleWallCreateClick}
-              className="h-12 w-12 rounded-2xl shadow-lg"
-              title={wallCreateOpen ? "Скрыть форму" : "Написать на стене"}
-            >
-              <motion.span
-                className="inline-flex"
-                animate={{ rotate: wallCreateOpen ? 45 : 0 }}
-                transition={springFor("snappy", prefersReducedMotion)}
-              >
-                <Plus className="h-5 w-5" />
-              </motion.span>
-            </Button>
-          </motion.div>
+          <CreateFab
+            onClick={handleWallCreateClick}
+            label={wallCreateOpen ? "Скрыть форму" : "Написать на стене"}
+            active={wallCreateOpen}
+            right={fabRight}
+          />
         )}
       </motion.main>
   );

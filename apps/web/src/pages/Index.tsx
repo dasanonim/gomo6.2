@@ -22,6 +22,7 @@ import { FavoritesView } from "@/components/FavoritesView";
 import { MrRandom } from "@/components/MrRandom";
 import { ModerationNavCard } from "@/components/ModerationNavCard";
 import { AddTabDialog } from "@/components/AddTabDialog";
+import { CreateFab } from "@/components/CreateFab";
 import { Spotlight } from "@/components/Spotlight";
 import { useSidebarTabsStore } from "@/stores/sidebarTabsStore";
 import { usePendingView } from "@/hooks/usePendingView";
@@ -681,6 +682,16 @@ const Index = () => {
         sections={sections}
         loading={sections.length === 0}
       />
+
+      {/* Mobile-first «+» for the feed — same look/animation as the profile
+          wall button, but it opens the topic composer. Shown only over the
+          feed itself; sections/boards have their own create entry points. */}
+      {view.isShown("feed") && (
+        <CreateFab
+          onClick={() => navigate(createTopicHref)}
+          label="Создать тему"
+        />
+      )}
 
       <LegalConsentGate
         open={showTerms}
