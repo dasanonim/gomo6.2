@@ -16,7 +16,7 @@ import { createPortal } from "react-dom";
 import { animate, motion, useDragControls, useMotionValue, useReducedMotion } from "motion/react";
 import { EASE_OUT_EXPO, springFor } from "@/lib/motion";
 import { apiClient } from "@/integrations/api/client";
-import { Popover, PopoverPanel, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverPanel } from "@/components/ui/popover";
 import { InkBar, InkButton, glassGhostButtonClass } from "@/components/ui/ink-bar";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -26,7 +26,7 @@ import { GomoRichEditor, type GomoRichEditorHandle } from "@/components/GomoRich
 import { PublishButton } from "@/components/PublishButton";
 import { getPublishButtonStyle } from "@/lib/publishButtonStyle";
 import { Lightbox, type LightboxItem } from "@/components/Lightbox";
-import { Expand, Link2, Loader2, Minimize2, Paperclip, Smile, X } from "lucide-react";
+import { Expand, Loader2, Minimize2, Paperclip, Smile, X } from "lucide-react";
 
 import { uploadAttachments, uploadEditedDataUrl } from "@/utils/mediaUpload";
 import { storageUrl } from "@/utils/storage";
@@ -474,6 +474,13 @@ export const RichComposer = ({
     }
   };
 
+  // The "/" toolbar key types a slash at the caret, so the tiptap suggestion
+  // opens the same command menu as a typed "/" (media, gallery, divider,
+  // link card, spoiler, YouTube). Same machine, no parallel UI.
+  const insertSlashCommand = useCallback(() => {
+    editorRef.current?.insertText("/");
+  }, []);
+
   // ── Link card ─────────────────────────────────────────────────────────────
   const handleCreateLinkCard = async () => {
     const editor = editorRef.current?.getEditor();
@@ -830,17 +837,22 @@ export const RichComposer = ({
               <Smile className="h-5 w-5" />
             </InkButton>
           </EmojiPicker>
+          <InkButton
+            title="Команды (/)"
+            aria-label="Открыть меню команд"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={insertSlashCommand}
+          >
+            <span aria-hidden="true" className="text-[19px] font-bold leading-none">
+              /
+            </span>
+          </InkButton>
           <Popover
             open={linkDialogOpen}
             onOpenChange={(open) => {
               if (!linkLoading) setLinkDialogOpen(open);
             }}
           >
-            <PopoverTrigger asChild>
-              <InkButton title="Ссылка-карточка" onMouseDown={(event) => event.preventDefault()}>
-                <Link2 className="h-5 w-5" />
-              </InkButton>
-            </PopoverTrigger>
             <PopoverPanel side="top" align="start" className="z-[80] w-80">
               <div className="px-3 py-3">
                 <Input
