@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { Check, ChevronRight } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -58,12 +58,12 @@ export const SectionPicker = ({
     onOpenChange(false);
   };
 
-  const toggleSection = (section: SectionWithSubsections) => {
-    // A раздел without подразделы is a leaf — it selects straight away.
-    if (section.subsections.length === 0) {
-      choose(section, null);
-      return;
-    }
+  // Tapping the row itself always picks the раздел as a whole — a подраздел
+  // is optional, so expansion lives only on the chevron disclosure button.
+  const selectSection = (section: SectionWithSubsections) => choose(section, null);
+
+  const toggleExpanded = (section: SectionWithSubsections) => {
+    if (section.subsections.length === 0) return;
     setExpandedId((prev) => (prev === section.id ? null : section.id));
   };
 
@@ -90,48 +90,61 @@ export const SectionPicker = ({
               {sections.map((section, index) => {
                 const isCurrent = section.id === currentSectionId && !currentSubsectionId;
                 const expanded = expandedId === section.id;
+                const hasSubsections = section.subsections.length > 0;
                 return (
                   <div key={section.id}>
-                    <motion.button
-                      type="button"
+                    <motion.div
                       initial="hidden"
                       animate="show"
                       variants={whisperRowVariants(index)}
                       {...pressFeedback(reduceMotion)}
-                      onClick={() => toggleSection(section)}
-                      className={`flex w-full items-center gap-3 rounded-2xl border px-3.5 py-3 text-left transition-colors ${
+                      className={`flex w-full items-center gap-1 rounded-2xl border py-2 pl-2 pr-1 transition-colors ${
                         isCurrent
-                          ? "border-primary/30 bg-primary/10 font-semibold text-primary"
-                          : "border-border/50 bg-foreground/[0.02] hover:bg-foreground/[0.05]"
+                          ? "border-primary/30 bg-primary/10"
+                          : "border-border/50 bg-foreground/[0.02]"
                       }`}
                     >
-                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-inset ring-primary/15">
-                        <SectionIcon name={section.icon} className="h-4 w-4" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2 text-sm font-semibold">
-                          <span className="truncate">{section.name}</span>
-                          {section.is_nsfw && (
-                            <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
-                              18+
+                      <button
+                        type="button"
+                        onClick={() => selectSection(section)}
+                        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-1 text-left transition-colors hover:bg-foreground/[0.04]"
+                      >
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-inset ring-primary/15">
+                          <SectionIcon name={section.icon} className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className={`flex items-center gap-2 text-sm ${isCurrent ? "font-semibold text-primary" : "font-semibold"}`}>
+                            <span className="truncate">{section.name}</span>
+                            {section.is_nsfw && (
+                              <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+                                18+
+                              </span>
+                            )}
+                          </span>
+                          {section.description && (
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                              {section.description}
                             </span>
                           )}
                         </span>
-                        {section.description && (
-                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                            {section.description}
-                          </span>
-                        )}
-                      </span>
-                      {isCurrent && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                      {section.subsections.length > 0 && (
-                        <ChevronRight
-                          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${
-                            expanded ? "rotate-90" : ""
-                          }`}
-                        />
+                        {isCurrent && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                      </button>
+                      {hasSubsections && (
+                        <button
+                          type="button"
+                          onClick={() => toggleExpanded(section)}
+                          aria-expanded={expanded}
+                          aria-label={expanded ? "Скрыть подразделы" : "Показать подразделы"}
+                          className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+                        >
+                          <ChevronDown
+                            className={`h-4 w-4 transition-transform duration-200 ${
+                              expanded ? "rotate-180" : ""
+                            }`}
+                          />
+                        </button>
                       )}
-                    </motion.button>
+                    </motion.div>
                     {expanded && section.subsections.length > 0 && (
                       <div className="ml-[26px] space-y-1 border-l border-border/60 py-1 pl-2">
                         {section.subsections.map((sub, subIndex) => {

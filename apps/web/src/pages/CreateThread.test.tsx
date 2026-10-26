@@ -127,7 +127,7 @@ describe("CreateThread (global topic)", () => {
     });
   });
 
-  it("stays on the editor first and opens the picker on demand", async () => {
+  it("selects the section on row tap; the chevron only expands", async () => {
     const user = userEvent.setup();
     render(<Component />);
 
@@ -140,10 +140,17 @@ describe("CreateThread (global topic)", () => {
     await user.click(screen.getByRole("button", { name: "Выбрать раздел" }));
     await waitFor(() => expect(screen.getByText("Выберите раздел")).toBeTruthy());
 
-    await user.click(screen.getByText("Игры"));
+    // Subsections stay hidden until the chevron disclosure is used.
+    expect(screen.queryByText("ПК")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Показать подразделы" }));
     expect(screen.getByText("ПК")).toBeTruthy();
     expect(screen.getByText("Консоли")).toBeTruthy();
     expect(screen.getByText("Весь раздел")).toBeTruthy();
+
+    // Tapping the row itself picks the whole section at once.
+    await user.click(screen.getByText("Игры"));
+    await waitFor(() => expect(screen.queryByText("Выберите раздел")).toBeNull());
+    expect(screen.getByText("Игры")).toBeTruthy();
   });
 
   it("advances straight to the composer for a раздел without подразделы", async () => {
@@ -164,7 +171,7 @@ describe("CreateThread (global topic)", () => {
     await waitFor(() => expect(screen.getByPlaceholderText("Заголовок темы")).toBeTruthy());
     await user.click(screen.getByRole("button", { name: "Выбрать раздел" }));
     await waitFor(() => expect(screen.getByText("Выберите раздел")).toBeTruthy());
-    await user.click(screen.getByText("Игры"));
+    await user.click(screen.getByRole("button", { name: "Показать подразделы" }));
     await user.click(screen.getByText("ПК"));
 
     await waitFor(() => expect(screen.getByPlaceholderText("Заголовок темы")).toBeTruthy());
