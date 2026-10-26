@@ -7,7 +7,7 @@
       // Keep the id list in sync with src/theme/registry.ts (guarded by a test).
       (function () {
         try {
-          var THEMES = ["cannabis", "pink", "lavender", "mint", "glass", "catppuccin", "ash", "slate", "obsidian", "gruvbox", "synthwave", "dracula", "terminal", "paper", "contrast", "contrastLight"];
+          var THEMES = ["pink", "lavender", "mint", "glass", "catppuccin", "ash", "slate", "obsidian", "gruvbox", "synthwave", "dracula", "terminal", "paper", "contrast", "contrastLight"];
           var store = window.localStorage;
           var theme = store.getItem("color-theme");
           if (THEMES.indexOf(theme) === -1) theme = "ash";

@@ -387,8 +387,6 @@ const ru: LocaleResources = {
     themeLavenderDescription: "Мягкий неон и уютный glow",
     themeMint: "Мятный лимонад",
     themeMintDescription: "Светло, плоско, свежо",
-    themeCannabis: "Зелёная каннабиоидная",
-    themeCannabisDescription: "Старый фирменный зелёный",
     themePink: "Розовая няшная",
     themePinkDescription: "Мягкая и яркая",
     themeObsidian: "Обсидиан",

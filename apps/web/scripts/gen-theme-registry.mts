@@ -132,7 +132,6 @@ const SURFACE_BY_THEME: Record<string, SurfaceProfile> = {
   // Colour.
   pink: "glass",
   lavender: "glass",
-  cannabis: "elevated",
   // Community ports.
   catppuccin: "glass",
   dracula: "neon",
@@ -152,8 +151,8 @@ const REMOVED_THEME_IDS = new Set<string>([
   "quartz", "jade", "ink", "espresso",
   // Second cull (2026-10): near-duplicate neutrals (linen/sand/charcoal vs
   // ash/slate) and legacy one-offs superseded by community themes
-  // (graphite → one-dark/tokyo-night, volcanic → gruvbox).
-  "graphite", "volcanic",
+  // (graphite → one-dark/tokyo-night, volcanic → gruvbox, cannabis → everforest).
+  "graphite", "volcanic", "cannabis",
   "linen", "sand", "charcoal",
 ]);
 
@@ -164,7 +163,6 @@ const BG_IMAGE_BY_THEME: Record<string, string> = {
   lavender:
     "radial-gradient(70% 55% at 15% 0%, oklch(var(--primary) / 0.18), transparent 60%), radial-gradient(60% 50% at 90% 10%, oklch(var(--accent) / 0.16), transparent 55%)",
   pink: "radial-gradient(70% 55% at 80% 0%, oklch(var(--primary) / 0.14), transparent 62%)",
-  cannabis: "radial-gradient(70% 55% at 20% 0%, oklch(var(--primary) / 0.12), transparent 62%)",
   catppuccin:
     "radial-gradient(70% 55% at 15% 0%, oklch(var(--primary) / 0.16), transparent 60%), radial-gradient(60% 50% at 90% 10%, oklch(var(--accent) / 0.14), transparent 55%)",
   dracula: "radial-gradient(70% 55% at 50% 0%, oklch(var(--primary) / 0.14), transparent 62%)",

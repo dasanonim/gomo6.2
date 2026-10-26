@@ -386,8 +386,6 @@ const en: LocaleResources = {
     themeLavenderDescription: "Soft neon and cozy glow",
     themeMint: "Mint lemonade",
     themeMintDescription: "Light, flat, fresh",
-    themeCannabis: "Green cannabinoid",
-    themeCannabisDescription: "The old signature green",
     themePink: "Cute pink",
     themePinkDescription: "Soft and bright",
     themeObsidian: "Obsidian",
