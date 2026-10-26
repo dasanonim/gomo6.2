@@ -691,7 +691,7 @@ export const RichComposer = ({
         }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleRootDrop}
-        className={`group/panel fixed inset-x-0 bottom-0 top-2 flex w-full flex-col overflow-hidden rounded-t-2xl border-t border-border/60 bg-background md:relative md:top-0 md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
+        className={`group/panel fixed inset-x-0 bottom-0 top-[max(0.5rem,env(safe-area-inset-top,0px))] flex w-full flex-col overflow-hidden rounded-t-2xl border-t border-border/60 bg-background md:relative md:top-0 md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
           fullscreen
             ? "md:h-[100dvh] md:max-h-none md:max-w-none md:rounded-none"
             : "md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-2xl"
@@ -803,7 +803,7 @@ export const RichComposer = ({
         {/* Toolbar */}
         <InkBar
           blobClassName="h-9 w-9"
-          className="flex shrink-0 items-center gap-0.5 border-t border-border/60 py-1.5 pl-2 pr-2 md:pr-7"
+          className="flex shrink-0 items-center gap-0.5 border-t border-border/60 pl-2 pr-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom,0px))] md:pb-1.5 md:pr-7"
         >
           <InkButton
             title="Добавить медиа"
