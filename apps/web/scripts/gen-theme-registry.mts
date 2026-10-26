@@ -133,6 +133,10 @@ const SURFACE_BY_THEME: Record<string, SurfaceProfile> = {
   pink: "glass",
   lavender: "glass",
   cannabis: "elevated",
+  // Community ports.
+  catppuccin: "glass",
+  dracula: "neon",
+  gruvbox: "outlined",
 };
 
 const DEFAULT_SURFACE_PROFILE: SurfaceProfile = "glass";
@@ -161,6 +165,9 @@ const BG_IMAGE_BY_THEME: Record<string, string> = {
     "radial-gradient(70% 55% at 15% 0%, oklch(var(--primary) / 0.18), transparent 60%), radial-gradient(60% 50% at 90% 10%, oklch(var(--accent) / 0.16), transparent 55%)",
   pink: "radial-gradient(70% 55% at 80% 0%, oklch(var(--primary) / 0.14), transparent 62%)",
   cannabis: "radial-gradient(70% 55% at 20% 0%, oklch(var(--primary) / 0.12), transparent 62%)",
+  catppuccin:
+    "radial-gradient(70% 55% at 15% 0%, oklch(var(--primary) / 0.16), transparent 60%), radial-gradient(60% 50% at 90% 10%, oklch(var(--accent) / 0.14), transparent 55%)",
+  dracula: "radial-gradient(70% 55% at 50% 0%, oklch(var(--primary) / 0.14), transparent 62%)",
   synthwave:
     "linear-gradient(oklch(var(--primary) / 0.08) 1px, transparent 1px), linear-gradient(90deg, oklch(var(--primary) / 0.08) 1px, transparent 1px)",
   paper:
@@ -207,6 +214,11 @@ interface SeedTheme extends Character {
 const SEED_THEMES: SeedTheme[] = [
   // Material
   { id: "glass", group: "calm", nameKey: "themeGlass", seed: { L: 0.62, C: 0.13, H: 275 }, style: "soft", modes: ["light", "dark"], radius: "1rem" },
+  // Community ports — widely loved palettes tuned to the seed engine
+  // (light flavour first, dark second, like the upstreams ship them).
+  { id: "catppuccin", group: "calm", nameKey: "themeCatppuccin", seed: { L: 0.62, C: 0.15, H: 292 }, style: "soft", modes: ["light", "dark"], radius: "1rem", font: "rounded" },
+  { id: "dracula", group: "neon", nameKey: "themeDracula", seed: { L: 0.6, C: 0.2, H: 290 }, style: "soft", tone: "paper", modes: ["dark"], radius: "0.5rem" },
+  { id: "gruvbox", group: "retro", nameKey: "themeGruvbox", seed: { L: 0.62, C: 0.13, H: 62 }, style: "soft", tone: "soft", modes: ["light", "dark"], radius: "0.125rem" },
   // Pastel
   { id: "blush", group: "pastel", nameKey: "themeBlush", seed: { L: 0.72, C: 0.11, H: 355 }, style: "pastel", modes: ["light", "dark"], radius: "1.25rem", font: "rounded" },
   { id: "sage", group: "pastel", nameKey: "themeSage", seed: { L: 0.72, C: 0.09, H: 150 }, style: "pastel", modes: ["light", "dark"], radius: "1.25rem", font: "rounded" },
