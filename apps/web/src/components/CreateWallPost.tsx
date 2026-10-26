@@ -601,7 +601,7 @@ export const CreateWallPost = ({
         role="dialog"
         aria-modal="true"
         {...wallDragHandlers}
-        className={`fixed inset-x-0 top-0 bottom-[var(--kb-inset)] md:static flex flex-col w-full md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-2xl md:border md:border-border/60 md:shadow-2xl bg-background md:bg-card overflow-hidden transition-[transform,opacity] duration-300 ease-out animate-in slide-in-from-bottom-full md:slide-in-from-bottom-8 ${
+        className={`fixed inset-x-0 top-[env(safe-area-inset-top,0px)] bottom-[var(--kb-inset)] md:static flex flex-col w-full md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-2xl md:border md:border-border/60 md:shadow-2xl bg-background md:bg-card overflow-hidden transition-[transform,opacity] duration-300 ease-out animate-in slide-in-from-bottom-full md:slide-in-from-bottom-8 ${
           // On close the sheet detaches from the (still animating) keyboard
           // inset and covers the full screen, so translate-y-full slides it
           // cleanly off while the keyboard retracts behind it — otherwise the
@@ -706,7 +706,7 @@ export const CreateWallPost = ({
         )}
 
         {/* Toolbar */}
-        <div className="px-2 py-1.5 border-t border-border/60 flex items-center gap-0.5 shrink-0">
+        <div className="px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom,0px))] md:pb-1.5 border-t border-border/60 flex items-center gap-0.5 shrink-0">
           <EmojiPicker
             onEmojiSelect={handleEmojiSelect}
             triggerRef={emojiButtonRef}
