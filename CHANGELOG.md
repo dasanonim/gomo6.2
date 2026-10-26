@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.34.0](https://github.com/elcrazycol/gomo6.2/compare/v2.33.0...v2.34.0) (2026-10-26)
+
+
+### Features
+
+* **public-id:** number everything from 1, drop the reserve and the market ([#582](https://github.com/elcrazycol/gomo6.2/issues/582)) ([f6721ce](https://github.com/elcrazycol/gomo6.2/commit/f6721ce9387857e87f64bb877a0d8c792818d60b))
+
 ## [2.33.0](https://github.com/elcrazycol/gomo6.2/compare/v2.32.0...v2.33.0) (2026-10-25)
 
 
