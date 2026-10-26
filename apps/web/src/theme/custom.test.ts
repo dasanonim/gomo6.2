@@ -91,9 +91,9 @@ describe("theme collections", () => {
 
   it("toggles favourites", () => {
     expect(getFavorites()).toEqual([]);
-    toggleFavorite("graphite");
-    expect(getFavorites()).toEqual(["graphite"]);
-    toggleFavorite("graphite");
+    toggleFavorite("ash");
+    expect(getFavorites()).toEqual(["ash"]);
+    toggleFavorite("ash");
     expect(getFavorites()).toEqual([]);
   });
 });
