@@ -16,7 +16,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/integrations/api/compat";
 import { invalidateByPrefix } from "@/integrations/api/queryCache";
 import { toast } from "sonner";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import type { AttachmentMeta } from "@/utils/mediaUpload";
 import { RichComposer, type RichComposerPayload } from "@/components/composer/RichComposer";
 import { SectionPicker } from "@/components/topic/SectionPicker";
@@ -67,8 +67,7 @@ const CreateThread = () => {
   }, [loading, sections, presetSectionSlug, presetSubSlug]);
 
   // The picker never opens by itself: the composer is the first thing the
-  // user sees, and the placement is chosen on demand («Выбрать раздел» in
-  // the header, «Сменить» once a раздел is set).
+  // user sees, and the placement is chosen on demand through the header pill.
 
   // Restore the autosaved draft (title + body).
   useEffect(() => {
@@ -105,6 +104,35 @@ const CreateThread = () => {
     if (!section) return "";
     return subsection ? `${section.name} · ${subsection.name}` : section.name;
   }, [section, subsection]);
+
+  // The placement pill is the single entry point: unchosen it invites
+  // («Выбрать раздел»), chosen it shows the placement — tapping either opens
+  // the picker. No separate «Сменить» button.
+  const placementPill = (
+    <button
+      type="button"
+      onClick={() => setPickerOpen(true)}
+      title={section ? "Сменить раздел" : "Выбрать раздел"}
+      className={`inline-flex max-w-full items-center justify-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+        section
+          ? "border-border/60 bg-foreground/[0.04] hover:bg-foreground/[0.08]"
+          : "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+      }`}
+    >
+      {section ? (
+        <>
+          <SectionIcon name={section.icon} className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <span className="truncate">{placementLabel}</span>
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+        </>
+      ) : (
+        <>
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">Выбрать раздел</span>
+        </>
+      )}
+    </button>
+  );
 
   // Closing returns to whatever is underneath: the background page in overlay
   // mode, or the previous entry for a direct visit. A bookmarked /create has
@@ -191,43 +219,13 @@ const CreateThread = () => {
 
   // The composer is always the page: it is a portal sheet over the content
   // underneath (the feed/board when opened as an overlay, the layout when
-  // visited directly). There is no bare intermediate screen — placement is
-  // picked in the dialog, which opens by itself until a раздел is chosen.
+  // picked on demand through the header pill, which opens the dialog.
   return (
     <>
       <RichComposer
         bucket="content"
         testId="topic-composer"
-        headerLabel={
-          section ? (
-            <span className="inline-flex items-center justify-center gap-1.5">
-              <SectionIcon name={section.icon} className="h-4 w-4" />
-              {placementLabel}
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setPickerOpen(true)}
-              className="inline-flex items-center justify-center gap-1 rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-            >
-              Выбрать раздел
-              <ChevronDown className="h-3 w-3" />
-            </button>
-          )
-        }
-        headerRight={
-          section ? (
-            <button
-              type="button"
-              onClick={() => setPickerOpen(true)}
-              className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-              title="Сменить раздел"
-            >
-              Сменить
-              <ChevronDown className="h-3 w-3" />
-            </button>
-          ) : undefined
-        }
+        headerLabel={placementPill}
         placeholder="Текст темы…"
         escapeDisabled={pickerOpen}
         initialContentJson={restored?.contentJson ?? contentJson}
