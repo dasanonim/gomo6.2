@@ -1,12 +1,17 @@
-// Раздел picker for creating a topic. Two steps: pick a раздел; if it has
-// подразделы they slide in and picking one is optional (there is always a
-// "Continue without подраздел" path). A раздел without подразделы advances
-// straight away.
+// Раздел picker for creating a topic. One list in the sidebar's row language:
+// compact rows with a muted icon, the current placement highlighted, sections
+// with подразделы expanding inline. Tapping a leaf (or «Весь раздел») selects
+// immediately — there is no second screen.
 
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { Check, ChevronRight } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { SectionIcon } from "@/components/topic/sectionIcons";
 import type { SectionWithSubsections, ThreadSection, ThreadSubsection } from "@/hooks/useThreadSections";
@@ -31,122 +36,112 @@ export const SectionPicker = ({
   currentSubsectionId,
   onSelect,
 }: SectionPickerProps) => {
-  const [activeId, setActiveId] = useState<string | null>(currentSectionId ?? null);
+  const [expandedId, setExpandedId] = useState<string | null>(currentSectionId ?? null);
 
-  // Reopen at the current placement when changing, otherwise at the root list.
+  // Reopen at the current placement when changing, otherwise collapsed.
   useEffect(() => {
-    if (open) setActiveId(currentSectionId ?? null);
+    if (open) setExpandedId(currentSectionId ?? null);
   }, [open, currentSectionId]);
 
-  const active = sections.find((s) => s.id === activeId) ?? null;
-
-  const chooseSection = (section: SectionWithSubsections) => {
-    if (section.subsections.length === 0) {
-      onSelect(section, null);
-      onOpenChange(false);
-      return;
-    }
-    setActiveId(section.id);
-  };
-
-  const chooseSubsection = (section: ThreadSection, subsection: ThreadSubsection | null) => {
+  const choose = (section: ThreadSection, subsection: ThreadSubsection | null) => {
     onSelect(section, subsection);
     onOpenChange(false);
   };
 
+  const toggleSection = (section: SectionWithSubsections) => {
+    // A раздел without подразделы is a leaf — it selects straight away.
+    if (section.subsections.length === 0) {
+      choose(section, null);
+      return;
+    }
+    setExpandedId((prev) => (prev === section.id ? null : section.id));
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg p-0 overflow-hidden z-[80]" overlayClassName="z-[75]">
+      <DialogContent className="max-w-md p-0 overflow-hidden z-[80]" overlayClassName="z-[75]">
         <DialogHeader className="px-4 pt-4 pb-2">
-          <DialogTitle className="flex items-center gap-2 text-base">
-            {active && (
-              <button
-                type="button"
-                aria-label="Назад к разделам"
-                onClick={() => setActiveId(null)}
-                className="rounded-full p-1 text-muted-foreground transition hover:bg-muted/70 hover:text-foreground"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-            )}
-            {active ? active.name : "Выберите раздел"}
-          </DialogTitle>
+          <DialogTitle>Выберите раздел</DialogTitle>
+          <DialogDescription>Тема попадёт в раздел — подраздел выбирать необязательно.</DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[60vh] overflow-y-auto px-4 pb-4">
-          {loading ? (
+        <div className="mx-4 mb-4 max-h-[60vh] overflow-y-auto rounded-lg border border-border/70 p-1.5">
+          {loading && sections.length === 0 ? (
             <div className="flex justify-center py-10">
-              <PentagramLoader size="md" />
+              <PentagramLoader size="sm" />
             </div>
-          ) : !active ? (
-            <div className="grid gap-2">
-              {sections.map((section) => {
-                const isCurrent = section.id === currentSectionId;
-                return (
+          ) : sections.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">Разделы пока не настроены</p>
+          ) : (
+            sections.map((section) => {
+              const isCurrent = section.id === currentSectionId && !currentSubsectionId;
+              const expanded = expandedId === section.id;
+              return (
+                <div key={section.id}>
                   <button
-                    key={section.id}
                     type="button"
-                    onClick={() => chooseSection(section)}
-                    className={`flex items-center gap-3 rounded-xl border p-3 text-left transition-colors hover:bg-primary/5 ${
-                      isCurrent ? "border-primary bg-primary/10" : "border-border"
+                    onClick={() => toggleSection(section)}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors ${
+                      isCurrent
+                        ? "bg-primary/10 font-semibold text-primary"
+                        : "text-foreground/80 hover:bg-muted/60 hover:text-foreground"
                     }`}
                   >
-                    <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-primary">
-                      <SectionIcon name={section.icon} className="h-4 w-4" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2 font-medium">
-                        {section.name}
-                        {section.is_nsfw && (
-                          <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
-                            18+
-                          </span>
-                        )}
-                      </span>
-                      {section.description && (
-                        <span className="block truncate text-xs text-muted-foreground">{section.description}</span>
+                    <SectionIcon name={section.icon} className="h-4 w-4 shrink-0 text-muted-foreground/40" />
+                    <span className="min-w-0 flex-1 truncate text-left">
+                      {section.name}
+                      {section.is_nsfw && (
+                        <span className="ml-1.5 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+                          18+
+                        </span>
                       )}
                     </span>
-                    {section.subsections.length > 0 ? (
-                      <span className="text-xs text-muted-foreground">{section.subsections.length} подразд.</span>
-                    ) : null}
-                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  </button>
-                );
-              })}
-              {sections.length === 0 && (
-                <p className="py-8 text-center text-sm text-muted-foreground">Разделы пока не настроены</p>
-              )}
-            </div>
-          ) : (
-            <div className="grid gap-2">
-              {active.subsections.map((sub) => (
-                <button
-                  key={sub.id}
-                  type="button"
-                  onClick={() => chooseSubsection(active, sub)}
-                  className={`flex items-center gap-2 rounded-lg border p-3 text-left transition-colors hover:bg-primary/5 ${
-                    sub.id === currentSubsectionId ? "border-primary bg-primary/10" : "border-border"
-                  }`}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-medium">{sub.name}</span>
-                    {sub.description && (
-                      <span className="block truncate text-xs text-muted-foreground">{sub.description}</span>
+                    {isCurrent && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                    {section.subsections.length > 0 && (
+                      <ChevronRight
+                        className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${
+                          expanded ? "rotate-90" : ""
+                        }`}
+                      />
                     )}
-                  </span>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                </button>
-              ))}
-              <Button
-                type="button"
-                variant="outline"
-                className="mt-1"
-                onClick={() => chooseSubsection(active, null)}
-              >
-                Продолжить без подраздела
-              </Button>
-            </div>
+                  </button>
+                  {expanded && section.subsections.length > 0 && (
+                    <div className="mb-1 ml-[22px] border-l border-border/60 pl-2">
+                      {section.subsections.map((sub) => {
+                        const subCurrent = section.id === currentSectionId && sub.id === currentSubsectionId;
+                        return (
+                          <button
+                            key={sub.id}
+                            type="button"
+                            onClick={() => choose(section, sub)}
+                            className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors ${
+                              subCurrent
+                                ? "bg-primary/10 font-semibold text-primary"
+                                : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1 truncate text-left">{sub.name}</span>
+                            {subCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={() => choose(section, null)}
+                        className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors ${
+                          isCurrent
+                            ? "bg-primary/10 font-semibold text-primary"
+                            : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                        }`}
+                      >
+                        <span className="min-w-0 flex-1 truncate text-left">Весь раздел</span>
+                        {isCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       </DialogContent>

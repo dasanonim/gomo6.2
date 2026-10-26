@@ -4,11 +4,11 @@
 // feed/board stays mounted when opened as an overlay (backgroundLocation,
 // same as wall posts), so creating never swaps the page out from under you:
 //
-//   1. Open → the section dialog appears over the sheet (unless ?section=&sub=
-//      already placed it, then the editor is up straight away).
-//   2. Pick a раздел; if it has подразделы they slide in, picking one is
-//      optional. Until a раздел is chosen the header offers «Выбрать раздел»
-//      and publishing stays disabled.
+//   1. Open → the composer sheet is up straight away, unplaced unless
+//      ?section=&sub= already chose.
+//   2. Pick a section in the dialog; if it has subsections they expand inline,
+//      picking one is optional. Until a section is chosen the header offers
+//      «Выбрать раздел» and publishing stays disabled.
 //   3. Title + body editor (the shared RichComposer).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -66,13 +66,9 @@ const CreateThread = () => {
     }
   }, [loading, sections, presetSectionSlug, presetSubSlug]);
 
-  // The panel is the first thing the user sees on the create page — unless a
-  // раздел was already picked from the URL, in which case the editor opens.
-  useEffect(() => {
-    if (loading || section) return;
-    if (presetSectionSlug && sections.some((s) => s.slug === presetSectionSlug)) return;
-    setPickerOpen(true);
-  }, [loading, section, presetSectionSlug, sections]);
+  // The picker never opens by itself: the composer is the first thing the
+  // user sees, and the placement is chosen on demand («Выбрать раздел» in
+  // the header, «Сменить» once a раздел is set).
 
   // Restore the autosaved draft (title + body).
   useEffect(() => {

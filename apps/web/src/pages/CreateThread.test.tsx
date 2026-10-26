@@ -127,30 +127,42 @@ describe("CreateThread (global topic)", () => {
     });
   });
 
-  it("opens the раздел picker first and reveals подразделы", async () => {
+  it("stays on the editor first and opens the picker on demand", async () => {
     const user = userEvent.setup();
     render(<Component />);
+
+    // The composer is up straight away, the picker is not.
+    await waitFor(() => expect(screen.getByPlaceholderText("Заголовок темы")).toBeTruthy());
+    expect(screen.getByTestId("topic-composer")).toBeTruthy();
+    expect(screen.queryByText("Выберите раздел")).toBeNull();
+
+    // Placement is chosen on demand through the header button.
+    await user.click(screen.getByRole("button", { name: "Выбрать раздел" }));
     await waitFor(() => expect(screen.getByText("Выберите раздел")).toBeTruthy());
 
     await user.click(screen.getByText("Игры"));
     expect(screen.getByText("ПК")).toBeTruthy();
     expect(screen.getByText("Консоли")).toBeTruthy();
-    expect(screen.getByText("Продолжить без подраздела")).toBeTruthy();
+    expect(screen.getByText("Весь раздел")).toBeTruthy();
   });
 
   it("advances straight to the composer for a раздел without подразделы", async () => {
     const user = userEvent.setup();
     render(<Component />);
+    await waitFor(() => expect(screen.getByPlaceholderText("Заголовок темы")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Выбрать раздел" }));
     await waitFor(() => expect(screen.getByText("Выберите раздел")).toBeTruthy());
     await user.click(screen.getByText("Новости"));
 
-    await waitFor(() => expect(screen.getByPlaceholderText("Заголовок темы")).toBeTruthy());
-    expect(screen.getByTestId("topic-composer")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("Выберите раздел")).toBeNull());
+    expect(screen.getByText("Новости")).toBeTruthy();
   });
 
   it("publishes a topic with section and subsection", async () => {
     const user = userEvent.setup();
     render(<Component />);
+    await waitFor(() => expect(screen.getByPlaceholderText("Заголовок темы")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Выбрать раздел" }));
     await waitFor(() => expect(screen.getByText("Выберите раздел")).toBeTruthy());
     await user.click(screen.getByText("Игры"));
     await user.click(screen.getByText("ПК"));
@@ -191,11 +203,9 @@ describe("CreateThread (global topic)", () => {
   it("closes back in-app and falls back to the feed on a direct visit", async () => {
     const user = userEvent.setup();
 
-    // Direct visit (no history): dismiss the auto-opened picker, then the X
-    // falls back to the feed.
+    // Direct visit (no history): the X falls back to the feed.
     const first = render(<Component />);
     await waitFor(() => expect(screen.getByTestId("topic-composer")).toBeTruthy());
-    await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Закрыть" }));
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith("/feed", { replace: true }));
     first.unmount();
@@ -205,7 +215,6 @@ describe("CreateThread (global topic)", () => {
     window.history.pushState({}, "", "/create");
     render(<Component />);
     await waitFor(() => expect(screen.getByTestId("topic-composer")).toBeTruthy());
-    await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Закрыть" }));
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith(-1));
   });
