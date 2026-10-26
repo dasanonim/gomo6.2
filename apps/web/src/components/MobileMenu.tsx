@@ -103,11 +103,11 @@ export const MobileMenu = ({ user, isModerator }: MobileMenuProps) => {
       : null;
   const feedActive = explicitView === "feed" || (onHome && !homeTab);
 
-  const go = (to: string) => {
+  const go = (to: string, state?: Record<string, unknown>) => {
     // Menu rows navigate programmatically (no link intent): warm first so
     // the instant swap lands on cache instead of a cold fetch.
     warmRouteIntent(to);
-    navigate(to);
+    navigate(to, state ? { state } : undefined);
     setOpen(false);
   };
 
@@ -250,7 +250,7 @@ export const MobileMenu = ({ user, isModerator }: MobileMenuProps) => {
             <div className="flex items-center gap-2">
               <Button
                 variant="ghost"
-                onClick={() => go(createTopicHref)}
+                onClick={() => go(createTopicHref, { backgroundLocation: location })}
                 className="h-8 shrink-0 rounded-full bg-primary px-3 text-xs font-semibold text-primary-foreground shadow-sm shadow-primary/30 hover:bg-primary/90 hover:text-primary-foreground"
               >
                 <Plus className="w-3.5 h-3.5 mr-1.5" />

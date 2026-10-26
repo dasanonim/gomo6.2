@@ -516,8 +516,11 @@ describe("Board (wall)", () => {
     expect(createBtn).toBeInTheDocument();
     await user.click(createBtn);
 
-    // No channel picked → composer opens for the sub as a whole.
-    expect(mockNavigate).toHaveBeenCalledWith("/g/gsub/create");
+    // No channel picked → composer opens for the sub as a whole, as an
+    // overlay keeping the board mounted underneath.
+    expect(mockNavigate).toHaveBeenCalledWith("/g/gsub/create", {
+      state: { backgroundLocation: { pathname: "/g/gsub" } },
+    });
   });
 
   it("locks the page scroll the moment the channel sheet opens and restores it on close", async () => {

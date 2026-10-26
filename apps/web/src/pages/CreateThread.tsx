@@ -1,18 +1,22 @@
 // Global topic composer. Replaces the old forum-board CreateThread: a topic
 // now belongs to a раздел (and, optionally, one of its подразделы) instead of
-// a board. The flow the product asked for:
+// a board. The composer is a portal sheet over the content underneath — the
+// feed/board stays mounted when opened as an overlay (backgroundLocation,
+// same as wall posts), so creating never swaps the page out from under you:
 //
-//   1. Open the page → the раздел panel appears first.
+//   1. Open → the section dialog appears over the sheet (unless ?section=&sub=
+//      already placed it, then the editor is up straight away).
 //   2. Pick a раздел; if it has подразделы they slide in, picking one is
-//      optional.
-//   3. Then the title + body editor (the shared RichComposer) is shown.
+//      optional. Until a раздел is chosen the header offers «Выбрать раздел»
+//      and publishing stays disabled.
+//   3. Title + body editor (the shared RichComposer).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/integrations/api/compat";
 import { invalidateByPrefix } from "@/integrations/api/queryCache";
 import { toast } from "sonner";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import type { AttachmentMeta } from "@/utils/mediaUpload";
 import { RichComposer, type RichComposerPayload } from "@/components/composer/RichComposer";
 import { SectionPicker } from "@/components/topic/SectionPicker";
@@ -106,6 +110,17 @@ const CreateThread = () => {
     return subsection ? `${section.name} · ${subsection.name}` : section.name;
   }, [section, subsection]);
 
+  // Closing returns to whatever is underneath: the background page in overlay
+  // mode, or the previous entry for a direct visit. A bookmarked /create has
+  // no history to go back to — fall back to the feed instead of a dead X.
+  const handleClose = useCallback(() => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate("/feed", { replace: true });
+    }
+  }, [navigate]);
+
   const handlePublish = useCallback(
     async ({ json, text, attachments }: RichComposerPayload) => {
       if (!section) {
@@ -178,61 +193,52 @@ const CreateThread = () => {
     [navigate, section, subsection, title, draftKey],
   );
 
-  if (!section) {
-    return (
-      <div className="min-h-[70vh] flex flex-col items-center justify-center gap-4 px-4 text-center">
-        {loading ? (
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        ) : (
-          <>
-            <p className="text-muted-foreground">Выберите раздел, чтобы создать тему</p>
-            <SectionPicker
-              open={pickerOpen}
-              onOpenChange={setPickerOpen}
-              sections={sections}
-              loading={loading}
-              currentSectionId={section?.id}
-              currentSubsectionId={subsection?.id}
-              onSelect={(s, sub) => {
-                setSection(s);
-                setSubsection(sub);
-              }}
-            />
-          </>
-        )}
-      </div>
-    );
-  }
-
+  // The composer is always the page: it is a portal sheet over the content
+  // underneath (the feed/board when opened as an overlay, the layout when
+  // visited directly). There is no bare intermediate screen — placement is
+  // picked in the dialog, which opens by itself until a раздел is chosen.
   return (
     <>
       <RichComposer
         bucket="content"
         testId="topic-composer"
         headerLabel={
-          <span className="inline-flex items-center justify-center gap-1.5">
-            <SectionIcon name={section.icon} className="h-4 w-4" />
-            {placementLabel}
-          </span>
+          section ? (
+            <span className="inline-flex items-center justify-center gap-1.5">
+              <SectionIcon name={section.icon} className="h-4 w-4" />
+              {placementLabel}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="inline-flex items-center justify-center gap-1 rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+            >
+              Выбрать раздел
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          )
         }
         headerRight={
-          <button
-            type="button"
-            onClick={() => setPickerOpen(true)}
-            className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-            title="Сменить раздел"
-          >
-            Сменить
-            <ChevronDown className="h-3 w-3" />
-          </button>
+          section ? (
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+              title="Сменить раздел"
+            >
+              Сменить
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          ) : undefined
         }
         placeholder="Текст темы…"
         escapeDisabled={pickerOpen}
         initialContentJson={restored?.contentJson ?? contentJson}
-        publishDisabled={!title.trim()}
+        publishDisabled={!title.trim() || !section}
         onChange={({ json }) => setContentJson(json)}
         onPublish={handlePublish}
-        onClose={() => navigate(-1)}
+        onClose={handleClose}
       >
         <div className="px-4 pt-2.5 shrink-0">
           <Input
@@ -256,7 +262,7 @@ const CreateThread = () => {
         onOpenChange={setPickerOpen}
         sections={sections}
         loading={loading}
-        currentSectionId={section.id}
+        currentSectionId={section?.id}
         currentSubsectionId={subsection?.id}
         onSelect={(s, sub) => {
           setSection(s);

@@ -187,4 +187,26 @@ describe("CreateThread (global topic)", () => {
     expect(screen.queryByText("Выберите раздел")).toBeNull();
     expect(screen.getByText("Игры · ПК")).toBeTruthy();
   });
+
+  it("closes back in-app and falls back to the feed on a direct visit", async () => {
+    const user = userEvent.setup();
+
+    // Direct visit (no history): dismiss the auto-opened picker, then the X
+    // falls back to the feed.
+    const first = render(<Component />);
+    await waitFor(() => expect(screen.getByTestId("topic-composer")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(screen.getByRole("button", { name: "Закрыть" }));
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith("/feed", { replace: true }));
+    first.unmount();
+
+    // In-app navigation: plain back.
+    vi.clearAllMocks();
+    window.history.pushState({}, "", "/create");
+    render(<Component />);
+    await waitFor(() => expect(screen.getByTestId("topic-composer")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(screen.getByRole("button", { name: "Закрыть" }));
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith(-1));
+  });
 });

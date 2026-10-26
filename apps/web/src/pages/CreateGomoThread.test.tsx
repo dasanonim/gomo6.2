@@ -201,8 +201,19 @@ describe("CreateGomoThread (composer)", () => {
     expect(screen.getByText("черновик")).toBeTruthy();
   });
 
-  it("closes back via the X button", async () => {
+  it("closes back in-app and falls back to the board on a direct visit", async () => {
     const user = userEvent.setup();
+
+    // Direct visit (no history to go back to): the X falls back to the board.
+    const first = render(<Component />);
+    await waitFor(() => expect(screen.getByText(/g\/test/)).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Закрыть" }));
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith("/g/test", { replace: true }));
+    first.unmount();
+
+    // In-app navigation: plain back.
+    vi.clearAllMocks();
+    window.history.pushState({}, "", "/g/test/create");
     render(<Component />);
     await waitFor(() => expect(screen.getByText(/g\/test/)).toBeTruthy());
     await user.click(screen.getByRole("button", { name: "Закрыть" }));

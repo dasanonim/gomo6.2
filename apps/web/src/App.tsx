@@ -446,8 +446,15 @@ function AppRoutes() {
       </Routes>
 
       {backgroundLocation && (
+        // Overlays keep the previous page mounted underneath: wall posts and
+        // the topic composers open as panels over the feed/board instead of
+        // swapping the page out. A direct link falls back to the plain
+        // in-layout page above.
         <Routes location={location}>
           <Route path="/profile/:userId/wall/:postId" element={<LazyPage component={WallPost} />} />
+          <Route path="/create" element={<AuthGuard><LazyPage component={CreateThread} /></AuthGuard>} />
+          <Route path="/g/:slug/create" element={<AuthGuard><LazyPage component={CreateGomoThread} /></AuthGuard>} />
+          <Route path="/g/:slug/c/:channelSlug/create" element={<AuthGuard><LazyPage component={CreateGomoThread} /></AuthGuard>} />
         </Routes>
       )}
     </>

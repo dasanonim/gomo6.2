@@ -76,7 +76,8 @@ const Index = () => {
   //   /c/<раздел>[/<подраздел>]
   // Legacy ?section=&sub=&view=&tab= URLs are redirected below.
   const [searchParams] = useSearchParams();
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
   const routeParams = useParams<{ sectionSlug?: string; subSlug?: string }>();
   const routeSectionSlug = routeParams.sectionSlug ?? null;
   const routeSubSlug = routeParams.subSlug ?? null;
@@ -431,6 +432,7 @@ const Index = () => {
               >
                 <PrefetchLink
                   to={createTopicHref}
+                  state={{ backgroundLocation: location }}
                   className="inline-flex w-fit items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[13px] font-semibold text-primary-foreground shadow-md shadow-primary/30 transition-transform duration-150 hover:scale-[1.03] active:scale-95"
                 >
                   <Plus className="h-3.5 w-3.5" />
@@ -688,7 +690,7 @@ const Index = () => {
           feed itself; sections/boards have their own create entry points. */}
       {view.isShown("feed") && (
         <CreateFab
-          onClick={() => navigate(createTopicHref)}
+          onClick={() => navigate(createTopicHref, { state: { backgroundLocation: location } })}
           label="Создать тему"
         />
       )}

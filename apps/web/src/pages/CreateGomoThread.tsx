@@ -122,6 +122,17 @@ const CreateGomoThread = () => {
     setSelectedTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
   };
 
+  // Closing returns to whatever is underneath (the board in overlay mode).
+  // A bookmarked create URL has no history to go back to — fall back to the
+  // board itself instead of a dead X.
+  const handleClose = useCallback(() => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate(slug ? `/g/${slug}` : "/g", { replace: true });
+    }
+  }, [navigate, slug]);
+
   const handlePublish = useCallback(
     async ({ json, text, attachments }: RichComposerPayload) => {
       if (!board) return;
@@ -194,8 +205,11 @@ const CreateGomoThread = () => {
   );
 
   if (loadingBoard) {
+    // A translucent veil, not a solid screen: in overlay mode the board stays
+    // visible underneath while it loads; on a direct visit it just dims the
+    // layout behind the composer that is about to open.
     return (
-      <div className="fixed inset-0 z-50 bg-background flex items-center justify-center">
+      <div className="fixed inset-0 z-50 bg-background/60 backdrop-blur-sm flex items-center justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-primary" />
       </div>
     );
@@ -220,7 +234,7 @@ const CreateGomoThread = () => {
       publishDisabled={!title.trim()}
       onChange={({ json }) => setContentJson(json)}
       onPublish={handlePublish}
-      onClose={() => navigate(-1)}
+      onClose={handleClose}
     >
       <div className="px-4 pt-2.5 shrink-0">
         <Input
