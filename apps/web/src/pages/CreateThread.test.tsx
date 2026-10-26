@@ -127,32 +127,51 @@ describe("CreateThread (global topic)", () => {
     });
   });
 
-  it("opens the раздел picker first and reveals подразделы", async () => {
+  it("selects the section on row tap; the chevron only expands", async () => {
     const user = userEvent.setup();
     render(<Component />);
+
+    // The composer is up straight away, the picker is not.
+    await waitFor(() => expect(screen.getByPlaceholderText("Заголовок темы")).toBeTruthy());
+    expect(screen.getByTestId("topic-composer")).toBeTruthy();
+    expect(screen.queryByText("Выберите раздел")).toBeNull();
+
+    // Placement is chosen on demand through the header button.
+    await user.click(screen.getByRole("button", { name: "Выбрать раздел" }));
     await waitFor(() => expect(screen.getByText("Выберите раздел")).toBeTruthy());
 
-    await user.click(screen.getByText("Игры"));
+    // Subsections stay hidden until the chevron disclosure is used.
+    expect(screen.queryByText("ПК")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Показать подразделы" }));
     expect(screen.getByText("ПК")).toBeTruthy();
     expect(screen.getByText("Консоли")).toBeTruthy();
-    expect(screen.getByText("Продолжить без подраздела")).toBeTruthy();
+    expect(screen.getByText("Весь раздел")).toBeTruthy();
+
+    // Tapping the row itself picks the whole section at once.
+    await user.click(screen.getByText("Игры"));
+    await waitFor(() => expect(screen.queryByText("Выберите раздел")).toBeNull());
+    expect(screen.getByText("Игры")).toBeTruthy();
   });
 
   it("advances straight to the composer for a раздел without подразделы", async () => {
     const user = userEvent.setup();
     render(<Component />);
+    await waitFor(() => expect(screen.getByPlaceholderText("Заголовок темы")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Выбрать раздел" }));
     await waitFor(() => expect(screen.getByText("Выберите раздел")).toBeTruthy());
     await user.click(screen.getByText("Новости"));
 
-    await waitFor(() => expect(screen.getByPlaceholderText("Заголовок темы")).toBeTruthy());
-    expect(screen.getByTestId("topic-composer")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("Выберите раздел")).toBeNull());
+    expect(screen.getByText("Новости")).toBeTruthy();
   });
 
   it("publishes a topic with section and subsection", async () => {
     const user = userEvent.setup();
     render(<Component />);
+    await waitFor(() => expect(screen.getByPlaceholderText("Заголовок темы")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Выбрать раздел" }));
     await waitFor(() => expect(screen.getByText("Выберите раздел")).toBeTruthy());
-    await user.click(screen.getByText("Игры"));
+    await user.click(screen.getByRole("button", { name: "Показать подразделы" }));
     await user.click(screen.getByText("ПК"));
 
     await waitFor(() => expect(screen.getByPlaceholderText("Заголовок темы")).toBeTruthy());
@@ -186,5 +205,24 @@ describe("CreateThread (global topic)", () => {
     expect(screen.getByTestId("topic-composer")).toBeTruthy();
     expect(screen.queryByText("Выберите раздел")).toBeNull();
     expect(screen.getByText("Игры · ПК")).toBeTruthy();
+  });
+
+  it("closes back in-app and falls back to the feed on a direct visit", async () => {
+    const user = userEvent.setup();
+
+    // Direct visit (no history): the X falls back to the feed.
+    const first = render(<Component />);
+    await waitFor(() => expect(screen.getByTestId("topic-composer")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Закрыть" }));
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith("/feed", { replace: true }));
+    first.unmount();
+
+    // In-app navigation: plain back.
+    vi.clearAllMocks();
+    window.history.pushState({}, "", "/create");
+    render(<Component />);
+    await waitFor(() => expect(screen.getByTestId("topic-composer")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Закрыть" }));
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith(-1));
   });
 });

@@ -1,18 +1,22 @@
 // Global topic composer. Replaces the old forum-board CreateThread: a topic
 // now belongs to a раздел (and, optionally, one of its подразделы) instead of
-// a board. The flow the product asked for:
+// a board. The composer is a portal sheet over the content underneath — the
+// feed/board stays mounted when opened as an overlay (backgroundLocation,
+// same as wall posts), so creating never swaps the page out from under you:
 //
-//   1. Open the page → the раздел panel appears first.
-//   2. Pick a раздел; if it has подразделы they slide in, picking one is
-//      optional.
-//   3. Then the title + body editor (the shared RichComposer) is shown.
+//   1. Open → the composer sheet is up straight away, unplaced unless
+//      ?section=&sub= already chose.
+//   2. Pick a section in the dialog; if it has subsections they expand inline,
+//      picking one is optional. Until a section is chosen the header offers
+//      «Выбрать раздел» and publishing stays disabled.
+//   3. Title + body editor (the shared RichComposer).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/integrations/api/compat";
 import { invalidateByPrefix } from "@/integrations/api/queryCache";
 import { toast } from "sonner";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import type { AttachmentMeta } from "@/utils/mediaUpload";
 import { RichComposer, type RichComposerPayload } from "@/components/composer/RichComposer";
 import { SectionPicker } from "@/components/topic/SectionPicker";
@@ -62,13 +66,8 @@ const CreateThread = () => {
     }
   }, [loading, sections, presetSectionSlug, presetSubSlug]);
 
-  // The panel is the first thing the user sees on the create page — unless a
-  // раздел was already picked from the URL, in which case the editor opens.
-  useEffect(() => {
-    if (loading || section) return;
-    if (presetSectionSlug && sections.some((s) => s.slug === presetSectionSlug)) return;
-    setPickerOpen(true);
-  }, [loading, section, presetSectionSlug, sections]);
+  // The picker never opens by itself: the composer is the first thing the
+  // user sees, and the placement is chosen on demand through the header pill.
 
   // Restore the autosaved draft (title + body).
   useEffect(() => {
@@ -105,6 +104,46 @@ const CreateThread = () => {
     if (!section) return "";
     return subsection ? `${section.name} · ${subsection.name}` : section.name;
   }, [section, subsection]);
+
+  // The placement pill is the single entry point: unchosen it invites
+  // («Выбрать раздел»), chosen it shows the placement — tapping either opens
+  // the picker. No separate «Сменить» button.
+  const placementPill = (
+    <button
+      type="button"
+      onClick={() => setPickerOpen(true)}
+      title={section ? "Сменить раздел" : "Выбрать раздел"}
+      className={`inline-flex max-w-full items-center justify-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+        section
+          ? "border-border/60 bg-foreground/[0.04] hover:bg-foreground/[0.08]"
+          : "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+      }`}
+    >
+      {section ? (
+        <>
+          <SectionIcon name={section.icon} className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <span className="truncate">{placementLabel}</span>
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+        </>
+      ) : (
+        <>
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">Выбрать раздел</span>
+        </>
+      )}
+    </button>
+  );
+
+  // Closing returns to whatever is underneath: the background page in overlay
+  // mode, or the previous entry for a direct visit. A bookmarked /create has
+  // no history to go back to — fall back to the feed instead of a dead X.
+  const handleClose = useCallback(() => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate("/feed", { replace: true });
+    }
+  }, [navigate]);
 
   const handlePublish = useCallback(
     async ({ json, text, attachments }: RichComposerPayload) => {
@@ -178,61 +217,22 @@ const CreateThread = () => {
     [navigate, section, subsection, title, draftKey],
   );
 
-  if (!section) {
-    return (
-      <div className="min-h-[70vh] flex flex-col items-center justify-center gap-4 px-4 text-center">
-        {loading ? (
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        ) : (
-          <>
-            <p className="text-muted-foreground">Выберите раздел, чтобы создать тему</p>
-            <SectionPicker
-              open={pickerOpen}
-              onOpenChange={setPickerOpen}
-              sections={sections}
-              loading={loading}
-              currentSectionId={section?.id}
-              currentSubsectionId={subsection?.id}
-              onSelect={(s, sub) => {
-                setSection(s);
-                setSubsection(sub);
-              }}
-            />
-          </>
-        )}
-      </div>
-    );
-  }
-
+  // The composer is always the page: it is a portal sheet over the content
+  // underneath (the feed/board when opened as an overlay, the layout when
+  // picked on demand through the header pill, which opens the dialog.
   return (
     <>
       <RichComposer
         bucket="content"
         testId="topic-composer"
-        headerLabel={
-          <span className="inline-flex items-center justify-center gap-1.5">
-            <SectionIcon name={section.icon} className="h-4 w-4" />
-            {placementLabel}
-          </span>
-        }
-        headerRight={
-          <button
-            type="button"
-            onClick={() => setPickerOpen(true)}
-            className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-            title="Сменить раздел"
-          >
-            Сменить
-            <ChevronDown className="h-3 w-3" />
-          </button>
-        }
+        headerLabel={placementPill}
         placeholder="Текст темы…"
         escapeDisabled={pickerOpen}
         initialContentJson={restored?.contentJson ?? contentJson}
-        publishDisabled={!title.trim()}
+        publishDisabled={!title.trim() || !section}
         onChange={({ json }) => setContentJson(json)}
         onPublish={handlePublish}
-        onClose={() => navigate(-1)}
+        onClose={handleClose}
       >
         <div className="px-4 pt-2.5 shrink-0">
           <Input
@@ -256,7 +256,7 @@ const CreateThread = () => {
         onOpenChange={setPickerOpen}
         sections={sections}
         loading={loading}
-        currentSectionId={section.id}
+        currentSectionId={section?.id}
         currentSubsectionId={subsection?.id}
         onSelect={(s, sub) => {
           setSection(s);

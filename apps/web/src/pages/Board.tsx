@@ -1609,7 +1609,8 @@ const Board = () => {
                               ? activeChannelSlug
                                 ? `/g/${slug}/c/${activeChannelSlug}/create`
                                 : `/g/${slug}/create`
-                              : `/create?board=${slug}`
+                              : `/create?board=${slug}`,
+                            { state: { backgroundLocation: location } }
                           )
                         }
                         className="h-8 w-8 p-0 rounded-lg sm:h-10 sm:w-auto sm:px-4 sm:text-sm"
@@ -1789,7 +1790,9 @@ const Board = () => {
                   <button
                     onClick={() => {
                       setMobileChannelsOpen(false);
-                      navigate(activeChannelSlug ? `/g/${slug}/c/${activeChannelSlug}/create` : `/g/${slug}/create`);
+                      navigate(activeChannelSlug ? `/g/${slug}/c/${activeChannelSlug}/create` : `/g/${slug}/create`, {
+                        state: { backgroundLocation: location },
+                      });
                     }}
                     aria-label={t("board.createThread")}
                     className="ml-auto shrink-0 p-2 -mr-2 rounded-full text-primary hover:bg-primary/10 active:scale-95 transition"
@@ -1841,7 +1844,8 @@ const Board = () => {
                           ? activeChannelSlug
                             ? `/g/${slug}/c/${activeChannelSlug}/create`
                             : `/g/${slug}/create`
-                          : `/create?board=${slug}`
+                          : `/create?board=${slug}`,
+                        { state: { backgroundLocation: location } }
                       )
                     }
                     className="h-8 w-8 p-0 rounded-lg sm:h-10 sm:w-auto sm:px-4 sm:text-sm"
