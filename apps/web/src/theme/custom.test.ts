@@ -10,10 +10,6 @@ import {
   newCustomId,
   getFavorites,
   toggleFavorite,
-  getTimeAuto,
-  setTimeAuto,
-  resolveTimeMode,
-  getTimeAuto as _getTimeAuto,
   wcagContrast,
   parseOklch,
   type CustomThemeDef,
@@ -95,23 +91,6 @@ describe("theme collections", () => {
     expect(getFavorites()).toEqual(["ash"]);
     toggleFavorite("ash");
     expect(getFavorites()).toEqual([]);
-  });
-});
-
-describe("time-of-day schedule", () => {
-  beforeEach(() => localStorage.clear());
-
-  it("is light during the day and dark at night", () => {
-    expect(resolveTimeMode(new Date("2026-09-28T10:00:00"))).toBe("light");
-    expect(resolveTimeMode(new Date("2026-09-28T22:00:00"))).toBe("dark");
-    expect(resolveTimeMode(new Date("2026-09-28T03:00:00"))).toBe("dark");
-  });
-
-  it("round-trips the flag", () => {
-    expect(getTimeAuto()).toBe(false);
-    setTimeAuto(true);
-    expect(getTimeAuto()).toBe(true);
-    void _getTimeAuto;
   });
 });
 

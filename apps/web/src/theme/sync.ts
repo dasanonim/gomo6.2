@@ -4,14 +4,13 @@
  * row (source of truth) in step: pull on login, push (debounced) on change.
  */
 import { APPEARANCE_CHANGED_EVENT, applyTheme, getStoredPrefs, setStoredPrefs, type ThemeModePref } from "./apply";
-import { THEME_COLLECTIONS_EVENT, getFavorites, getTimeAuto, setFavorites, setTimeAuto } from "./preferences";
+import { THEME_COLLECTIONS_EVENT, getFavorites, setFavorites } from "./preferences";
 import { FONT_CHANGED_EVENT, getStoredCustomFont, storeCustomFont } from "@/lib/customFont";
 import { apiClient } from "@/integrations/api/client";
 
 export interface ServerAppearance {
   theme_id: string;
   theme_mode: string;
-  time_auto: boolean;
   custom_font: string;
   favorite_theme_ids: string[];
 }
@@ -27,13 +26,12 @@ export const readLocalAppearance = (): ServerAppearance => {
   return {
     theme_id: prefs.theme,
     theme_mode: prefs.mode,
-    time_auto: getTimeAuto(),
     custom_font: getStoredCustomFont(),
     favorite_theme_ids: getFavorites(),
   };
 };
 
-/** Apply server state locally (theme/mode/font/timeAuto/favourites). */
+/** Apply server state locally (theme/mode/font/favourites). */
 export const applyServerAppearance = (state: ServerAppearance): void => {
   if (state.theme_id) {
     const updated = setStoredPrefs({
@@ -42,7 +40,6 @@ export const applyServerAppearance = (state: ServerAppearance): void => {
     });
     applyTheme(updated.theme, updated.mode);
   }
-  setTimeAuto(Boolean(state.time_auto));
   if (typeof state.custom_font === "string") storeCustomFont(state.custom_font);
   if (Array.isArray(state.favorite_theme_ids)) setFavorites(state.favorite_theme_ids);
 };

@@ -22,10 +22,6 @@
                 ? "dark"
                 : "light"
               : pref;
-          if (store.getItem("theme-time-auto") === "true") {
-            var hour = new Date().getHours();
-            mode = hour >= 7 && hour < 19 ? "light" : "dark";
-          }
           // Single-mode themes ignore the switch (keep in sync with the registry).
           var SINGLE = { terminal: "dark", paper: "light", contrast: "dark", contrastLight: "light", dracula: "dark", tokyoNight: "dark", oneDark: "dark" };
           if (SINGLE[theme]) mode = SINGLE[theme];

@@ -5,7 +5,6 @@ import { motion, useReducedMotion } from "motion/react";
 import {
   Blend,
   CircleSlash,
-  Clock,
   Dices,
   Globe,
   Languages,
@@ -288,8 +287,8 @@ function ThemesView({
   const { t } = useTranslation();
   const rowClass = SETTING_BLOCK_CHROME;
   const {
-    colorTheme, modePref, timeAuto,
-    setColorTheme, setModePref, setTimeAuto, randomTheme,
+    colorTheme, modePref,
+    setColorTheme, setModePref, randomTheme,
   } = appearance;
 
   // Gallery state: one filter chip + a name search replace the old wall of
@@ -403,16 +402,6 @@ function ThemesView({
             {t("settings2.themeSingleModeHint")}
           </p>
         )}
-
-        <SettingRow
-          className={rowClass}
-          id="set-time-auto"
-          icon={Clock}
-          title={t("settings2.themeTimeAuto")}
-          description={t("settings2.themeTimeAutoDesc")}
-        >
-          <Switch checked={timeAuto} onCheckedChange={setTimeAuto} aria-label={t("settings2.themeTimeAuto")} />
-        </SettingRow>
       </SettingGroup>
 
       <div id="set-theme" className={cn(SETTING_BLOCK_CHROME, "rounded-2xl border border-border/60 bg-card/50 px-4 py-4 scroll-mt-28 sm:px-5")}>

@@ -40,8 +40,6 @@ const en: LocaleResources = {
     themeRandom: "Random",
     themeFavoriteAdd: "Add to favourites",
     themeFavoriteRemove: "Remove from favourites",
-    themeTimeAuto: "Theme by time of day",
-    themeTimeAutoDesc: "Light during the day (07:00–19:00) and dark at night, over the chosen mode",
     themeGroupCustom: "My themes",
     builderTitle: "Custom theme",
     builderDesc: "Build a theme from hue, chroma, lightness and character",

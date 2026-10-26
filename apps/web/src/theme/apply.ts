@@ -5,7 +5,6 @@
  * script (index.html) able to paint the right theme before React loads.
  */
 import { DEFAULT_THEME, getTheme, tokensFor, type ThemeDef, type ThemeFont, type ThemeMode, type ThemeTexture } from "./registry";
-import { getTimeAuto, resolveTimeMode } from "./preferences";
 import { THEME_TOKEN_NAMES } from "./tokens";
 
 export type ThemeModePref = "light" | "dark" | "system";
@@ -71,9 +70,8 @@ export const prefersDarkSystem = (): boolean => {
 };
 
 /** Resolve the raw preference into the concrete mode the theme will render. */
-export const resolveMode = (theme: ThemeDef, pref: ThemeModePref, timeAuto = false): ThemeMode => {
+export const resolveMode = (theme: ThemeDef, pref: ThemeModePref): ThemeMode => {
   if (theme.supports.length === 1) return theme.supports[0];
-  if (timeAuto) return resolveTimeMode();
   if (pref === "system") return prefersDarkSystem() ? "dark" : "light";
   if (theme.supports.includes(pref)) return pref;
   return theme.supports[0];
@@ -152,7 +150,7 @@ export interface AppliedTheme {
 export const applyTheme = (themeId: string, pref: ThemeModePref): AppliedTheme => {
   const root = document.documentElement;
   const theme = getTheme(themeId);
-  const mode = resolveMode(theme, pref, getTimeAuto());
+  const mode = resolveMode(theme, pref);
 
   root.classList.toggle("dark", mode === "dark");
   root.dataset.theme = theme.id;

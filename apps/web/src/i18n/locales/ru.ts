@@ -41,8 +41,6 @@ const ru: LocaleResources = {
     themeRandom: "Случайная",
     themeFavoriteAdd: "Добавить в избранное",
     themeFavoriteRemove: "Убрать из избранного",
-    themeTimeAuto: "Тема по времени суток",
-    themeTimeAutoDesc: "Светлая днём (07:00–19:00) и тёмная ночью — поверх выбранного режима",
     themeGroupCustom: "Мои темы",
     builderTitle: "Своя тема",
     builderDesc: "Собери тему из оттенка, насыщенности, светлоты и характера",
