@@ -1,9 +1,17 @@
-// Раздел picker for creating a topic. One list in the sidebar's row language:
-// compact rows with a muted icon, the current placement highlighted, sections
-// with подразделы expanding inline. Tapping a leaf (or «Весь раздел») selects
-// immediately — there is no second screen.
+// Раздел picker for creating a topic — a floating glass panel in the
+// Telegram motion language (docs/wiki/MOTION_DESIGN.md):
+//
+// * The shell enters as one physical object (OverlayMotion: scale + defocus
+//   from the trigger point, geometry on SPRING.standard, light on
+//   EASE_OUT_EXPO) and the theme's own `surface-panel` glass stays in charge
+//   of translucency — the float comes from width, radius and elevation.
+// * Rows arrive with the app-wide whisper entrance (a breath of lift, ~25ms
+//   stagger, self-driven per row) and compress on press (pressFeedback).
+// * Sections with подразделы expand inline like the sidebar; tapping a leaf
+//   (or «Весь раздел») selects immediately — there is no second screen.
 
 import { useEffect, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { Check, ChevronRight } from "lucide-react";
 import {
   Dialog,
@@ -14,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { PentagramLoader } from "@/components/PentagramLoader";
 import { SectionIcon } from "@/components/topic/sectionIcons";
+import { pressFeedback, whisperRowVariants } from "@/lib/motion";
 import type { SectionWithSubsections, ThreadSection, ThreadSubsection } from "@/hooks/useThreadSections";
 
 interface SectionPickerProps {
@@ -36,6 +45,7 @@ export const SectionPicker = ({
   currentSubsectionId,
   onSelect,
 }: SectionPickerProps) => {
+  const reduceMotion = useReducedMotion();
   const [expandedId, setExpandedId] = useState<string | null>(currentSectionId ?? null);
 
   // Reopen at the current placement when changing, otherwise collapsed.
@@ -59,13 +69,16 @@ export const SectionPicker = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md p-0 overflow-hidden z-[80]" overlayClassName="z-[75]">
-        <DialogHeader className="px-4 pt-4 pb-2">
-          <DialogTitle>Выберите раздел</DialogTitle>
+      <DialogContent
+        className="max-w-sm w-[calc(100%-2rem)] p-0 overflow-hidden rounded-2xl sm:rounded-2xl shadow-2xl z-[80]"
+        overlayClassName="z-[75]"
+      >
+        <DialogHeader className="px-5 pt-5 pb-1 text-left">
+          <DialogTitle className="text-base">Выберите раздел</DialogTitle>
           <DialogDescription>Тема попадёт в раздел — подраздел выбирать необязательно.</DialogDescription>
         </DialogHeader>
 
-        <div className="mx-4 mb-4 max-h-[60vh] overflow-y-auto rounded-lg border border-border/70 p-1.5">
+        <div className="max-h-[60vh] overflow-y-auto px-3 pb-4 pt-2">
           {loading && sections.length === 0 ? (
             <div className="flex justify-center py-10">
               <PentagramLoader size="sm" />
@@ -73,75 +86,98 @@ export const SectionPicker = ({
           ) : sections.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">Разделы пока не настроены</p>
           ) : (
-            sections.map((section) => {
-              const isCurrent = section.id === currentSectionId && !currentSubsectionId;
-              const expanded = expandedId === section.id;
-              return (
-                <div key={section.id}>
-                  <button
-                    type="button"
-                    onClick={() => toggleSection(section)}
-                    className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors ${
-                      isCurrent
-                        ? "bg-primary/10 font-semibold text-primary"
-                        : "text-foreground/80 hover:bg-muted/60 hover:text-foreground"
-                    }`}
-                  >
-                    <SectionIcon name={section.icon} className="h-4 w-4 shrink-0 text-muted-foreground/40" />
-                    <span className="min-w-0 flex-1 truncate text-left">
-                      {section.name}
-                      {section.is_nsfw && (
-                        <span className="ml-1.5 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
-                          18+
+            <div className="space-y-1">
+              {sections.map((section, index) => {
+                const isCurrent = section.id === currentSectionId && !currentSubsectionId;
+                const expanded = expandedId === section.id;
+                return (
+                  <div key={section.id}>
+                    <motion.button
+                      type="button"
+                      initial="hidden"
+                      animate="show"
+                      variants={whisperRowVariants(index)}
+                      {...pressFeedback(reduceMotion)}
+                      onClick={() => toggleSection(section)}
+                      className={`flex w-full items-center gap-3 rounded-2xl border px-3.5 py-3 text-left transition-colors ${
+                        isCurrent
+                          ? "border-primary/30 bg-primary/10 font-semibold text-primary"
+                          : "border-border/50 bg-foreground/[0.02] hover:bg-foreground/[0.05]"
+                      }`}
+                    >
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary ring-1 ring-inset ring-primary/15">
+                        <SectionIcon name={section.icon} className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-2 text-sm font-semibold">
+                          <span className="truncate">{section.name}</span>
+                          {section.is_nsfw && (
+                            <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+                              18+
+                            </span>
+                          )}
                         </span>
+                        {section.description && (
+                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                            {section.description}
+                          </span>
+                        )}
+                      </span>
+                      {isCurrent && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                      {section.subsections.length > 0 && (
+                        <ChevronRight
+                          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${
+                            expanded ? "rotate-90" : ""
+                          }`}
+                        />
                       )}
-                    </span>
-                    {isCurrent && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                    {section.subsections.length > 0 && (
-                      <ChevronRight
-                        className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${
-                          expanded ? "rotate-90" : ""
-                        }`}
-                      />
+                    </motion.button>
+                    {expanded && section.subsections.length > 0 && (
+                      <div className="ml-[26px] space-y-1 border-l border-border/60 py-1 pl-2">
+                        {section.subsections.map((sub, subIndex) => {
+                          const subCurrent = section.id === currentSectionId && sub.id === currentSubsectionId;
+                          return (
+                            <motion.button
+                              key={sub.id}
+                              type="button"
+                              initial="hidden"
+                              animate="show"
+                              variants={whisperRowVariants(subIndex)}
+                              {...pressFeedback(reduceMotion)}
+                              onClick={() => choose(section, sub)}
+                              className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-[13px] transition-colors ${
+                                subCurrent
+                                  ? "border-primary/30 bg-primary/10 font-semibold text-primary"
+                                  : "border-border/40 bg-foreground/[0.02] text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground"
+                              }`}
+                            >
+                              <span className="min-w-0 flex-1 truncate">{sub.name}</span>
+                              {subCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                            </motion.button>
+                          );
+                        })}
+                        <motion.button
+                          type="button"
+                          initial="hidden"
+                          animate="show"
+                          variants={whisperRowVariants(section.subsections.length)}
+                          {...pressFeedback(reduceMotion)}
+                          onClick={() => choose(section, null)}
+                          className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-[13px] transition-colors ${
+                            isCurrent
+                              ? "border-primary/30 bg-primary/10 font-semibold text-primary"
+                              : "border-border/40 bg-foreground/[0.02] text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground"
+                          }`}
+                        >
+                          <span className="min-w-0 flex-1 truncate">Весь раздел</span>
+                          {isCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                        </motion.button>
+                      </div>
                     )}
-                  </button>
-                  {expanded && section.subsections.length > 0 && (
-                    <div className="mb-1 ml-[22px] border-l border-border/60 pl-2">
-                      {section.subsections.map((sub) => {
-                        const subCurrent = section.id === currentSectionId && sub.id === currentSubsectionId;
-                        return (
-                          <button
-                            key={sub.id}
-                            type="button"
-                            onClick={() => choose(section, sub)}
-                            className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors ${
-                              subCurrent
-                                ? "bg-primary/10 font-semibold text-primary"
-                                : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                            }`}
-                          >
-                            <span className="min-w-0 flex-1 truncate text-left">{sub.name}</span>
-                            {subCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
-                          </button>
-                        );
-                      })}
-                      <button
-                        type="button"
-                        onClick={() => choose(section, null)}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors ${
-                          isCurrent
-                            ? "bg-primary/10 font-semibold text-primary"
-                            : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                        }`}
-                      >
-                        <span className="min-w-0 flex-1 truncate text-left">Весь раздел</span>
-                        {isCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </DialogContent>
