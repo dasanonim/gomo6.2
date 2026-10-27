@@ -7,7 +7,7 @@
       // Keep the id list in sync with src/theme/registry.ts (guarded by a test).
       (function () {
         try {
-          var THEMES = ["cannabis", "pink", "graphite", "lavender", "volcanic", "mint", "glass", "linen", "ash", "sand", "slate", "charcoal", "obsidian", "synthwave", "terminal", "paper", "contrast", "contrastLight"];
+          var THEMES = ["pink", "lavender", "mint", "glass", "catppuccin", "rosePine", "ash", "slate", "nord", "oneDark", "obsidian", "gruvbox", "everforest", "synthwave", "dracula", "tokyoNight", "terminal", "paper", "contrast", "contrastLight"];
           var store = window.localStorage;
           var theme = store.getItem("color-theme");
           if (THEMES.indexOf(theme) === -1) theme = "ash";
@@ -22,12 +22,8 @@
                 ? "dark"
                 : "light"
               : pref;
-          if (store.getItem("theme-time-auto") === "true") {
-            var hour = new Date().getHours();
-            mode = hour >= 7 && hour < 19 ? "light" : "dark";
-          }
           // Single-mode themes ignore the switch (keep in sync with the registry).
-          var SINGLE = { terminal: "dark", paper: "light", contrast: "dark", contrastLight: "light", linen: "light", charcoal: "dark" };
+          var SINGLE = { terminal: "dark", paper: "light", contrast: "dark", contrastLight: "light", dracula: "dark", tokyoNight: "dark", oneDark: "dark" };
           if (SINGLE[theme]) mode = SINGLE[theme];
           var root = document.documentElement;
           root.classList.toggle("dark", mode === "dark");

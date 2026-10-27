@@ -8,10 +8,8 @@ import {
   applyTheme,
   getStoredPrefs,
   getTheme,
-  getTimeAuto,
   resolveMode,
   setStoredPrefs,
-  setTimeAuto as persistTimeAuto,
   syncSharedAppearanceCookies,
   watchSystemMode,
   type ThemeModePref,
@@ -38,7 +36,6 @@ import { applyCustomFont, getStoredCustomFont, storeCustomFont } from "@/lib/cus
 
 export const useAppearanceSettings = (userId?: string | null) => {
   const [prefs, setPrefs] = useState(() => getStoredPrefs());
-  const [timeAuto, setTimeAutoState] = useState<boolean>(() => getTimeAuto());
   const [customFont, setCustomFont] = useState(() => getStoredCustomFont());
   const [publishStyle, setPublishStyleState] = useState<PublishButtonStyle>(getPublishButtonStyle);
   const [headerBehavior, setHeaderBehaviorState] = useState<HeaderBehavior>(getHeaderBehavior);
@@ -52,16 +49,16 @@ export const useAppearanceSettings = (userId?: string | null) => {
   const changeLanguage = useLanguageStore((state) => state.changeLanguage);
 
   const { theme: colorTheme, mode: modePref } = prefs;
-  const isDarkMode = resolveMode(getTheme(colorTheme), modePref, timeAuto) === "dark";
+  const isDarkMode = resolveMode(getTheme(colorTheme), modePref) === "dark";
 
   // Apply on every preference change; the pre-boot script already painted the
   // first frame, this only handles in-app changes.
   useEffect(() => {
     applyTheme(colorTheme, modePref);
-  }, [colorTheme, modePref, timeAuto]);
+  }, [colorTheme, modePref]);
 
   // Re-resolve when the OS scheme flips while the preference is "system".
-  useEffect(() => watchSystemMode(() => applyTheme(colorTheme, modePref)), [colorTheme, modePref, timeAuto]);
+  useEffect(() => watchSystemMode(() => applyTheme(colorTheme, modePref)), [colorTheme, modePref]);
 
   // Restore the saved font on mount.
   useEffect(() => {
@@ -80,12 +77,6 @@ export const useAppearanceSettings = (userId?: string | null) => {
     setPrefs(updated);
     applyTheme(updated.theme, updated.mode);
   }, []);
-
-  const setTimeAuto = useCallback((next: boolean) => {
-    persistTimeAuto(next);
-    setTimeAutoState(next);
-    applyTheme(colorTheme, modePref);
-  }, [colorTheme, modePref]);
 
   const randomTheme = useCallback(() => {
     const pool = THEMES.filter((theme) => theme.id !== colorTheme);
@@ -147,7 +138,6 @@ export const useAppearanceSettings = (userId?: string | null) => {
   const resetAppearance = useCallback(() => {
     setColorTheme(DEFAULT_THEME);
     setModePref(DEFAULT_MODE_PREF);
-    setTimeAuto(false);
     setFont("");
     setPublishStyle("gradient-pill");
     setHeaderBehavior("fixed");
@@ -156,12 +146,11 @@ export const useAppearanceSettings = (userId?: string | null) => {
     setProfileViewMode("social");
     setAutoplayMode("always");
     toast.success("Внешний вид сброшен к значениям по умолчанию");
-  }, [setColorTheme, setModePref, setTimeAuto, setFont, setPublishStyle, setHeaderBehavior, setTransitionStyle, setMrRandomCount, setProfileViewMode, setAutoplayMode]);
+  }, [setColorTheme, setModePref, setFont, setPublishStyle, setHeaderBehavior, setTransitionStyle, setMrRandomCount, setProfileViewMode, setAutoplayMode]);
 
   return {
     colorTheme,
     modePref,
-    timeAuto,
     isDarkMode,
     customFont,
     publishStyle,
@@ -173,7 +162,6 @@ export const useAppearanceSettings = (userId?: string | null) => {
     language,
     setColorTheme,
     setModePref,
-    setTimeAuto,
     randomTheme,
     setFont,
     setPublishStyle,

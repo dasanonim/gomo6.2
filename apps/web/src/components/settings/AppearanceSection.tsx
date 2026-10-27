@@ -5,7 +5,6 @@ import { motion, useReducedMotion } from "motion/react";
 import {
   Blend,
   CircleSlash,
-  Clock,
   Dices,
   Globe,
   Languages,
@@ -288,8 +287,8 @@ function ThemesView({
   const { t } = useTranslation();
   const rowClass = SETTING_BLOCK_CHROME;
   const {
-    colorTheme, modePref, timeAuto,
-    setColorTheme, setModePref, setTimeAuto, randomTheme,
+    colorTheme, modePref,
+    setColorTheme, setModePref, randomTheme,
   } = appearance;
 
   // Gallery state: one filter chip + a name search replace the old wall of
@@ -403,16 +402,6 @@ function ThemesView({
             {t("settings2.themeSingleModeHint")}
           </p>
         )}
-
-        <SettingRow
-          className={rowClass}
-          id="set-time-auto"
-          icon={Clock}
-          title={t("settings2.themeTimeAuto")}
-          description={t("settings2.themeTimeAutoDesc")}
-        >
-          <Switch checked={timeAuto} onCheckedChange={setTimeAuto} aria-label={t("settings2.themeTimeAuto")} />
-        </SettingRow>
       </SettingGroup>
 
       <div id="set-theme" className={cn(SETTING_BLOCK_CHROME, "rounded-2xl border border-border/60 bg-card/50 px-4 py-4 scroll-mt-28 sm:px-5")}>
@@ -432,52 +421,46 @@ function ThemesView({
           </div>
         </div>
 
-        {/* Filter chips + name search */}
-        <div className="mb-3 flex flex-wrap items-center gap-1.5">
-          {(
-            [
-              { value: "all" as const },
-              { value: "favorites" as const },
-              { value: "custom" as const },
-            ] as Array<{ value: ThemeFilter }>
-          ).map((chip) => (
-            <FilterChip
-              key={chip.value}
-              active={filter === chip.value}
-              label={t(chip.value === "all" ? "settings2.themeFilterAll" : chip.value === "favorites" ? "settings2.themeFavorites" : "settings2.themeFilterMine")}
-              count={chip.value === "all" ? allThemes.length : chip.value === "favorites" ? favorites.length : allThemes.filter((theme) => theme.custom).length}
-              onClick={() => setFilter(chip.value)}
-            />
-          ))}
-          {groupChips.map((group) => (
-            <FilterChip
-              key={group}
-              active={filter === group}
-              label={t(THEME_GROUP_LABEL_KEYS[group])}
-              count={allThemes.filter((theme) => theme.group === group && !theme.custom).length}
-              onClick={() => setFilter(group)}
-            />
-          ))}
-        </div>
-        <div className="relative mb-4">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={nameQuery}
-            onChange={(event) => setNameQuery(event.target.value)}
-            placeholder={t("settings2.themeSearchPlaceholder")}
-            aria-label={t("settings2.themeSearchPlaceholder")}
-            className="pl-9 pr-9 h-9 rounded-full border-border/60 bg-surface text-sm focus-visible:border-primary/50"
-          />
-          {nameQuery && (
-            <button
-              type="button"
-              aria-label={t("settings2.clearSearch")}
-              onClick={() => setNameQuery("")}
-              className="absolute right-3 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+        {/* Filter + name search — one compact toolbar instead of a chip cloud. */}
+        <div className="mb-4 flex items-center gap-2">
+          <Select value={filter} onValueChange={(value) => setFilter(value as ThemeFilter)}>
+            <SelectTrigger
+              className="h-9 w-auto max-w-[46vw] shrink-0 gap-1.5 rounded-full border-border/60 bg-surface px-3 text-xs font-medium focus:ring-ring/40 [&>span]:truncate"
+              aria-label={t("settings2.themeFilterAll")}
             >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("settings2.themeFilterAll")} · {allThemes.length}</SelectItem>
+              <SelectItem value="favorites">{t("settings2.themeFavorites")} · {favorites.length}</SelectItem>
+              <SelectItem value="custom">{t("settings2.themeFilterMine")} · {allThemes.filter((theme) => theme.custom).length}</SelectItem>
+              {groupChips.map((group) => (
+                <SelectItem key={group} value={group}>
+                  {t(THEME_GROUP_LABEL_KEYS[group])} · {allThemes.filter((theme) => theme.group === group && !theme.custom).length}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={nameQuery}
+              onChange={(event) => setNameQuery(event.target.value)}
+              placeholder={t("settings2.themeSearchPlaceholder")}
+              aria-label={t("settings2.themeSearchPlaceholder")}
+              className="pl-9 pr-9 h-9 rounded-full border-border/60 bg-surface text-sm focus-visible:border-primary/50"
+            />
+            {nameQuery && (
+              <button
+                type="button"
+                aria-label={t("settings2.clearSearch")}
+                onClick={() => setNameQuery("")}
+                className="absolute right-3 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Flat dense grid: 2 tiles on a phone, up to 4 on desktop. */}
@@ -502,25 +485,6 @@ function ThemesView({
     </>
   );
 };
-
-function FilterChip({ active, label, count, onClick }: { active: boolean; label: string; count: number; onClick: () => void }) {
-  return (
-    <button
-    type="button"
-    onClick={onClick}
-    aria-pressed={active}
-    className={cn(
-      "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-      active
-        ? "border-primary/40 bg-primary/10 text-primary"
-        : "border-border/60 text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
-    )}
-  >
-    {label}
-    <span className={cn("tabular-nums", active ? "text-primary/70" : "text-muted-foreground/60")}>{count}</span>
-  </button>
-  );
-}
 
 /* ── Text view (шрифт + язык) ────────────────────────────────────────────── */
 

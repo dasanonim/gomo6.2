@@ -6,7 +6,6 @@
 import { resolveTheme } from "./registry";
 
 const FAVORITES_KEY = "theme-favorites";
-const TIME_AUTO_KEY = "theme-time-auto";
 
 export const THEME_COLLECTIONS_EVENT = "gomo6:theme-collections";
 
@@ -60,19 +59,4 @@ export const setFavorites = (ids: string[]): string[] => {
   safeSet(FAVORITES_KEY, JSON.stringify(next));
   emit();
   return next;
-};
-
-/* ── Time-of-day schedule ────────────────────────────────────────────────── */
-
-export const getTimeAuto = (): boolean => safeGet(TIME_AUTO_KEY) === "true";
-
-export const setTimeAuto = (enabled: boolean): void => {
-  safeSet(TIME_AUTO_KEY, String(enabled));
-  emit();
-};
-
-/** Day (07:00–19:00 local) → light, otherwise dark. */
-export const resolveTimeMode = (now: Date = new Date()): "light" | "dark" => {
-  const hour = now.getHours();
-  return hour >= 7 && hour < 19 ? "light" : "dark";
 };

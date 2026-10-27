@@ -118,13 +118,9 @@ const SURFACE_PRESETS: Record<SurfaceProfile, Surface> = {
 
 const SURFACE_BY_THEME: Record<string, SurfaceProfile> = {
   // Neutral / minimal — flat and outlined, no glass at all.
-  graphite: "flat",
-  linen: "flat",
   ash: "flat",
-  sand: "flat",
   mint: "flat",
   slate: "outlined",
-  charcoal: "outlined",
   // Materials.
   glass: "glass",
   obsidian: "mineral",
@@ -136,8 +132,15 @@ const SURFACE_BY_THEME: Record<string, SurfaceProfile> = {
   // Colour.
   pink: "glass",
   lavender: "glass",
-  cannabis: "elevated",
-  volcanic: "outlined",
+  // Community ports.
+  catppuccin: "glass",
+  dracula: "neon",
+  gruvbox: "outlined",
+  nord: "flat",
+  "tokyoNight": "mineral",
+  "rosePine": "glass",
+  everforest: "flat",
+  "oneDark": "flat",
 };
 
 const DEFAULT_SURFACE_PROFILE: SurfaceProfile = "glass";
@@ -151,6 +154,11 @@ const REMOVED_THEME_IDS = new Set<string>([
   "blue", "blood", "pumpkin", "glitch", "acid", "void",
   "sage", "sky", "fog", "blush", "peach",
   "quartz", "jade", "ink", "espresso",
+  // Second cull (2026-10): near-duplicate neutrals (linen/sand/charcoal vs
+  // ash/slate) and legacy one-offs superseded by community themes
+  // (graphite → oneDark/tokyoNight, volcanic → gruvbox, cannabis → everforest).
+  "graphite", "volcanic", "cannabis",
+  "linen", "sand", "charcoal",
 ]);
 
 /** Page background layers (fixed). Themes may add a gradient or pattern. */
@@ -160,8 +168,11 @@ const BG_IMAGE_BY_THEME: Record<string, string> = {
   lavender:
     "radial-gradient(70% 55% at 15% 0%, oklch(var(--primary) / 0.18), transparent 60%), radial-gradient(60% 50% at 90% 10%, oklch(var(--accent) / 0.16), transparent 55%)",
   pink: "radial-gradient(70% 55% at 80% 0%, oklch(var(--primary) / 0.14), transparent 62%)",
-  cannabis: "radial-gradient(70% 55% at 20% 0%, oklch(var(--primary) / 0.12), transparent 62%)",
-  volcanic: "radial-gradient(80% 60% at 50% 115%, oklch(var(--primary) / 0.16), transparent 62%)",
+  catppuccin:
+    "radial-gradient(70% 55% at 15% 0%, oklch(var(--primary) / 0.16), transparent 60%), radial-gradient(60% 50% at 90% 10%, oklch(var(--accent) / 0.14), transparent 55%)",
+  dracula: "radial-gradient(70% 55% at 50% 0%, oklch(var(--primary) / 0.14), transparent 62%)",
+  "tokyoNight": "radial-gradient(75% 60% at 50% 0%, oklch(var(--primary) / 0.16), transparent 60%)",
+  "rosePine": "radial-gradient(70% 55% at 80% 0%, oklch(var(--primary) / 0.12), transparent 62%)",
   synthwave:
     "linear-gradient(oklch(var(--primary) / 0.08) 1px, transparent 1px), linear-gradient(90deg, oklch(var(--primary) / 0.08) 1px, transparent 1px)",
   paper:
@@ -208,6 +219,16 @@ interface SeedTheme extends Character {
 const SEED_THEMES: SeedTheme[] = [
   // Material
   { id: "glass", group: "calm", nameKey: "themeGlass", seed: { L: 0.62, C: 0.13, H: 275 }, style: "soft", modes: ["light", "dark"], radius: "1rem" },
+  // Community ports — widely loved palettes tuned to the seed engine
+  // (light flavour first, dark second, like the upstreams ship them).
+  { id: "catppuccin", group: "calm", nameKey: "themeCatppuccin", seed: { L: 0.62, C: 0.15, H: 292 }, style: "soft", modes: ["light", "dark"], radius: "1rem", font: "rounded" },
+  { id: "dracula", group: "neon", nameKey: "themeDracula", seed: { L: 0.6, C: 0.2, H: 290 }, style: "soft", tone: "lifted", modes: ["dark"], radius: "0.5rem" },
+  { id: "gruvbox", group: "retro", nameKey: "themeGruvbox", seed: { L: 0.62, C: 0.13, H: 62 }, style: "soft", tone: "lifted", modes: ["light", "dark"], radius: "0.125rem" },
+  { id: "nord", group: "neutral", nameKey: "themeNord", seed: { L: 0.6, C: 0.05, H: 215 }, style: "soft", tone: "lifted", modes: ["light", "dark"], radius: "0.25rem" },
+  { id: "tokyoNight", group: "mineral", nameKey: "themeTokyoNight", seed: { L: 0.62, C: 0.16, H: 264 }, style: "soft", modes: ["dark"], radius: "0.5rem" },
+  { id: "rosePine", group: "calm", nameKey: "themeRosePine", seed: { L: 0.6, C: 0.08, H: 350 }, style: "soft", tone: "paper", modes: ["light", "dark"], radius: "0.75rem" },
+  { id: "everforest", group: "calm", nameKey: "themeEverforest", seed: { L: 0.62, C: 0.12, H: 126 }, style: "soft", tone: "lifted", modes: ["light", "dark"], radius: "0.25rem" },
+  { id: "oneDark", group: "neutral", nameKey: "themeOneDark", seed: { L: 0.6, C: 0.12, H: 248 }, style: "soft", tone: "lifted", modes: ["dark"], radius: "0.25rem" },
   // Pastel
   { id: "blush", group: "pastel", nameKey: "themeBlush", seed: { L: 0.72, C: 0.11, H: 355 }, style: "pastel", modes: ["light", "dark"], radius: "1.25rem", font: "rounded" },
   { id: "sage", group: "pastel", nameKey: "themeSage", seed: { L: 0.72, C: 0.09, H: 150 }, style: "pastel", modes: ["light", "dark"], radius: "1.25rem", font: "rounded" },
@@ -331,7 +352,7 @@ const tokenBlock = (selector: string, tokens: Record<string, string>) => {
 };
 
 for (const theme of kept) {
-  out.push(`  ${theme.id}: {`);
+  out.push(`  ${JSON.stringify(theme.id)}: {`);
   for (const mode of ["light", "dark"] as const) {
     if (!theme.modes[mode]) continue;
     out.push(`    ${mode}: {`);
@@ -357,7 +378,7 @@ for (const theme of kept) {
   const parts = [`group: ${JSON.stringify(theme.group)}`, `nameKey: ${JSON.stringify(theme.nameKey)}`, `radius: ${JSON.stringify(theme.radius)}`];
   if (theme.font) parts.push(`font: ${JSON.stringify(theme.font)}`);
   if (theme.texture) parts.push(`texture: ${JSON.stringify(theme.texture)}`);
-  out.push(`  ${theme.id}: { ${parts.join(", ")} },`);
+  out.push(`  ${JSON.stringify(theme.id)}: { ${parts.join(", ")} },`);
 }
 out.push("};");
 

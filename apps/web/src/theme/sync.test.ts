@@ -6,7 +6,7 @@ import {
   syncAppearanceWithServer,
   type ServerAppearance,
 } from "./sync";
-import { getFavorites, getTimeAuto } from "./preferences";
+import { getFavorites } from "./preferences";
 import { getStoredPrefs } from "./apply";
 
 const jsonResponse = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
@@ -33,14 +33,12 @@ describe("appearance sync", () => {
     const server: ServerAppearance = {
       theme_id: "paper",
       theme_mode: "light",
-      time_auto: true,
       custom_font: "",
       favorite_theme_ids: ["slate", "ash", "nonsense"],
     };
     applyServerAppearance(server);
     expect(getStoredPrefs().theme).toBe("paper");
     expect(getStoredPrefs().mode).toBe("light");
-    expect(getTimeAuto()).toBe(true);
     // Unknown ids are dropped by the favourites sanitizer.
     expect(getFavorites()).toEqual(["slate", "ash"]);
   });
@@ -73,7 +71,6 @@ describe("appearance sync", () => {
       vi.fn(async () => jsonResponse({
         theme_id: "slate",
         theme_mode: "dark",
-        time_auto: false,
         custom_font: "",
         favorite_theme_ids: ["ash"],
       })),

@@ -168,16 +168,16 @@ describe("applyTheme", () => {
   });
 
   it("sets the attributes and the .dark class", () => {
-    const applied = applyTheme("graphite", "dark");
+    const applied = applyTheme("ash", "dark");
     expect(applied.mode).toBe("dark");
-    expect(document.documentElement.dataset.theme).toBe("graphite");
+    expect(document.documentElement.dataset.theme).toBe("ash");
     expect(document.documentElement.dataset.mode).toBe("dark");
     expect(document.documentElement.classList.contains("dark")).toBe(true);
   });
 
   it("removes the .dark class in light mode", () => {
-    applyTheme("graphite", "dark");
-    applyTheme("graphite", "light");
+    applyTheme("ash", "dark");
+    applyTheme("ash", "light");
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(document.documentElement.dataset.mode).toBe("light");
   });
