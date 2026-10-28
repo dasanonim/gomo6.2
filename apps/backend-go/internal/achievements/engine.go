@@ -23,22 +23,23 @@ import (
 type EventType string
 
 const (
-	EventEntryCreated         EventType = "entry_created"   // thread or wall post
+	EventEntryCreated         EventType = "entry_created"   // thread or wall post (split by TargetType)
 	EventImageUploaded        EventType = "image_uploaded"  // retired
 	EventCommentCreated       EventType = "comment_created" // post-in-thread or wall comment
 	EventLikeGiven            EventType = "like_given"      // any like by the user
 	EventLikeReceived         EventType = "like_received"   // like on the user's content
-	EventRepostCreated        EventType = "repost_created"  // wall post repost
-	EventSubJoined            EventType = "sub_joined"      // retired
+	EventRepostCreated        EventType = "repost_created"  // retired (no quest in MVP)
+	EventSubJoined            EventType = "sub_joined"      // gomosub membership
 	EventSubRulesAccepted     EventType = "rules_accepted"  // retired
-	EventSubCreated           EventType = "sub_created"     // retired
+	EventSubCreated           EventType = "sub_created"     // gomosub created
 	EventGiftSent             EventType = "gift_sent"       // retired
 	EventGiftReceived         EventType = "gift_received"   // retired
-	EventAvatarUpdated        EventType = "avatar_updated"  // retired
-	EventBioUpdated           EventType = "bio_updated"     // retired
-	EventProfileStyled        EventType = "profile_styled"  // retired
-	EventIntegrationConnected EventType = "integration_connected"
-	EventDailyVisit           EventType = "daily_visit" // daily visit / session recorded
+	EventAvatarUpdated        EventType = "avatar_updated"  // avatar set
+	EventBioUpdated           EventType = "bio_updated"     // bio filled
+	EventProfileStyled        EventType = "profile_styled"  // customization saved
+	EventIntegrationConnected EventType = "integration_connected" // retired
+	EventFollowAdded          EventType = "follow_added"    // subscription to a user
+	EventDailyVisit           EventType = "daily_visit"     // retired
 )
 
 // Event is a user action handed to the engine. Handlers emit it after the
@@ -54,21 +55,33 @@ type Event struct {
 	TargetID   string
 }
 
-// eventCounters maps an event to the counter milestones it increments.
+// eventCounters maps an event to the counter quests it re-reconciles.
+// Entry creation splits by target: a wall post feeds the wall first-step,
+// anything else (thread, legacy empty target) feeds the thread first-step;
+// both feed the combined entries ladder.
 var eventCounters = map[EventType][]string{
-	EventEntryCreated: {"entries"},
-	EventLikeReceived: {"likes_received"},
+	EventCommentCreated: {"qs_first_comment", "comments"},
+	EventLikeGiven:      {"qs_like_given", "likes_given"},
+	EventLikeReceived:   {"likes_received"},
+	EventSubJoined:      {"qs_sub_join", "subs_joined"},
+	EventSubCreated:     {"sub_created"},
+	EventFollowAdded:    {"qs_follow", "follows"},
+	EventAvatarUpdated:  {"qs_avatar"},
+	EventBioUpdated:     {"qs_bio"},
+	EventProfileStyled:  {"qs_style"},
 }
 
-// eventDerived maps an event to the derived milestones to re-evaluate. Resonance
-// is recomputed from live data, so an event is just a trigger; the owner's
-// resonance is also refreshed lazily whenever their profile is read.
-var eventDerived = map[EventType][]string{
-	EventEntryCreated:   {"resonance"},
-	EventCommentCreated: {"resonance"},
-	EventLikeReceived:   {"resonance"},
-	EventRepostCreated:  {"resonance"},
-	EventDailyVisit:     {"tenure"},
+// firstStepsEvents marks the events that can complete an onboarding quest —
+// after any of them the meta quest (qs_complete) is re-evaluated.
+var firstStepsEvents = map[EventType]bool{
+	EventEntryCreated:  true,
+	EventCommentCreated: true,
+	EventLikeGiven:      true,
+	EventSubJoined:      true,
+	EventFollowAdded:    true,
+	EventAvatarUpdated:  true,
+	EventBioUpdated:     true,
+	EventProfileStyled:  true,
 }
 
 // ──────────────── Engine ────────────────
@@ -115,6 +128,11 @@ func GroupID(key string) string {
 	return uuid.NewMD5(uuid.NameSpaceOID, []byte(key)).String()
 }
 
+// Catalog returns the engine's quest catalog.
+func (e *Engine) Catalog() *Catalog {
+	return e.catalog
+}
+
 // SetActivityRecorder wires the append-only activity ledger. A nil recorder
 // disables ledger writes; the engine keeps working.
 func (e *Engine) SetActivityRecorder(r *activity.Recorder) {
@@ -137,17 +155,26 @@ func (e *Engine) HandleEvent(ev Event) {
 	if e.ledger != nil {
 		e.ledger.Record(ev.UserID, string(ev.Type), ev.TargetType, ev.TargetID)
 	}
-	at := ev.At
-	if at.IsZero() {
-		at = time.Now()
-	}
 
-	for _, key := range eventCounters[ev.Type] {
+	for _, key := range counterKeys(ev) {
 		e.handleCounter(ev.UserID, key)
 	}
-	for _, key := range eventDerived[ev.Type] {
-		e.handleDerived(ev.UserID, key, at)
+	if firstStepsEvents[ev.Type] {
+		e.handleDerived(ev.UserID, "qs_complete")
 	}
+}
+
+// counterKeys resolves an event to the counter quests it reconciles. Entry
+// creation splits by target so the first thread and the first wall post are
+// separate onboarding quests while both feed the combined entries ladder.
+func counterKeys(ev Event) []string {
+	if ev.Type == EventEntryCreated {
+		if ev.TargetType == "wall_post" {
+			return []string{"qs_first_wall", "entries"}
+		}
+		return []string{"qs_first_thread", "entries"}
+	}
+	return eventCounters[ev.Type]
 }
 
 // handleCounter reconciles a counter milestone with live data and applies the
@@ -171,25 +198,15 @@ func (e *Engine) handleCounter(userID, key string) bool {
 	return e.applyLevelExact(ctx, userID, g, g.LevelFor(value), value)
 }
 
-// handleDerived computes a derived/tenure milestone's value from live data and
-// applies the level exactly.
-func (e *Engine) handleDerived(userID, key string, _ time.Time) bool {
+// handleDerived computes a derived quest's value from live data and applies
+// the level exactly. The only derived quest in the MVP is the onboarding
+// meta (qs_complete): the number of first-steps quests completed.
+func (e *Engine) handleDerived(userID, key string) bool {
 	g, ok := e.catalog.Get(key)
-	if !ok {
+	if !ok || g.Stat != StatDerived {
 		return false
 	}
 	ctx := context.Background()
-	if g.Stat == StatTenure {
-		days, err := e.tenureDays(ctx, userID)
-		if err != nil {
-			e.logf("tenureDays(%s): %v", userID, err)
-			return false
-		}
-		return e.applyLevelExact(ctx, userID, g, tenureLevel(days), days)
-	}
-	if g.Stat != StatDerived {
-		return false
-	}
 	value, err := e.derivedValue(ctx, userID, key)
 	if err != nil {
 		e.logf("derivedValue(%s,%s): %v", userID, key, err)
@@ -501,29 +518,23 @@ func (e *Engine) recomputeGroup(ctx context.Context, userID, key string) {
 	if !ok || g.IsAward() {
 		return
 	}
-	if g.Stat == StatTenure {
-		days, err := e.tenureDays(ctx, userID)
+	if g.Stat == StatDerived {
+		value, err := e.derivedValue(ctx, userID, key)
 		if err != nil {
-			e.logf("recompute tenure(%s,%s): %v", userID, key, err)
+			e.logf("recompute derived(%s,%s): %v", userID, key, err)
 			return
 		}
-		e.applyLevelExact(ctx, userID, g, tenureLevel(days), days)
-		return
-	}
-	if g.Stat == StatCounter {
-		value, err := e.sourceCount(ctx, userID, key)
-		if err != nil {
-			e.logf("recompute sourceCount(%s,%s): %v", userID, key, err)
-			return
-		}
-		e.setCounter(ctx, userID, key, value)
 		e.applyLevelExact(ctx, userID, g, g.LevelFor(value), value)
 		return
 	}
-	value, err := e.derivedValue(ctx, userID, key)
-	if err != nil {
-		e.logf("recompute derived(%s,%s): %v", userID, key, err)
+	if g.Stat != StatCounter {
 		return
 	}
+	value, err := e.sourceCount(ctx, userID, key)
+	if err != nil {
+		e.logf("recompute sourceCount(%s,%s): %v", userID, key, err)
+		return
+	}
+	e.setCounter(ctx, userID, key, value)
 	e.applyLevelExact(ctx, userID, g, g.LevelFor(value), value)
 }

@@ -153,7 +153,7 @@ describe("notificationTitle", () => {
       type: "achievement_unlock",
       params: { group_key: "entries", level: 2 },
     };
-    expect(notificationTitle(n, t)).toBe("Новая веха: Хронист");
+    expect(notificationTitle(n, t)).toBe("Новая веха: Писатель");
   });
 
   it("formats the dynamic tenure milestone name", () => {

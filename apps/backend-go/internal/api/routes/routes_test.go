@@ -115,6 +115,9 @@ var expectedRoutes = []string{
 	"GET /api/v1/drops/packages",
 	"POST /api/v1/drops/config",
 	"POST /api/v1/drops/callback",
+	"GET /api/v1/quests/progress",
+	"POST /api/v1/quests/claim",
+	"POST /api/v1/quests/chests/:id/open",
 
 	// Push (PWA) — public VAPID key; subscribe/preferences are protected below
 	"GET /api/v1/push/vapid-public-key",

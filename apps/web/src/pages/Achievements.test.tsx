@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import Achievements from "./Achievements";
 import { clearQueryCache } from "@/integrations/api/queryCache";
@@ -11,6 +11,7 @@ vi.stubGlobal("fetch", mockFetch);
 
 vi.mock("react-router-dom", () => ({
   useParams: () => ({ userId: "profile-user-1" }),
+  useNavigate: () => vi.fn(),
   Link: ({ to, children, className }: any) => (
     <a href={to} className={className}>
       {children}
@@ -22,91 +23,97 @@ vi.mock("@/components/PentagramLoader", () => ({
   PentagramLoader: () => <div data-testid="pentagram-loader">Loading...</div>,
 }));
 
-// ─── Fixtures (new catalog) ──────────────────────────────────────────────────
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => ({ user: { id: "profile-user-1" } }),
+}));
 
-const MILESTONE = {
-  achievement_id: "a1",
-  current_level: 2,
-  unlocked_at: "2025-01-01T00:00:00Z",
-  progress_current: 120,
-  achievements: {
-    id: "a1",
-    group_key: "entries",
-    title: "achievements.entries.title",
-    name: "achievements.entries.title",
-    description: "",
-    icon: "message-square",
-    category: "content",
-    kind: "milestone",
-    origin: "code",
-    image_url: null,
-    level_images: {},
-    owner_share: { "1": 12.5, "2": 4 },
-    achievement_type: "progressive",
-    hidden: false,
+// ─── Fixtures (quests MVP) ───────────────────────────────────────────────────
+
+const QUESTS = [
+  {
+    group_key: "qs_avatar",
+    title_key: "achievements.qs_avatar.title",
+    category: "profile",
+    track: "first_steps",
+    icon: "smile",
+    sort_order: 1,
+    current_level: 1,
+    progress_current: 1,
     levels: [
       {
         level: 1,
-        threshold: 25,
-        name_key: "achievements.entries.1.name",
-        description_key: "achievements.entries.1.description",
-      },
-      {
-        level: 2,
-        threshold: 100,
-        name_key: "achievements.entries.2.name",
-        description_key: "achievements.entries.2.description",
+        threshold: 1,
+        name_key: "achievements.qs_avatar.1.name",
+        description_key: "achievements.qs_avatar.1.description",
+        rewards: [{ kind: "gems", amount: 20 }],
+        completed: true,
+        claimed: false,
+        can_claim: true,
       },
     ],
   },
-};
-
-const AWARD = {
-  id: "g1",
-  user_id: "profile-user-1",
-  award_key: "award_bughunter",
-  awarded_by: "u-demo",
-  awarded_by_username: "demo",
-  reason: "Поймал краш",
-  awarded_at: "2026-02-01T00:00:00Z",
-  award: {
-    id: "w1",
-    group_key: "award_bughunter",
-    title: "achievements.award_bughunter.title",
-    name: "achievements.award_bughunter.title",
-    description: "achievements.award_bughunter.description",
-    icon: "bug",
-    category: "awards",
-    origin: "code",
-    image_url: null,
-    level_images: {},
-    owner_share: { "1": 0.8 },
+  {
+    group_key: "entries",
+    title_key: "achievements.entries.title",
+    category: "content",
+    track: "main",
+    icon: "notebook-pen",
+    sort_order: 20,
+    current_level: 1,
+    progress_current: 5,
+    levels: [
+      {
+        level: 1,
+        threshold: 1,
+        name_key: "achievements.entries.1.name",
+        description_key: "achievements.entries.1.description",
+        rewards: [{ kind: "gems", amount: 10 }],
+        completed: true,
+        claimed: true,
+        can_claim: false,
+      },
+      {
+        level: 2,
+        threshold: 10,
+        name_key: "achievements.entries.2.name",
+        description_key: "achievements.entries.2.description",
+        rewards: [{ kind: "gems", amount: 25 }],
+        completed: false,
+        claimed: false,
+        can_claim: false,
+      },
+    ],
   },
-};
+];
 
 function setupFetch({
   profile = { id: "profile-user-1", username: "testuser" },
-  milestones = [MILESTONE],
-  awards = [AWARD],
+  quests = QUESTS,
+  gems = 30,
+  unclaimed = 1,
 }: {
   profile?: { id: string; username: string } | null;
-  milestones?: typeof MILESTONE[];
-  awards?: typeof AWARD[];
+  quests?: typeof QUESTS;
+  gems?: number;
+  unclaimed?: number;
 } = {}) {
+  const ok = (data: unknown) => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: () => Promise.resolve({ success: true, data }),
+    text: () => Promise.resolve(JSON.stringify({ success: true, data })),
+  });
   mockFetch.mockImplementation((url: string) => {
     if (url.includes("/profiles")) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ data: profile ? [profile] : [] }),
-      });
+      return Promise.resolve(ok(profile ? [profile] : []));
     }
-    if (url.includes("/user_achievements")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: milestones }) });
+    if (url.includes("/quests/progress")) {
+      return Promise.resolve(
+        ok({ user_id: "profile-user-1", gems, unclaimed_count: unclaimed, quests, chests: [] }),
+      );
     }
-    if (url.includes("/user_awards")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: awards }) });
-    }
-    return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [] }) });
+    return Promise.resolve(ok([]));
   });
 }
 
@@ -124,45 +131,39 @@ describe("Achievements page", () => {
     expect(screen.getByTestId("pentagram-loader")).toBeInTheDocument();
   });
 
-  it("renders the trophy hall header and the total count", async () => {
+  it("renders the quest header with the first-steps counter", async () => {
     setupFetch();
     render(<Achievements />);
 
     await waitFor(() => {
-      expect(screen.getByText("Награды — testuser")).toBeInTheDocument();
+      expect(screen.getByText("Квесты — testuser")).toBeInTheDocument();
     });
-    // One milestone + one award.
-    expect(screen.getByText("Наград: 2")).toBeInTheDocument();
-    expect(screen.getByText("Вехи (1)")).toBeInTheDocument();
+    expect(screen.getByText("Первые шаги: 1 из 1")).toBeInTheDocument();
   });
 
-  it("shows the current milestone level name and its owner share", async () => {
-    setupFetch();
-    render(<Achievements />);
-
-    // Level 2 of "entries" is the unlocked trophy (art comes from the bundled
-    // registry, so the name is the image alt rather than a text label).
-    await waitFor(() => {
-      expect(screen.getByAltText("Хронист")).toBeInTheDocument();
-    });
-    // The owner share lives in the badge corner, revealed on hover.
-    expect(screen.getByText("4%")).toBeInTheDocument();
-  });
-
-  it("lists hand-granted awards with author, reason and date", async () => {
+  it("shows a claim button for completed unclaimed levels", async () => {
     setupFetch();
     render(<Achievements />);
 
     await waitFor(() => {
-      expect(screen.getByText("Ручные награды (1)")).toBeInTheDocument();
+      expect(screen.getByText("Лицо")).toBeInTheDocument();
     });
-    expect(screen.getByText("Баг-хантер")).toBeInTheDocument();
-    expect(screen.getByText(/@demo/)).toBeInTheDocument();
-    expect(screen.getByText("«Поймал краш»")).toBeInTheDocument();
+    expect(screen.getAllByText("Забрать").length).toBeGreaterThan(0);
+    expect(screen.getByText("Забрано")).toBeInTheDocument();
   });
 
-  it("shows an empty state when there are no trophies", async () => {
-    setupFetch({ milestones: [], awards: [] });
+  it("shows progress for locked levels", async () => {
+    setupFetch();
+    render(<Achievements />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Писатель")).toBeInTheDocument();
+    });
+    expect(screen.getByText("5/10")).toBeInTheDocument();
+  });
+
+  it("shows an empty state when there are no quests", async () => {
+    setupFetch({ quests: [] });
     render(<Achievements />);
 
     await waitFor(() => {
@@ -177,6 +178,28 @@ describe("Achievements page", () => {
     await waitFor(() => {
       expect(screen.getByText("Назад")).toBeInTheDocument();
     });
-    expect(screen.getByText("Награды")).toBeInTheDocument();
+    expect(screen.getByText("Квесты")).toBeInTheDocument();
+  });
+
+  it("sends a single claim request on fast double click", async () => {
+    setupFetch();
+    render(<Achievements />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Лицо")).toBeInTheDocument();
+    });
+    const btn = screen.getAllByText("Забрать")[0];
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      const posts = mockFetch.mock.calls.filter(
+        ([url, opts]: any[]) =>
+          typeof url === "string" &&
+          url.includes("/quests/claim") &&
+          (opts as RequestInit)?.method === "POST",
+      );
+      expect(posts.length).toBe(1);
+    });
   });
 });

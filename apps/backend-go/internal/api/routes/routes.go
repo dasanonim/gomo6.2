@@ -281,6 +281,9 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 	friendsHandler.SetRedis(redis)
 	friendsHandler.SetWebSocketHub(wsHub)
 	friendsHandler.SetNotifier(notifService)
+	friendsHandler.SetAchievementEngine(achEngine)
+	// Quest surface (progress, idempotent claims, chest inventory).
+	questsHandler := handlers.NewQuestsHandler(db, achEngine)
 	emojiPacksHandler := handlers.NewEmojiPacksHandler(db)
 	var storageHandler *storageHandlers.StorageHandler
 	storageClient, err := stor.NewStorageClient()
@@ -533,6 +536,10 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 		// Drops packages (public)
 		rest.GET("/drops/packages", dropsHandler.GetDropsPackages)
 
+		// Quest progress (public read with optional auth; the handler applies
+		// the achievements privacy rule for other users' pages).
+		rest.GET("/quests/progress", questsHandler.GetProgress)
+
 		// DePay integration. Both handlers authenticate the request themselves:
 		// /drops/callback requires a valid DePay signature (fail-closed, C1),
 		// /drops/config accepts either a valid DePay signature or an
@@ -635,6 +642,10 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 			protected.GET("/favorites", favoritesHandler.GetFavorites)
 			protected.GET("/favorites/ids", favoritesHandler.GetFavoriteIds)
 			protected.DELETE("/favorites/:itemType/:itemId", favoritesHandler.RemoveFavorite)
+
+			// Quests: idempotent reward claims and chest opens (self only).
+			protected.POST("/quests/claim", questsHandler.Claim)
+			protected.POST("/quests/chests/:id/open", questsHandler.OpenChest)
 
 			// Custom sidebar tabs (synced across devices).
 			protected.GET("/sidebar_tabs", sidebarTabsHandler.GetTabs)
@@ -1277,22 +1288,16 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 	// a Redis marker so it only runs once per Redis lifetime; on a fresh DB the
 	// backfill also populates the user_achievement_counters table.
 	if redis != nil {
-		backfillKey := "achievements:backfill:v2"
+		backfillKey := "achievements:backfill:v3"
 		claimed, err := redis.SetNX(context.Background(), backfillKey, "1", 0).Result()
 		if err == nil && claimed {
 			go func() {
 				achEngine.RecomputeAll(context.Background())
-				// Levels now exist for everyone — refresh the owner percentages.
-				_ = achEngine.RecomputeRarity(context.Background())
 			}()
 		} else if err != nil {
 			log.Printf("[Achievements] backfill marker check failed: %v", err)
 		}
 	}
-
-	// Owner-percentage worker: the share of active users who own each
-	// award/level, recomputed every 6h (and once at startup).
-	go achEngine.RarityLoop(context.Background(), 6*time.Hour)
 }
 
 // moderationReadMiddleware allows helpers, moderators and admins — anyone who

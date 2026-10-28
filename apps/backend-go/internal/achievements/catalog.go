@@ -57,13 +57,23 @@ const (
 type Category string
 
 const (
-	CategoryContent      Category = "content"
-	CategoryCommunity    Category = "community"
-	CategoryRetention    Category = "retention"
-	CategoryProfile      Category = "profile"
-	CategoryIntegrations Category = "integrations"
-	CategoryGifts        Category = "gifts"
-	CategoryAwards       Category = "awards" // hand-granted honours
+	CategoryOnboarding Category = "onboarding" // "Первые шаги" checklist
+	CategoryContent    Category = "content"
+	CategoryCommunity  Category = "community"
+	CategorySocial     Category = "social"
+	CategoryProfile    Category = "profile"
+)
+
+// Track selects the UI treatment. First-steps quests render as a checklist;
+// everything else renders as progressive cards with progress bars. Nothing
+// is hidden: every quest is visible with its progress.
+type Track string
+
+const (
+	// TrackFirstSteps is the onboarding checklist (free order, one_time).
+	TrackFirstSteps Track = "first_steps"
+	// TrackMain is the regular progressive ladder.
+	TrackMain Track = "main"
 )
 
 // StatKind describes how the engine obtains a milestone's value.
@@ -79,13 +89,11 @@ const (
 )
 
 var validCategories = map[Category]struct{}{
-	CategoryContent:      {},
-	CategoryCommunity:    {},
-	CategoryRetention:    {},
-	CategoryProfile:      {},
-	CategoryIntegrations: {},
-	CategoryGifts:        {},
-	CategoryAwards:       {},
+	CategoryOnboarding: {},
+	CategoryContent:    {},
+	CategoryCommunity:  {},
+	CategorySocial:     {},
+	CategoryProfile:    {},
 }
 
 var validKinds = map[StatKind]struct{}{
@@ -95,22 +103,27 @@ var validKinds = map[StatKind]struct{}{
 }
 
 // Level is one step of a milestone. Names/descriptions are i18n keys.
+// Rewards are granted on claim (POST /quests/claim), never automatically —
+// the claim ledger (quest_claims) makes every grant idempotent per level.
 type Level struct {
-	Level          int    `json:"level"`
-	Threshold      int    `json:"threshold"`
-	NameKey        string `json:"name_key"`
-	DescriptionKey string `json:"description_key"`
+	Level          int      `json:"level"`
+	Threshold      int      `json:"threshold"`
+	NameKey        string   `json:"name_key"`
+	DescriptionKey string   `json:"description_key"`
+	Rewards        []Reward `json:"rewards,omitempty"`
 }
 
-// Group is one catalog entry: a milestone or an award.
+// Group is one catalog entry: a milestone quest (auto) or an award (manual,
+// hidden from the UI since the quests MVP but kept for data compatibility).
 type Group struct {
-	Key       string   `json:"key"`
-	TitleKey  string   `json:"title_key"`
-	Category  Category `json:"category"`
-	Icon      string   `json:"icon"`
-	Kind      Kind     `json:"kind"`
-	Origin    Origin   `json:"origin"`
-	SortOrder int      `json:"sort_order"`
+	Key        string   `json:"key"`
+	TitleKey   string   `json:"title_key"`
+	Category   Category `json:"category"`
+	Track      Track    `json:"track,omitempty"`
+	Icon       string   `json:"icon"`
+	Kind       Kind     `json:"kind"`
+	Origin     Origin   `json:"origin"`
+	SortOrder  int      `json:"sort_order"`
 	// Milestone fields.
 	Type   Type     `json:"type,omitempty"`
 	Stat   StatKind `json:"stat,omitempty"`
@@ -119,6 +132,9 @@ type Group struct {
 	DescriptionKey string `json:"description_key,omitempty"`
 	ImageURL       string `json:"image_url,omitempty"`
 }
+
+// IsOnboarding reports whether the group belongs to the first-steps checklist.
+func (g *Group) IsOnboarding() bool { return g.Track == TrackFirstSteps }
 
 func (g *Group) kind() Kind {
 	if g.Kind == "" {
@@ -167,6 +183,9 @@ func (g *Group) Validate() error {
 	}
 	if g.TitleKey == "" {
 		return fmt.Errorf("achievements: %s: title key is empty", g.Key)
+	}
+	if g.Track != "" && g.Track != TrackFirstSteps && g.Track != TrackMain {
+		return fmt.Errorf("achievements: %s: invalid track %q", g.Key, g.Track)
 	}
 
 	switch g.kind() {
@@ -230,6 +249,11 @@ func (g *Group) validateMilestone() error {
 		}
 		if lvl.NameKey == "" || lvl.DescriptionKey == "" {
 			return fmt.Errorf("achievements: %s: level %d name/description keys are empty", g.Key, lvl.Level)
+		}
+		for _, r := range lvl.Rewards {
+			if err := r.Validate(g.Key, lvl.Level); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

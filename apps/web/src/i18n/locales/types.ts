@@ -23,6 +23,8 @@ export interface LocaleResources {
   // Achievements are a deep tree: group → level → {name, description} plus
   // category/rarity maps. i18next resolves dotted keys through nested objects.
   achievements: Record<string, unknown>;
+  // Quest surface: page sections, claim buttons, chest and toast strings.
+  quests: Record<string, string>;
 }
 
 export type LocaleNamespace = keyof LocaleResources;

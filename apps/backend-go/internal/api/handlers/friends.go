@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gomo6/backend/internal/achievements"
 	"github.com/gomo6/backend/internal/httpx"
 	"github.com/gomo6/backend/internal/notifications"
 	"github.com/gomo6/backend/internal/privacy"
@@ -27,10 +28,11 @@ import (
 // subscription pair exist — and is materialized in the `friendships` table so
 // every privacy/wall/messenger/feed/WS consumer keeps working unchanged.
 type FriendsHandler struct {
-	db    *sql.DB
-	hub   *websocket.Hub
-	redis *redis.Client
-	notif *notifications.Service
+	db        *sql.DB
+	hub       *websocket.Hub
+	redis     *redis.Client
+	notif     *notifications.Service
+	achEngine *achievements.Engine
 }
 
 func NewFriendsHandler(db *sql.DB) *FriendsHandler {
@@ -42,6 +44,9 @@ func (h *FriendsHandler) SetRedis(r *redis.Client) { h.redis = r }
 func (h *FriendsHandler) SetWebSocketHub(hub *websocket.Hub) { h.hub = hub }
 
 func (h *FriendsHandler) SetNotifier(n *notifications.Service) { h.notif = n }
+
+// SetAchievementEngine wires the quest engine for follow events.
+func (h *FriendsHandler) SetAchievementEngine(e *achievements.Engine) { h.achEngine = e }
 
 // invalidateFriendCaches clears Redis caches for friend/subscription endpoints.
 func invalidateFriendCaches(redisClient *redis.Client, user1ID, user2ID string) {
@@ -176,6 +181,7 @@ func (h *FriendsHandler) Subscribe(c *gin.Context) {
 
 	// Only notify on a genuinely new follow.
 	if inserted > 0 {
+		achievements.EmitAchievement(h.achEngine, subscriberID, achievements.EventFollowAdded)
 		subscriberUsername := profiles.UsernameByID(h.db, subscriberID)
 		h.createFriendNotification(targetID, "new_subscriber", subscriberUsername, &subscriberID)
 		if becameFriends {

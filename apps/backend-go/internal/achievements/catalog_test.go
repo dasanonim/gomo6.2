@@ -10,11 +10,11 @@ func TestDefaultCatalog_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Default() error: %v", err)
 	}
-	if cat.Len() != 10 {
-		t.Errorf("expected 10 groups, got %d", cat.Len())
+	if cat.Len() != 17 {
+		t.Errorf("expected 17 groups, got %d", cat.Len())
 	}
 
-	var milestones, awards int
+	var onboarding, main int
 	seen := map[string]struct{}{}
 	for _, g := range cat.Groups() {
 		if _, dup := seen[g.Key]; dup {
@@ -25,30 +25,38 @@ func TestDefaultCatalog_Valid(t *testing.T) {
 			t.Errorf("group %s: catalog entries must be origin=code", g.Key)
 		}
 		if g.IsAward() {
-			awards++
+			t.Errorf("group %s: MVP catalog must not contain awards", g.Key)
+		}
+		if g.IsOnboarding() {
+			onboarding++
 		} else {
-			milestones++
+			main++
+		}
+		for _, lvl := range g.Levels {
+			if !lvl.HasClaimable() {
+				t.Errorf("group %s level %d: MVP levels must carry rewards", g.Key, lvl.Level)
+			}
 		}
 	}
-	if milestones != 4 {
-		t.Errorf("expected 4 milestones, got %d", milestones)
+	if onboarding != 10 {
+		t.Errorf("expected 10 onboarding groups (9 steps + meta), got %d", onboarding)
 	}
-	if awards != 6 {
-		t.Errorf("expected 6 awards, got %d", awards)
+	if main != 7 {
+		t.Errorf("expected 7 main-ladder groups, got %d", main)
 	}
 }
 
-func TestDefaultCatalog_HasTenure(t *testing.T) {
+func TestDefaultCatalog_MetaQuest(t *testing.T) {
 	cat, _ := Default()
-	g, ok := cat.Get("tenure")
+	g, ok := cat.Get("qs_complete")
 	if !ok {
-		t.Fatal("tenure group missing")
+		t.Fatal("qs_complete group missing")
 	}
-	if !g.IsDynamic() {
-		t.Errorf("tenure must be dynamic, got stat=%q", g.Stat)
+	if g.Stat != StatDerived {
+		t.Errorf("qs_complete must be derived, got stat=%q", g.Stat)
 	}
-	if len(g.Levels) != 0 {
-		t.Errorf("tenure must not enumerate levels, got %d", len(g.Levels))
+	if len(g.Levels) != 1 || g.Levels[0].Threshold != 9 {
+		t.Errorf("qs_complete must have one level with threshold 9, got %+v", g.Levels)
 	}
 }
 
@@ -71,19 +79,28 @@ func TestLevelFor(t *testing.T) {
 	}
 }
 
-func TestTenureLevel(t *testing.T) {
-	cases := []struct {
-		days int
-		want int
-	}{
-		{0, 0}, {182, 0}, {183, 1}, {364, 1}, {365, 2}, {729, 2}, {730, 3},
-		{1095, 4}, {3650, 11},
+func TestRewardKinds(t *testing.T) {
+	if err := (Reward{Kind: RewardGems, Amount: 10}).Validate("x", 1); err != nil {
+		t.Errorf("valid gems reward rejected: %v", err)
 	}
-	for _, c := range cases {
-		if got := tenureLevel(c.days); got != c.want {
-			t.Errorf("tenureLevel(%d) = %d, want %d", c.days, got, c.want)
-		}
+	if err := (Reward{Kind: RewardDrops, Amount: 5}).Validate("x", 1); err != nil {
+		t.Errorf("valid drops reward rejected: %v", err)
 	}
+	if err := (Reward{Kind: RewardChest}).Validate("x", 1); err != nil {
+		t.Errorf("valid chest reward rejected: %v", err)
+	}
+	if err := (Reward{Kind: RewardGems, Amount: 0}).Validate("x", 1); err == nil {
+		t.Error("zero gems amount must be rejected")
+	}
+	if err := (Reward{Kind: "cosmetic"}).Validate("x", 1); err == nil {
+		t.Error("unknown reward kind must be rejected")
+	}
+}
+
+func TestValidate_BadReward(t *testing.T) {
+	g := validMilestone("x")
+	g.Levels[0].Rewards = []Reward{{Kind: "cosmetic"}}
+	expectError(t, g, "unknown reward kind")
 }
 
 func validMilestone(key string) *Group {
@@ -101,7 +118,7 @@ func validAward(key string) *Group {
 	return &Group{
 		Key: key, TitleKey: "achievements." + key + ".title",
 		DescriptionKey: "achievements." + key + ".description",
-		Category:       CategoryAwards, Icon: "gem", Kind: KindAward, SortOrder: 1,
+		Category:       CategoryContent, Icon: "gem", Kind: KindAward, SortOrder: 1,
 	}
 }
 
@@ -184,10 +201,10 @@ func TestValidate_BadStat(t *testing.T) {
 	expectError(t, g, "invalid stat kind")
 }
 
-func TestValidate_TenureWithLevels(t *testing.T) {
+func TestValidate_BadTrack(t *testing.T) {
 	g := validMilestone("x")
-	g.Stat = StatTenure
-	expectError(t, g, "tenure must not have fixed levels")
+	g.Track = "secret"
+	expectError(t, g, "invalid track")
 }
 
 func TestValidate_AwardWithLevels(t *testing.T) {

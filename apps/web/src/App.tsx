@@ -19,6 +19,7 @@ import { VideoEditorHost } from "@/components/VideoEditorHost";
 import { StoryComposer } from "@/components/stories/StoryComposer";
 import { StoryViewer } from "@/components/stories/StoryViewer";
 import { ThemeSync } from "@/components/ThemeSync";
+import { QuestUnlockOverlay } from "@/components/QuestUnlockOverlay";
 import { applyTheme, getStoredPrefs, syncSharedAppearanceCookies, watchSystemMode } from "@/theme";
 import { applyCustomFont, getStoredCustomFont } from "@/lib/customFont";
 import { MotionGate } from "@/hooks/MotionGate";
@@ -234,6 +235,7 @@ const App = () => {
                 <Sonner />
                 <BrowserRouter>
                   <ThemeSync />
+                  <QuestUnlockOverlay />
                   <AppRoutes />
                   {/* Stories: both live at the router root so the viewer can
                       deep-link to the messenger on reply; dialogs portal to body. */}
