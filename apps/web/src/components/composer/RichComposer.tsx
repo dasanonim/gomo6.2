@@ -728,16 +728,20 @@ export const RichComposer = ({
             aria-hidden="true"
             className="pointer-events-none absolute left-1/2 top-1 h-1 w-10 -translate-x-1/2 rounded-full bg-foreground/20 md:hidden"
           />
+          {/* Left balancer (mobile only): mirrors the close button, which
+              sits on the right on phones, so the label stays centered.
+              On desktop the button is back on the left. */}
+          <span aria-hidden="true" className="order-1 h-9 w-9 shrink-0 md:hidden" />
           <button
             type="button"
             onClick={() => close(DISMISS_VELOCITY)}
             aria-label="Закрыть"
             title="Закрыть"
-            className={`${glassGhostButtonClass} active:scale-95`}
+            className={`${glassGhostButtonClass} active:scale-95 order-3 md:order-1`}
           >
             <X className="h-5 w-5" />
           </button>
-          <div className="min-w-0 flex-1 truncate px-1 text-center">
+          <div className="order-2 min-w-0 flex-1 truncate px-1 text-center">
             <span className="text-sm font-semibold">{headerLabel}</span>
             {restoredDraft && (
               <span className="ml-2 whitespace-nowrap text-[11px] text-muted-foreground/70">черновик</span>
@@ -745,16 +749,12 @@ export const RichComposer = ({
             {headerMeta && <span className="ml-2 whitespace-nowrap text-[11px] text-muted-foreground/70">{headerMeta}</span>}
           </div>
           {headerRight}
-          {/* Right-side balancer (mobile only): mirrors the close button so
-              the centered header label is truly centered. On desktop the
-              fullscreen button occupies this slot instead. */}
-          <span aria-hidden="true" className="h-9 w-9 shrink-0 md:hidden" />
           {isDesktop && (
             <button
               type="button"
               title={fullscreen ? "Свернуть" : "На весь экран"}
               onClick={() => setFullscreen((prev) => !prev)}
-              className={glassGhostButtonClass}
+              className={`${glassGhostButtonClass} order-3`}
             >
               {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
             </button>
