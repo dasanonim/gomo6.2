@@ -2,6 +2,7 @@ package achievements
 
 import (
 	"database/sql/driver"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -138,6 +139,38 @@ func TestHandleEvent_LikeReceivedUnlock(t *testing.T) {
 	expectCounterReconcile(mock, "FROM post_likes pl", "likes_received", 42, 1)
 
 	e.HandleEvent(Event{UserID: "u1", Type: EventLikeReceived})
+}
+
+// A failed level write must not notify: otherwise the toast and the bell
+// promise a level the achievements page can never show (the reported
+// "toast says earned but nothing on the page" ghost).
+type stubNotifier struct {
+	calls int
+}
+
+func (s *stubNotifier) NotifyMilestone(userID string, g *Group, prevLevel, newLevel int) {
+	s.calls++
+}
+
+func TestHandleEvent_UpsertFailureSkipsNotify(t *testing.T) {
+	e, mock := newEngine(t)
+	stub := &stubNotifier{}
+	e.Notifier = stub
+
+	mock.ExpectQuery("FROM post_likes pl").WithArgs("u1").
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(42))
+	mock.ExpectExec("INSERT INTO user_achievement_counters").
+		WithArgs("u1", "likes_received", 42).WillReturnResult(sqlmock.NewResult(1, 1))
+	expectCurrentLevel(mock, "likes_received", 0)
+	mock.ExpectExec("INSERT INTO user_achievements").
+		WithArgs("u1", GroupID("likes_received"), 1, 42, sqlmock.AnyArg()).
+		WillReturnError(errors.New("boom"))
+
+	e.HandleEvent(Event{UserID: "u1", Type: EventLikeReceived})
+
+	if stub.calls != 0 {
+		t.Errorf("notify must not fire when the level write failed, got %d call(s)", stub.calls)
+	}
 }
 
 // The counter reconciles to the LIVE value even when an earlier event was

@@ -236,7 +236,13 @@ func (e *Engine) applyLevelExact(ctx context.Context, userID string, g *Group, n
 		}
 		return false
 	}
-	e.upsertExact(ctx, userID, g, newLevel, progress)
+	// The row MUST be durably written before anyone is told about the
+	// unlock: the toast, the bell and the achievements page all read it
+	// back. A swallowed upsert error with an unconditional notify produced
+	// the "toast says earned but the page shows nothing" ghost.
+	if err := e.upsertExact(ctx, userID, g, newLevel, progress); err != nil {
+		return false
+	}
 	if newLevel > currentLevel {
 		e.onLevelUp(ctx, userID, g, currentLevel, newLevel)
 		return true
@@ -255,7 +261,7 @@ func (e *Engine) currentLevel(ctx context.Context, userID, key string) int {
 	return level
 }
 
-func (e *Engine) upsertExact(ctx context.Context, userID string, g *Group, newLevel, progress int) {
+func (e *Engine) upsertExact(ctx context.Context, userID string, g *Group, newLevel, progress int) error {
 	_, err := e.db.ExecContext(ctx, `
 INSERT INTO user_achievements (user_id, achievement_id, current_level, progress_current, unlocked_at, rule_hash)
 VALUES ($1, $2, $3, $4, NOW(), $5)
@@ -268,7 +274,9 @@ DO UPDATE SET
 		userID, GroupID(g.Key), newLevel, progress, e.ruleHash(g))
 	if err != nil {
 		e.logf("upsert exact(%s,%s): %v", userID, g.Key, err)
+		return err
 	}
+	return nil
 }
 
 func (e *Engine) deleteRow(ctx context.Context, userID, key string) {

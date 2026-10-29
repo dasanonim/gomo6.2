@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, type ApiClientError } from "@/integrations/api/client";
+import { eventManager } from "@/services/eventManager";
 
 /** HTTP status of an apiClient failure, if any. */
 export function questErrorStatus(err: unknown): number | undefined {
@@ -128,6 +129,45 @@ export function useQuests(userId: string | undefined): UseQuestsResult {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // Live updates: the engine applies an unlock asynchronously after the
+  // action (bounded pool), while the toast + bell arrive over WS the moment
+  // it commits. Without this the open page keeps showing the pre-unlock
+  // snapshot until a manual reload — the "toast says earned but the page
+  // shows nothing" race. A burst of levels settles into one silent
+  // background refetch; a visibility/focus refetch covers a dropped WS.
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleLiveReload = useCallback(() => {
+    if (reloadTimer.current) return;
+    reloadTimer.current = setTimeout(() => {
+      reloadTimer.current = null;
+      void reload();
+    }, 700);
+  }, [reload]);
+
+  useEffect(() => {
+    if (!userId) return;
+    const off = eventManager.on("new_notification", (message) => {
+      const notif = message.data as { type?: string; user_id?: string } | undefined;
+      if (!notif || notif.type !== "achievement_unlock") return;
+      if (notif.user_id && notif.user_id !== userId) return;
+      scheduleLiveReload();
+    });
+    const onVisible = () => {
+      if (document.visibilityState === "visible") scheduleLiveReload();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", scheduleLiveReload);
+    return () => {
+      off();
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", scheduleLiveReload);
+      if (reloadTimer.current) {
+        clearTimeout(reloadTimer.current);
+        reloadTimer.current = null;
+      }
+    };
+  }, [userId, scheduleLiveReload]);
 
   const claim = useCallback(
     async (questKey: string, level: number): Promise<QuestReward[]> => {

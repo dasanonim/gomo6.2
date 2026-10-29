@@ -1,9 +1,31 @@
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useQuests } from "./useQuests";
+import { eventManager } from "@/services/eventManager";
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
+
+vi.mock("@/services/eventManager", () => {
+  const handlers = new Set<(m: { data?: unknown }) => void>();
+  return {
+    eventManager: {
+      on: (_type: string, h: (m: { data?: unknown }) => void) => {
+        handlers.add(h);
+        return () => {
+          handlers.delete(h);
+        };
+      },
+      __emit: (m: { data?: unknown }) => {
+        handlers.forEach((h) => h(m));
+      },
+    },
+  };
+});
+
+function emitNotification(data: unknown) {
+  (eventManager as unknown as { __emit: (m: { data?: unknown }) => void }).__emit({ data });
+}
 
 const PROGRESS = {
   user_id: "u1",
@@ -87,5 +109,30 @@ describe("useQuests", () => {
     });
     expect(result.current.gems).toBe(70);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("reloads on achievement_unlock for the viewed user (debounced)", async () => {
+    const { result, unmount } = renderHook(() => useQuests("u1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    mockFetch.mockClear();
+
+    // чужой анлок и посторонние типы страницу не трогают
+    act(() => {
+      emitNotification({ type: "achievement_unlock", user_id: "someone-else" });
+      emitNotification({ type: "like", user_id: "u1" });
+    });
+    await new Promise((r) => setTimeout(r, 900));
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    // свой анлок — один фоновый рефетч на пачку событий
+    act(() => {
+      emitNotification({ type: "achievement_unlock", user_id: "u1" });
+      emitNotification({ type: "achievement_unlock", user_id: "u1" });
+    });
+    await waitFor(
+      () => expect(mockFetch.mock.calls.filter(([u]) => String(u).includes("/quests/progress")).length).toBe(1),
+      { timeout: 3000 },
+    );
+    unmount();
   });
 });
