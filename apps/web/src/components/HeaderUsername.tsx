@@ -72,9 +72,9 @@ export const HeaderUsername = memo(({ userId, className = "" }: HeaderUsernamePr
             className="transition-transform duration-200 group-hover:translate-x-0.5"
           />
         )}
-        <div className="transition-transform duration-200 group-hover:translate-x-0.5">
+        <span className="transition-transform duration-200 group-hover:translate-x-0.5 inline-flex items-center">
           <AdminBadge userId={userId} />
-        </div>
+        </span>
       </span>
     </ProfileHoverCard>
   );
