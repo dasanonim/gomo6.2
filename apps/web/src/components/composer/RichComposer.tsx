@@ -698,7 +698,7 @@ export const RichComposer = ({
         }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleRootDrop}
-        className={`group/panel fixed inset-x-0 bottom-0 top-[max(0.5rem,env(safe-area-inset-top,0px))] flex w-full flex-col overflow-hidden rounded-t-2xl border-t border-border/60 bg-background md:relative md:top-0 md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
+        className={`group/panel fixed inset-x-0 bottom-0 top-[max(2rem,env(safe-area-inset-top,0px))] flex w-full flex-col overflow-hidden rounded-t-2xl border-t border-border/60 bg-background md:relative md:top-0 md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
           fullscreen
             ? "md:h-[100dvh] md:max-h-none md:max-w-none md:rounded-none"
             : "md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-2xl"
@@ -745,6 +745,10 @@ export const RichComposer = ({
             {headerMeta && <span className="ml-2 whitespace-nowrap text-[11px] text-muted-foreground/70">{headerMeta}</span>}
           </div>
           {headerRight}
+          {/* Right-side balancer (mobile only): mirrors the close button so
+              the centered header label is truly centered. On desktop the
+              fullscreen button occupies this slot instead. */}
+          <span aria-hidden="true" className="h-9 w-9 shrink-0 md:hidden" />
           {isDesktop && (
             <button
               type="button"

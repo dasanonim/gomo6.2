@@ -16,7 +16,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/integrations/api/compat";
 import { invalidateByPrefix } from "@/integrations/api/queryCache";
 import { toast } from "sonner";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import type { AttachmentMeta } from "@/utils/mediaUpload";
 import { RichComposer, type RichComposerPayload } from "@/components/composer/RichComposer";
 import { SectionPicker } from "@/components/topic/SectionPicker";
@@ -116,10 +116,10 @@ const CreateThread = () => {
       type="button"
       onClick={() => setPickerOpen(true)}
       title={section ? "Сменить раздел" : "Выбрать раздел"}
-      className={`inline-flex max-w-full items-center justify-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+      className={`inline-flex max-w-full items-center justify-center gap-1.5 rounded-full border transition-all ${
         section
-          ? "border-border/60 bg-foreground/[0.04] hover:bg-foreground/[0.08]"
-          : "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+          ? "border-border/60 bg-foreground/[0.04] px-3 py-1 text-xs font-semibold hover:bg-foreground/[0.08]"
+          : "border-primary/40 bg-primary/15 px-5 py-2.5 text-sm font-bold text-primary shadow-lg shadow-primary/10 hover:bg-primary/20 active:scale-[0.98]"
       }`}
     >
       {section ? (
@@ -129,10 +129,7 @@ const CreateThread = () => {
           <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
         </>
       ) : (
-        <>
-          <Plus className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">Выбрать раздел</span>
-        </>
+        <span className="truncate">Выбрать раздел</span>
       )}
     </button>
   );
