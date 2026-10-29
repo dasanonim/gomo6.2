@@ -839,16 +839,17 @@ export const RichComposer = ({
         animate={reduceMotion ? undefined : { opacity: closing ? 0 : 1 }}
         transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE_OUT_EXPO }}
       />
-      {/* Colour-matched pad under the sheet: when the spring overshoots the top
-          the sheet lifts off the bottom edge, and without this the page would
-          peek through the gap. It sits behind the sheet and is dropped as soon
-          as the exit starts (the sheet still covers its area at that moment). */}
-      {!closing && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-background md:hidden"
-        />
-      )}
+      {/* Solid pad under the sheet (mobile only): the panel must always sit
+          on a filled background — while the keyboard lifts it, while the
+          close-glide settles, during the entrance overshoot and the exit.
+          Without this the page shows through under a lifted sheet (via the
+          45% dim) and every late resync reads as a transparency glitch.
+          It sits above the dim and behind the panel, so the visible area is
+          pure bg-background — seamless with the opaque panel. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-background md:hidden"
+      />
       <motion.div
         ref={composerRootRef}
         role="dialog"
