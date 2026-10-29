@@ -7,6 +7,8 @@
 
 import type { LucideIcon } from "lucide-react";
 import {
+  Cat,
+  Compass,
   Cpu,
   Flame,
   Gamepad2,
@@ -16,17 +18,21 @@ import {
   MessagesSquare,
   Newspaper,
   Palette,
+  Zap,
 } from "lucide-react";
 
 const SECTION_ICONS: Record<string, LucideIcon> = {
   hash: Hash,
   "messages-square": MessagesSquare,
   laugh: Laugh,
+  cat: Cat,
   "gamepad-2": Gamepad2,
   cpu: Cpu,
   palette: Palette,
   newspaper: Newspaper,
+  zap: Zap,
   "life-buoy": LifeBuoy,
+  compass: Compass,
   flame: Flame,
 };
 
