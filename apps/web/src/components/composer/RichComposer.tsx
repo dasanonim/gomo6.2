@@ -611,6 +611,18 @@ export const RichComposer = ({
   // of touchmoves that start outside the sheet (iOS ignores body locks).
   // Portaled overlays (Radix dialogs/popovers, emoji panels) keep working
   // through the exemptions below.
+  //
+  // Two iOS holes this additionally plugs (both observed on contenteditable
+  // focus, where a native input stays put):
+  //  • Safari force-scrolls the WINDOW for caret reveal straight through the
+  //    overflow lock above; once displaced, chained drags from the editor
+  //    move the background freely ("провал" под композер). The pin below
+  //    resets the displacement synchronously inside the scroll event, so it
+  //    never lands. Element-level scrollers (editor, dialogs) are
+  //    unaffected, and the editor div natively keeps the caret visible.
+  //  • Drags starting inside the editor chain to the document when the doc
+  //    is short (nothing to scroll) — stopped by `overscroll-contain` on
+  //    the editor scroller itself (see below).
   useEffect(() => {
     const prevHtmlOverflow = document.documentElement.style.overflow;
     const prevBodyOverflow = document.body.style.overflow;
@@ -618,6 +630,11 @@ export const RichComposer = ({
     document.documentElement.style.overflow = "hidden";
     document.body.style.overflow = "hidden";
     document.documentElement.style.overscrollBehavior = "none";
+
+    const pinWindowScroll = () => {
+      if (window.scrollY !== 0 || window.scrollX !== 0) window.scrollTo(0, 0);
+    };
+    window.addEventListener("scroll", pinWindowScroll, { passive: true, capture: true });
 
     const root = composerRootRef.current;
     const onTouchMove = (e: TouchEvent) => {
@@ -639,6 +656,7 @@ export const RichComposer = ({
       document.documentElement.style.overflow = prevHtmlOverflow;
       document.body.style.overflow = prevBodyOverflow;
       document.documentElement.style.overscrollBehavior = prevOverscroll;
+      window.removeEventListener("scroll", pinWindowScroll, { capture: true } as EventListenerOptions);
       document.removeEventListener("touchmove", onTouchMove, { capture: true } as EventListenerOptions);
     };
   }, []);
@@ -1204,9 +1222,12 @@ export const RichComposer = ({
           </div>
         )}
 
-        {/* Editor — media blocks are edited in place */}
+        {/* Editor — media blocks are edited in place. `overscroll-contain`
+            stops drags from chaining to the document when the doc is short
+            (nothing to scroll): without it the gesture falls through and the
+            background page moves under the sheet. */}
         <div
-          className="min-h-0 flex-1 overflow-y-auto px-4 pb-2"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-2"
           onClick={(event) => {
             const target = event.target as HTMLElement;
             if (
