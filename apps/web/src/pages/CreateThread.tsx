@@ -22,6 +22,7 @@ import { RichComposer, type RichComposerPayload } from "@/components/composer/Ri
 import { SectionPicker } from "@/components/topic/SectionPicker";
 import { SectionIcon } from "@/components/topic/sectionIcons";
 import { useThreadSections, type ThreadSection, type ThreadSubsection } from "@/hooks/useThreadSections";
+import { countMediaNodes } from "@/components/editor/media/mediaSchema";
 import { Input } from "@/components/ui/input";
 import { entityParam } from "@/utils/entityUrl";
 
@@ -48,6 +49,7 @@ const CreateThread = () => {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [contentJson, setContentJson] = useState<unknown>(null);
+  const [hasMedia, setHasMedia] = useState(false);
   const [restored, setRestored] = useState<TopicDraft | null>(null);
 
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -78,6 +80,7 @@ const CreateThread = () => {
       if (draft?.title || draft?.contentJson) {
         setTitle(draft.title || "");
         setContentJson(draft.contentJson ?? null);
+        setHasMedia(countMediaNodes(draft.contentJson) > 0);
         setRestored({ title: draft.title || "", contentJson: draft.contentJson ?? null, attachments: [] });
       }
     } catch {
@@ -151,11 +154,12 @@ const CreateThread = () => {
         toast.error("Выберите раздел");
         return;
       }
-      if (!title.trim()) {
-        toast.error("Введите заголовок темы");
+      if (!title.trim() && attachments.length === 0) {
+        toast.error("Введите заголовок или прикрепите фото");
         return;
       }
-      // The body may be media-only — only the title is mandatory.
+      // The body may be media-only — a bare photo posts needs neither
+      // title nor text.
       if (!text.trim() && attachments.length === 0) {
         toast.error("Добавьте текст или медиафайл");
         return;
@@ -229,8 +233,11 @@ const CreateThread = () => {
         placeholder="Текст темы…"
         escapeDisabled={pickerOpen}
         initialContentJson={restored?.contentJson ?? contentJson}
-        publishDisabled={!title.trim() || !section}
-        onChange={({ json }) => setContentJson(json)}
+        publishDisabled={!section || (!title.trim() && !hasMedia)}
+        onChange={({ json }) => {
+          setContentJson(json);
+          setHasMedia(countMediaNodes(json) > 0);
+        }}
         onPublish={handlePublish}
         onClose={handleClose}
       >

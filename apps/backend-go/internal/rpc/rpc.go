@@ -429,11 +429,15 @@ func (h *RPCHandler) CreateThreadRPC(c *gin.Context) {
 	req.Title = strings.TrimSpace(req.Title)
 	req.Content = strings.TrimSpace(req.Content)
 
-	// A thread always needs a title, but the body may be media-only: an empty
-	// content is allowed as long as an attachment or image was provided.
+	// A thread always needs *something* — text or media. The title is
+	// optional when media is attached (a meme needs no headline).
 	hasMedia := len(req.ImageURLs) > 0 || len(req.Attachments) > 0
-	if req.Title == "" || (req.Content == "" && !hasMedia) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("title and content (or media) are required"))
+	if req.Content == "" && !hasMedia {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("content (or media) is required"))
+		return
+	}
+	if req.Title == "" && !hasMedia {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("title is required (or attach media)"))
 		return
 	}
 
