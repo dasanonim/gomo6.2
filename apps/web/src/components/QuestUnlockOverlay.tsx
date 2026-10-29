@@ -57,7 +57,7 @@ function UnlockRewards({ rewards }: { rewards: QuestReward[] }) {
 }
 
 const CARD =
-  "pointer-events-auto w-full max-w-sm overflow-hidden rounded-xl border border-border/60 bg-surface/95 p-3.5 shadow-xl backdrop-blur";
+  "pointer-events-auto flex w-full max-w-sm items-center gap-3 overflow-hidden rounded-xl border border-border/60 bg-surface/95 p-3.5 shadow-xl backdrop-blur";
 
 /**
  * The toast card: label, what was earned, the rewards — so the eye reads
