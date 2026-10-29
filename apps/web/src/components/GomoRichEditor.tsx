@@ -647,7 +647,7 @@ export const GomoRichEditor = forwardRef<GomoRichEditorHandle, GomoRichEditorPro
   if (!editor) return null;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-6">
       {showToolbar && <Toolbar editor={editor} className={toolbarClassName} />}
       <div ref={editorContainerRef}>
         <EditorContent editor={editor} />

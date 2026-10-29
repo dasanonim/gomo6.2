@@ -216,6 +216,45 @@ export const RichComposer = ({
     return () => controls.stop();
   }, [reduceMotion, sheetY]);
 
+  // Lock the page scroll while the sheet is up: the feed/board/wall
+  // underneath must not move. Same recipe as CreateWallPost — html+body
+  // overflow (html must be locked too: its overflow-x:hidden stops the
+  // body lock from propagating), overscroll off, and outright prevention
+  // of touchmoves that start outside the sheet (iOS ignores body locks).
+  // Portaled overlays (Radix dialogs/popovers, emoji panels) keep working
+  // through the exemptions below.
+  useEffect(() => {
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevOverscroll = document.documentElement.style.overscrollBehavior;
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overscrollBehavior = "none";
+
+    const root = composerRootRef.current;
+    const onTouchMove = (e: TouchEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (root?.contains(target)) return;
+      if (
+        target.closest(
+          '[data-radix-popper-content-wrapper], [role="dialog"], [data-testid="emoji-keyboard-panel"], [data-testid="emoji-picker-popover"]',
+        )
+      ) {
+        return;
+      }
+      e.preventDefault();
+    };
+    document.addEventListener("touchmove", onTouchMove, { passive: false, capture: true });
+
+    return () => {
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overscrollBehavior = prevOverscroll;
+      document.removeEventListener("touchmove", onTouchMove, { capture: true } as EventListenerOptions);
+    };
+  }, []);
+
   const finishClose = useCallback(() => {
     if (closeFinishedRef.current) return;
     closeFinishedRef.current = true;
@@ -698,7 +737,7 @@ export const RichComposer = ({
         }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleRootDrop}
-        className={`group/panel fixed inset-x-0 bottom-0 top-[max(1.4rem,env(safe-area-inset-top,0px))] flex w-full flex-col overflow-hidden rounded-t-2xl border-t border-border/60 bg-background md:relative md:top-0 md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
+        className={`group/panel fixed inset-x-0 bottom-[var(--kb-inset,0px)] top-[max(1.4rem,env(safe-area-inset-top,0px))] flex w-full flex-col overflow-hidden rounded-t-2xl border-t border-border/60 bg-background md:relative md:top-0 md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
           fullscreen
             ? "md:h-[100dvh] md:max-h-none md:max-w-none md:rounded-none"
             : "md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-2xl"
@@ -811,7 +850,10 @@ export const RichComposer = ({
           </MediaAttachmentsProvider>
         </div>
 
-        {/* Toolbar */}
+        {/* Toolbar — pinned above the keyboard (see [data-kb-locked] in
+            lib/mobileKeyboard.ts): swipes starting here must neither
+            dismiss the keyboard nor scroll the page behind. */}
+        <div data-kb-locked className="contents">
         <InkBar
           blobClassName="h-9 w-9"
           className="flex shrink-0 items-center gap-0.5 border-t border-border/60 pl-2 pr-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom,0px))] md:pb-1.5 md:pr-7"
@@ -898,6 +940,7 @@ export const RichComposer = ({
             label={publishLabel}
           />
         </InkBar>
+        </div>
 
         <div
           role="separator"
