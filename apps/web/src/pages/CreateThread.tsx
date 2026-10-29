@@ -119,7 +119,7 @@ const CreateThread = () => {
       className={`inline-flex max-w-full items-center justify-center gap-1.5 rounded-full border transition-all ${
         section
           ? "border-border/60 bg-foreground/[0.04] px-3 py-1 text-xs font-semibold hover:bg-foreground/[0.08]"
-          : "border-primary/40 bg-primary/15 px-5 py-2.5 text-sm font-bold text-primary shadow-lg shadow-primary/10 hover:bg-primary/20 active:scale-[0.98]"
+          : "border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary hover:bg-primary/15 active:scale-[0.98]"
       }`}
     >
       {section ? (
