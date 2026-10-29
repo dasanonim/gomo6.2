@@ -11,7 +11,7 @@
 // any extra fields (a title input, topic tags) rendered through `children`, and
 // the actual submit side effect via `onPublish`.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { animate, motion, useDragControls, useMotionValue, useReducedMotion } from "motion/react";
 import { EASE_OUT_EXPO, springFor } from "@/lib/motion";
@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { EmojiPicker } from "@/components/EmojiPicker";
-import { GomoRichEditor, type GomoRichEditorHandle } from "@/components/GomoRichEditor";
+import { GomoRichEditor, Toolbar, type GomoRichEditorHandle } from "@/components/GomoRichEditor";
 import { PublishButton } from "@/components/PublishButton";
 import { getPublishButtonStyle } from "@/lib/publishButtonStyle";
 import { Lightbox, type LightboxItem } from "@/components/Lightbox";
@@ -79,23 +79,52 @@ const DISMISS_VELOCITY = 1000;
  *
  * Why a dedicated writer instead of the global `--kb-inset`: the sheet is a
  * fixed overlay with its own scroller and a locked page behind it, so the
- * only thing it needs is `bottom` == the live keyboard height. Writing the
- * visualViewport value straight through (no easing, no follow loop, no
- * scroll corrections) keeps the toolbar glued to the keyboard top on iOS
- * with zero overshoot: every smoothed/interpolated variant lags the real
- * keyboard and then settles, which reads as "jumps higher, then lands".
+ * only thing it needs is `bottom` == the live keyboard height.
+ *
+ * Two things used to make the open glide visibly jump on iOS, both fixed here:
+ *
+ * 1. Stepwise events. visualViewport resize events are choppy (a handful of
+ *    steps for the whole slide) while `vv.height` itself is LIVE. Every real
+ *    event therefore arms a short per-frame follow loop that re-reads the
+ *    live geometry each frame — the sheet glides at 60fps instead of
+ *    stepping. Upward follow moves are gated exactly like events (see below):
+ *    a fresh fall with no user intent behind it is the mid-hide freeze, and
+ *    tracking its stale "open" geometry would snap the bar back up.
+ * 2. Safari toolbar drift. iOS hides its bottom toolbar as the keyboard rises,
+ *    growing `window.innerHeight` mid-animation — measuring against the live
+ *    value injects that growth as a one-frame jump. The inset is measured
+ *    against a baseline frozen while the keyboard is closed (refreshed on
+ *    every settled closed event), so it stays a pure function of the visual
+ *    viewport.
  *
  * Close is the one asymmetric case: iOS freezes visualViewport while the
  * keyboard slides away, so the last live value would stick until the
  * keyboard is gone and then teleport. The descent therefore starts on blur
  * (100ms delay, so quick refocuses and dialog inputs never start it) and
- * runs as a plain CSS transition (`kb-sheet-closing`, removed the moment
- * anything re-opens). Every viewport event meanwhile is arbitrated by focus
- * (see resolveSheetBottomAction): a stale WebKit "open" transient with focus
- * elsewhere is ignored instead of snapping the bar back up mid-glide.
+ * eases down through the same follower. Every viewport event meanwhile is
+ * arbitrated by focus (see resolveSheetBottomAction): a stale WebKit "open"
+ * transient with focus elsewhere is ignored instead of snapping the bar back
+ * up mid-glide.
  * A fast poll while an editable owns focus covers the hide-button case —
  * the keyboard gone, focus retained, viewport frozen: no focusout ever
- * fires, so without the poll the bar floats until the next tap.
+ * fires, so without the poll the bar floats until the next tick.
+ *
+ * Open has its own mirror race: the poll (or the first sparse event) can read
+ * the geometry BEFORE the keyboard commits — inset still ~0, focus already in
+ * the sheet — and that "closed" verdict starts the descent while the keyboard
+ * is rising. The next event then snaps the bar back up: the visible DOWN-UP
+ * jump. An opening grace covers it: for a short window after genuine user
+ * intent (focus/tap in the sheet) a "closed" read with focus held is treated
+ * as the animation's leading edge and tracked, never descended. The grace
+ * only applies while the keyboard was never seen open since the intent
+ * (`seenOpen`), so a genuine hide (hide button, gesture) still glides at once.
+ *
+ * Why easing instead of direct writes: visualViewport commits arrive in 2–3
+ * coarse steps, and writing them straight through IS the teleport ("no
+ * animation"). The follower eases the display toward each gated target every
+ * frame (fast up so it stays glued to the rising keys, deliberately lazier
+ * down so it settles under the departing keyboard instead of dropping
+ * through it), so even sparse commits read as one continuous glide.
  */
 function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>) {
   useEffect(() => {
@@ -107,16 +136,33 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
     const vv = window.visualViewport;
     if (!isTouch || !vv) return;
 
+    // Layout height while the keyboard is CLOSED — the ruler the inset is
+    // measured against (see the header comment). Refreshed whenever the
+    // geometry settles closed, so URL-bar show/hide drift never accumulates.
+    let baseHeight = window.innerHeight;
     let closing = false;
     let blurTimer: ReturnType<typeof setTimeout> | null = null;
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    // Per-frame eased follower while the geometry is moving (see ensureLoop).
+    // Decisions only ever set `targetBottom`; the loop eases
+    // `displayedBottom` toward it and is the ONLY writer of the sheet offset.
+    // followUntil keeps the loop alive across sparse event streams; the loop
+    // also runs until the display converges on the target.
+    let followRaf: number | null = null;
+    let followUntil = 0;
+    let targetBottom = 0;
+    let displayedBottom = 0;
+    let lastFrameAt = 0;
+    // Exponential-smoothing time constants: the rise tracks the keyboard
+    // tightly, the descent is deliberately lazier (settles under the
+    // departing keys instead of dropping through them).
+    const TAU_UP_MS = 70;
+    const TAU_DOWN_MS = 140;
     // iOS can hide the keyboard while focus stays in the field (notably for
     // contenteditable: the keyboard's own hide button keeps focus, unlike
     // native inputs which blur). No focusout fires; the frozen properties
     // unfreeze the moment the keyboard is gone. A fast poll while an editable
     // owns focus bounds the stuck window to one tick + the glide.
-    // vv.height is live, so re-reading is enough; each tick is arbitrated by
-    // focus like any other event.
     let focusPollInterval: ReturnType<typeof setInterval> | null = null;
 
     // Stale-transient wiring (see isStaleUpwardJump): pure timestamps, no
@@ -125,10 +171,33 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
     let lastEventAt = 0;
     let lastDownAt = 0;
     let lastIntentAt = 0;
+    // Opening-grace wiring (see the header comment): a "closed" read right
+    // after intent is the animation's leading edge, not a dismissal.
+    // openingUntil bounds the grace window; seenOpen arms it only until the
+    // keyboard is actually observed, so real closes glide immediately.
+    const OPENING_GRACE_MS = 1200;
+    let openingUntil = 0;
+    let seenOpen = false;
+    const markIntent = () => {
+      const now = Date.now();
+      lastIntentAt = now;
+      openingUntil = now + OPENING_GRACE_MS;
+      // A re-tap resummons the keyboard from zero: until it is observed the
+      // grace treats "closed" as the leading edge again. Harmless while open
+      // (readings are open → track → seenOpen flips back on the next read).
+      seenOpen = false;
+    };
 
-    const setBottom = (px: number) => {
+    // The ONLY writer of the sheet offset. Decisions set the target; the loop
+    // eases the display (see ensureLoop).
+    const writeBottom = (px: number) => {
       const next = `${Math.max(0, Math.round(px))}px`;
       if (panel.style.bottom !== next) panel.style.bottom = next;
+      // The keyboard covers the home indicator: keep the safe-area pad only
+      // while actually lifted, otherwise it reads as a gap floating the bar
+      // above the keyboard (see .kb-sheet-bar in index.css).
+      if (px > 2) panel.style.setProperty("--kb-safe", "0px");
+      else panel.style.removeProperty("--kb-safe");
     };
     // Focus still holds the keyboard open (an editable anywhere — the sheet
     // editor, the title input, or a dialog input portaled outside the panel).
@@ -144,13 +213,40 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
         isEditableElement(active)
       );
     };
+    // NOTE: the ruler is the frozen baseline, never the live innerHeight.
     const readLive = () =>
       computeKeyboardMetrics({
-        innerHeight: window.innerHeight,
+        innerHeight: baseHeight,
         visualViewportHeight: vv.height,
         visualViewportOffsetTop: vv.offsetTop,
         isTouch: true,
       });
+    // The single motion loop: ease the display toward the gated target every
+    // frame — fast up so it stays glued to the rising keys, deliberately
+    // lazier down so it settles under the departing keyboard instead of
+    // dropping through it. Converges and stops by itself; `ms` keeps it
+    // alive across sparse event streams.
+    const ensureLoop = (ms = 700) => {
+      followUntil = Math.max(followUntil, Date.now() + ms);
+      if (lastFrameAt === 0) lastFrameAt = Date.now();
+      if (followRaf !== null) return;
+      const step = () => {
+        followRaf = null;
+        const now = Date.now();
+        const dt = Math.min(64, Math.max(1, now - lastFrameAt));
+        lastFrameAt = now;
+        const tau = targetBottom > displayedBottom ? TAU_UP_MS : TAU_DOWN_MS;
+        displayedBottom += (targetBottom - displayedBottom) * (1 - Math.exp(-dt / tau));
+        if (Math.abs(targetBottom - displayedBottom) < 0.5) displayedBottom = targetBottom;
+        writeBottom(displayedBottom);
+        if (displayedBottom !== targetBottom || now < followUntil) {
+          followRaf = requestAnimationFrame(step);
+        } else {
+          lastFrameAt = 0;
+        }
+      };
+      followRaf = requestAnimationFrame(step);
+    };
     const cancelClosing = () => {
       closing = false;
       if (blurTimer) {
@@ -161,49 +257,63 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
         clearTimeout(settleTimer);
         settleTimer = null;
       }
-      panel.classList.remove("kb-sheet-closing");
     };
     const beginClosing = () => {
-      if (closing) return;
+      if (closing && targetBottom === 0) return;
       closing = true;
-      panel.classList.add("kb-sheet-closing");
-      setBottom(0);
+      // The descent goes through the same eased follower (target 0): no CSS
+      // transition, so event steps and the loop never fight each other.
+      targetBottom = 0;
+      ensureLoop(500);
       if (settleTimer) clearTimeout(settleTimer);
-      // Safety net: if the close resize never lands (old WebKit), the
-      // transition already put us at 0 — just drop the class.
-      settleTimer = setTimeout(cancelClosing, 350);
+      // Safety net: never stay "closing" forever (stalled rAF, old WebKit).
+      settleTimer = setTimeout(cancelClosing, 800);
     };
-    const appliedBottom = () => {
-      const raw = Number.parseFloat(panel.style.bottom);
-      return Number.isFinite(raw) ? raw : 0;
-    };
-    // Viewport event with no fresh user intent: honour it only when it agrees
-    // with focus (see resolveSheetBottomAction). Any resync toward zero goes
-    // through the glide — an instant snap after a frozen-viewport window is
-    // exactly the visible jump (the keyboard is long gone, but the bar
+    // One live read (event or poll tick), arbitrated by focus (see
+    // resolveSheetBottomAction). Decisions only ever set `targetBottom` — the
+    // eased loop (see ensureLoop) moves the display. Any resync toward zero
+    // goes through the ease — an instant snap after a frozen-viewport window
+    // is exactly the visible jump (the keyboard is long gone, but the bar
     // teleporting reads as a glitch; gliding reads as settling).
-    const onViewportEvent = (fromPoll = false) => {
+    const applyLive = () => {
       const now = Date.now();
-      // Only real viewport/window events reset the silence clock: poll ticks
-      // re-read the same frozen geometry and must not disguise the freeze
-      // gap that identifies the stale transient.
+      // Only real viewport/window events reset the silence clock: the loop
+      // only eases toward the gated target and never re-reads geometry, so
+      // it cannot disguise the freeze gap that identifies the stale transient.
       const msSinceLastEvent = lastEventAt === 0 ? 0 : now - lastEventAt;
-      if (!fromPoll) lastEventAt = now;
       const m = readLive();
+      const focused = focusedInSheet();
       const action = resolveSheetBottomAction({
         viewportOpen: m.isOpen,
         closing,
-        focusedInSheet: focusedInSheet(),
+        focusedInSheet: focused,
       });
+      // Opening grace (see the header comment): a "closed" read right after
+      // intent with focus held is the animation's leading edge — track the
+      // live value instead of descending and snapping back up. Only while
+      // the keyboard was never observed since the intent, so a real hide
+      // (hide button, gesture) still glides at once.
+      if (
+        !seenOpen &&
+        focused &&
+        now < openingUntil &&
+        (action === "begin-close" || action === "settle-zero")
+      ) {
+        cancelClosing();
+        targetBottom = m.keyboardInset;
+        if (m.keyboardInset > 8) seenOpen = true;
+        ensureLoop();
+        return;
+      }
       if (action === "track") {
         // Mid-hide stale transient: the bar was falling live, iOS went
-        // silent, and this event says "open" again with no user intent behind
+        // silent, and this read says "open" again with no user intent behind
         // it — honouring it snaps the bar back up (down, UP, down-glide).
         // Dense genuine movement (including keyboard-type switches) and any
         // tap/focus intent pass straight through.
         if (
           isStaleUpwardJump({
-            appliedBottom: appliedBottom(),
+            appliedBottom: displayedBottom,
             liveInset: m.keyboardInset,
             msSinceLastEvent,
             msSinceFallStart: lastDownAt === 0 ? Number.POSITIVE_INFINITY : now - lastDownAt,
@@ -213,27 +323,38 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
           return;
         }
         cancelClosing();
-        if (m.keyboardInset < appliedBottom() - 8) lastDownAt = now;
-        setBottom(m.keyboardInset);
+        if (m.keyboardInset > 8) seenOpen = true;
+        if (m.keyboardInset < displayedBottom - 8) lastDownAt = now;
+        targetBottom = m.keyboardInset;
+        ensureLoop();
       } else if (action === "begin-close") {
         beginClosing();
       } else if (action === "settle-zero") {
-        if (panel.style.bottom !== "0px") beginClosing();
+        // Settled closed — refresh the baseline (URL-bar drift).
+        baseHeight = window.innerHeight;
+        if (targetBottom !== 0 || displayedBottom > 0.5) beginClosing();
       }
-      // "ignore": the close-glide transition owns `bottom`.
+      // "ignore": the eased descent owns `bottom`.
     };
     const onFocusIn = (event: FocusEvent) => {
       const target = event.target;
       if (!(target instanceof HTMLElement) || !panel.contains(target)) return;
       if (!isEditableElement(target)) return;
-      // Genuine user intent: drop any in-flight glide. Tracking resumes via
-      // the viewport stream; the poll below catches a silent iOS open/close
-      // that fires no viewport event at all.
-      lastIntentAt = Date.now();
+      // Genuine user intent: drop any in-flight descent. The loop below eases
+      // the rise from the first frame and the poll catches a silent iOS
+      // open/close that fires no viewport event at all.
+      baseHeight = window.innerHeight;
+      markIntent();
       cancelClosing();
+      ensureLoop();
       if (focusPollInterval === null) {
         focusPollInterval = setInterval(() => {
-          if (focusedInSheet()) onViewportEvent(true);
+          if (!focusedInSheet()) return;
+          const before = targetBottom;
+          applyLive();
+          // A silent hide (keyboard button, focus retained) moves the target —
+          // keep easing toward it instead of teleporting on the next event.
+          if (targetBottom !== before) ensureLoop();
         }, 150);
       }
     };
@@ -251,35 +372,53 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
     // must never be mistaken for the free-floating stale transient.
     const onTouchStart = (event: TouchEvent) => {
       if (event.target instanceof HTMLElement && panel.contains(event.target)) {
-        lastIntentAt = Date.now();
+        markIntent();
+        ensureLoop();
       }
     };
 
-    const onRealEvent = () => onViewportEvent(false);
+    const onRealEvent = () => {
+      lastEventAt = Date.now();
+      applyLive();
+      ensureLoop();
+    };
+    const onOrientationChange = () => {
+      // A rotation rebuilds every height: re-baseline and re-read.
+      baseHeight = window.innerHeight;
+      lastEventAt = Date.now();
+      applyLive();
+      ensureLoop();
+    };
 
     vv.addEventListener("resize", onRealEvent);
     vv.addEventListener("scroll", onRealEvent);
     window.addEventListener("resize", onRealEvent);
-    window.addEventListener("orientationchange", onRealEvent);
+    window.addEventListener("orientationchange", onOrientationChange);
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     document.addEventListener("touchstart", onTouchStart, { passive: true });
-    onViewportEvent(false);
+    lastEventAt = Date.now();
+    applyLive();
 
     return () => {
       vv.removeEventListener("resize", onRealEvent);
       vv.removeEventListener("scroll", onRealEvent);
       window.removeEventListener("resize", onRealEvent);
-      window.removeEventListener("orientationchange", onRealEvent);
+      window.removeEventListener("orientationchange", onOrientationChange);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
       document.removeEventListener("touchstart", onTouchStart);
+      if (followRaf !== null) {
+        cancelAnimationFrame(followRaf);
+        followRaf = null;
+      }
       if (focusPollInterval !== null) {
         clearInterval(focusPollInterval);
         focusPollInterval = null;
       }
       cancelClosing();
       panel.style.bottom = "";
+      panel.style.removeProperty("--kb-safe");
     };
   }, [panelRef]);
 }
@@ -409,6 +548,32 @@ export const RichComposer = ({
   const [isDesktop] = useState(
     () => typeof window !== "undefined" && window.matchMedia?.("(min-width: 768px)").matches,
   );
+  // Decided once, same as isDesktop above.
+  const [isTouchDevice] = useState(
+    () => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches,
+  );
+  // Live tiptap instance for the formatting toolbar, captured after commit
+  // (rAF poll: tiptap creates the instance in its own effect). The toolbar is
+  // rendered OUTSIDE the editor's scroll container (a fixed row above it): a
+  // `sticky` bar inside the keyboard-resized scroller re-lays on every
+  // visualViewport frame on iOS and visibly jumps. Out here it is painted
+  // once and never moves — same pattern as MessageComposer's toolbar.
+  const [toolbarEditor, setToolbarEditor] = useState<ReturnType<GomoRichEditorHandle["getEditor"]>>(null);
+  useLayoutEffect(() => {
+    let raf = 0;
+    let attempts = 0;
+    const poll = () => {
+      attempts += 1;
+      const instance = editorRef.current?.getEditor() ?? null;
+      if (instance || attempts > 120) {
+        if (instance) setToolbarEditor((prev) => (prev === instance ? prev : instance));
+        return;
+      }
+      raf = requestAnimationFrame(poll);
+    };
+    raf = requestAnimationFrame(poll);
+    return () => cancelAnimationFrame(raf);
+  }, []);
   const dragControls = useDragControls();
   const closeFinishedRef = useRef(false);
   const releaseVelocityRef = useRef(0);
@@ -426,9 +591,18 @@ export const RichComposer = ({
       sheetY.set(0);
       return;
     }
+    // Touch: glide up with an ease instead of the composer spring. The spring
+    // overshoots (~10% of a full-height travel) and the keyboard usually rises
+    // in the same moment (autofocused title) — the overshoot then reads as the
+    // sheet jumping on open. The ease lands exactly and never fights the
+    // keyboard ride (see useSheetKeyboardInset).
+    if (isTouchDevice) {
+      const controls = animate(sheetY, 0, { duration: 0.28, ease: EASE_OUT_EXPO });
+      return () => controls.stop();
+    }
     const controls = animate(sheetY, 0, springFor("composer", reduceMotion));
     return () => controls.stop();
-  }, [reduceMotion, sheetY]);
+  }, [isTouchDevice, reduceMotion, sheetY]);
 
   // Lock the page scroll while the sheet is up: the feed/board/wall
   // underneath must not move. Same recipe as CreateWallPost — html+body
@@ -1019,6 +1193,17 @@ export const RichComposer = ({
         {/* Extra fields (title, topic placement…) */}
         {children}
 
+        {/* Formatting toolbar — a fixed row ABOVE the editor scroller, never
+            inside it: `sticky` inside the keyboard-resized scroller re-lays
+            on every visualViewport frame on iOS and the bar visibly jumps.
+            Out here it is painted once and never moves. Swipes starting here
+            must neither dismiss the keyboard nor scroll the page behind. */}
+        {toolbarEditor && (
+          <div data-kb-locked className="shrink-0 px-3 pt-1">
+            <Toolbar editor={toolbarEditor} />
+          </div>
+        )}
+
         {/* Editor — media blocks are edited in place */}
         <div
           className="min-h-0 flex-1 overflow-y-auto px-4 pb-2"
@@ -1049,6 +1234,7 @@ export const RichComposer = ({
               <GomoRichEditor
                 ref={editorRef}
                 resetKey={editorResetKey}
+                showToolbar={false}
                 maxLength={maxLength}
                 contentJson={contentJson}
                 legacyContent={initialLegacyContent ?? ""}
@@ -1072,7 +1258,7 @@ export const RichComposer = ({
         <div data-kb-locked className="contents">
         <InkBar
           blobClassName="h-9 w-9"
-          className="flex shrink-0 items-center gap-0.5 border-t border-border/60 pl-2 pr-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom,0px))] md:pb-1.5 md:pr-7"
+          className="kb-sheet-bar flex shrink-0 items-center gap-0.5 border-t border-border/60 pl-2 pr-2 pt-1.5 pb-1.5 md:pr-7"
         >
           <InkButton
             title="Добавить медиа"

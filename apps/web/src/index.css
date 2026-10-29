@@ -424,18 +424,19 @@ html.kb-open body {
   }
 }
 
-/* Composer sheet ([data-kb-sheet], see RichComposer): `bottom` is written
-   inline per visualViewport event — exact tracking, deliberately WITHOUT a
-   transition while the keyboard moves. The ease applies only while closing
-   (`kb-sheet-closing`), when iOS freezes visualViewport until the keyboard
-   is gone and a live value would teleport at the end. */
-[data-kb-sheet].kb-sheet-closing {
-  transition: bottom 0.28s ease-out;
-}
+/* Composer sheet ([data-kb-sheet], see RichComposer): `bottom` is eased toward
+   the live keyboard height by the sheet's own rAF loop — deliberately WITHOUT
+   a CSS transition, so event steps and the loop never fight each other. */
 
-@media (prefers-reduced-motion: reduce) {
-  [data-kb-sheet].kb-sheet-closing {
-    transition: none;
+/* Bottom action bar of the composer sheet: the safe-area pad applies only
+   while the keyboard is closed. The sheet hook sets --kb-safe: 0px on the
+   panel while it rides the keyboard — the keyboard already covers the home
+   indicator, so env(safe-area-inset-bottom) would read as a gap floating the
+   bar above the keyboard. Scoped to touch: desktop keeps the Tailwind padding
+   (unlayered author CSS beats layered utilities, hence the scoping). */
+@media (pointer: coarse) {
+  [data-kb-sheet] .kb-sheet-bar {
+    padding-bottom: max(0.375rem, var(--kb-safe, env(safe-area-inset-bottom, 0px)));
   }
 }
 
