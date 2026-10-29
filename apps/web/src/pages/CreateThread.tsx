@@ -227,7 +227,7 @@ const CreateThread = () => {
         bucket="content"
         testId="topic-composer"
         headerLabel={placementPill}
-        placeholder="Текст темы…"
+        placeholder="Текст записи…"
         escapeDisabled={pickerOpen}
         initialContentJson={restored?.contentJson ?? contentJson}
         publishDisabled={!section || (!title.trim() && !hasMedia)}

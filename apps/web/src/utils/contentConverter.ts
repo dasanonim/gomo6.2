@@ -1,8 +1,13 @@
 import { normalizeMediaNodesInDoc } from "@/components/editor/media/mediaSchema";
 
 export const EMPTY_EDITOR_STATE = {
+  // NOTE: no zero-width-space filler. A ZWSP text node makes tiptap treat
+  // the doc as non-empty, which silently disables the Placeholder
+  // extension (no `is-empty` decoration, no hint). A bare paragraph renders
+  // a caret line via the trailing break and every emptiness check already
+  // treats both shapes as empty.
   type: "doc" as const,
-  content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "\u200b" }] }],
+  content: [{ type: "paragraph" as const }],
 };
 
 interface ProsemirrorNode {

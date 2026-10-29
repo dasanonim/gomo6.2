@@ -351,6 +351,18 @@ html {
     color: oklch(var(--muted-foreground));
     pointer-events: none;
   }
+
+  /* tiptap placeholders: the Placeholder extension marks the empty block
+     with .is-empty + data-placeholder (a bare [contenteditable]:empty can
+     never match — ProseMirror always renders at least one <p>). Scoped to
+     the editor so stored-content renderers are untouched. */
+  .tiptap p.is-empty::before {
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    color: oklch(var(--muted-foreground));
+    pointer-events: none;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
