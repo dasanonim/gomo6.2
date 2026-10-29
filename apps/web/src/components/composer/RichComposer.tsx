@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { animate, motion, useDragControls, useMotionValue, useReducedMotion } from "motion/react";
+import { animate, motion, useDragControls, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import { EASE_OUT_EXPO, springFor } from "@/lib/motion";
 import { computeKeyboardMetrics, isEditableElement, isStaleUpwardJump, resolveSheetBottomAction } from "@/lib/mobileKeyboard";
 import { apiClient } from "@/integrations/api/client";
@@ -604,6 +604,14 @@ export const RichComposer = ({
     return () => controls.stop();
   }, [isTouchDevice, reduceMotion, sheetY]);
 
+  // The dim and the solid pad dissolve as the sheet travels down, so pulling
+  // the sheet by its top handle peeks at the content underneath instead of a
+  // blackout. Keyboard ride moves `bottom`, not `sheetY`, so typing never
+  // touches the dim. Same travel as the exit target below.
+  const dismissDistance = typeof window !== "undefined" ? window.innerHeight + 32 : 932;
+  const dimOpacity = useTransform(sheetY, [0, dismissDistance], [0.45, 0]);
+  const padOpacity = useTransform(sheetY, [0, dismissDistance * 0.6], [1, 0]);
+
   // Lock the page scroll while the sheet is up: the feed/board/wall
   // underneath must not move. Same recipe as CreateWallPost — html+body
   // overflow (html must be locked too: its overflow-x:hidden stops the
@@ -1070,13 +1078,13 @@ export const RichComposer = ({
         fullscreen ? "" : "md:flex md:items-center md:justify-center"
       }`}
     >
-      {/* The dimming is its own layer: the panel must never fade with it. */}
+      {/* The dimming is its own layer: the panel must never fade with it.
+          Opacity follows the sheet position — pulling the sheet down
+          dissolves the dim so the content underneath shows through. */}
       <motion.div
         aria-hidden="true"
         className="absolute inset-0 bg-black/45 md:backdrop-blur-lg"
-        initial={reduceMotion ? false : { opacity: 0 }}
-        animate={reduceMotion ? undefined : { opacity: closing ? 0 : 1 }}
-        transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE_OUT_EXPO }}
+        style={{ opacity: dimOpacity }}
       />
       {/* Solid pad under the sheet (mobile only): the panel must always sit
           on a filled background — while the keyboard lifts it, while the
@@ -1084,10 +1092,13 @@ export const RichComposer = ({
           Without this the page shows through under a lifted sheet (via the
           45% dim) and every late resync reads as a transparency glitch.
           It sits above the dim and behind the panel, so the visible area is
-          pure bg-background — seamless with the opaque panel. */}
-      <div
+          pure bg-background — seamless with the opaque panel. Like the dim,
+          it dissolves as the sheet is pulled down, so dragging peeks at the
+          real content instead of a solid fill. */}
+      <motion.div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 bg-background md:hidden"
+        style={{ opacity: padOpacity }}
       />
       <motion.div
         ref={composerRootRef}
