@@ -424,6 +424,21 @@ html.kb-open body {
   }
 }
 
+/* Composer sheet ([data-kb-sheet], see RichComposer): `bottom` is written
+   inline per visualViewport event — exact tracking, deliberately WITHOUT a
+   transition while the keyboard moves. The ease applies only while closing
+   (`kb-sheet-closing`), when iOS freezes visualViewport until the keyboard
+   is gone and a live value would teleport at the end. */
+[data-kb-sheet].kb-sheet-closing {
+  transition: bottom 0.28s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-kb-sheet].kb-sheet-closing {
+    transition: none;
+  }
+}
+
 /* ── Wall comment composer: pinned above the keyboard on mobile ─────────────
 
    In the comment list the composer is `sticky` (it floats at the end of the

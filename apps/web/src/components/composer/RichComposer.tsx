@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { animate, motion, useDragControls, useMotionValue, useReducedMotion } from "motion/react";
 import { EASE_OUT_EXPO, springFor } from "@/lib/motion";
+import { computeKeyboardMetrics, isEditableElement } from "@/lib/mobileKeyboard";
 import { apiClient } from "@/integrations/api/client";
 import { Popover, PopoverPanel } from "@/components/ui/popover";
 import { InkBar, InkButton, glassGhostButtonClass } from "@/components/ui/ink-bar";
@@ -72,6 +73,124 @@ import {
 /** The sheet is flicked away rather than slid: closing from the X or Escape
     should feel like the same downward swipe that dismisses it. */
 const DISMISS_VELOCITY = 1000;
+
+/**
+ * Keyboard ride for the composer sheet.
+ *
+ * Why a dedicated writer instead of the global `--kb-inset`: the sheet is a
+ * fixed overlay with its own scroller and a locked page behind it, so the
+ * only thing it needs is `bottom` == the live keyboard height. Writing the
+ * visualViewport value straight through (no easing, no follow loop, no
+ * scroll corrections) keeps the toolbar glued to the keyboard top on iOS
+ * with zero overshoot: every smoothed/interpolated variant lags the real
+ * keyboard and then settles, which reads as "jumps higher, then lands".
+ *
+ * Close is the one asymmetric case: iOS freezes visualViewport while the
+ * keyboard slides away, so the last live value would stick until the
+ * keyboard is gone and then teleport. `kb-sheet-closing` arms a plain CSS
+ * transition on `bottom` (removed the moment anything re-opens), and the
+ * 60ms blur delay keeps field-to-field transfers (title ↔ editor) from
+ * flashing a descent.
+ */
+function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (typeof window === "undefined" || !panel) return;
+    const isTouch =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: coarse)").matches;
+    const vv = window.visualViewport;
+    if (!isTouch || !vv) return;
+
+    let closing = false;
+    let blurTimer: ReturnType<typeof setTimeout> | null = null;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const setBottom = (px: number) => {
+      panel.style.bottom = `${Math.max(0, Math.round(px))}px`;
+    };
+    const cancelClosing = () => {
+      closing = false;
+      if (blurTimer) {
+        clearTimeout(blurTimer);
+        blurTimer = null;
+      }
+      if (settleTimer) {
+        clearTimeout(settleTimer);
+        settleTimer = null;
+      }
+      panel.classList.remove("kb-sheet-closing");
+    };
+    const syncLive = () => {
+      const m = computeKeyboardMetrics({
+        innerHeight: window.innerHeight,
+        visualViewportHeight: vv.height,
+        visualViewportOffsetTop: vv.offsetTop,
+        isTouch: true,
+      });
+      if (m.isOpen) {
+        // Live keyboard movement (open or re-open): exact tracking, the
+        // transition must be off or the toolbar trails the keyboard.
+        cancelClosing();
+        setBottom(m.keyboardInset);
+      } else if (!closing) {
+        setBottom(0);
+      }
+      // While closing the CSS transition owns `bottom`: the frozen viewport
+      // would otherwise pin it at the stale open value mid-slide.
+    };
+    const beginClosing = () => {
+      if (closing) return;
+      closing = true;
+      panel.classList.add("kb-sheet-closing");
+      setBottom(0);
+      if (settleTimer) clearTimeout(settleTimer);
+      // Safety net: if the close resize never lands (old WebKit), the
+      // transition already put us at 0 — just drop the class.
+      settleTimer = setTimeout(cancelClosing, 350);
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !panel.contains(target)) return;
+      if (!isEditableElement(target)) return;
+      syncLive();
+    };
+    const onFocusOut = () => {
+      if (blurTimer) clearTimeout(blurTimer);
+      blurTimer = setTimeout(() => {
+        blurTimer = null;
+        const active = document.activeElement;
+        if (
+          active instanceof HTMLElement &&
+          panel.contains(active) &&
+          isEditableElement(active)
+        ) {
+          return;
+        }
+        beginClosing();
+      }, 60);
+    };
+
+    vv.addEventListener("resize", syncLive);
+    vv.addEventListener("scroll", syncLive);
+    window.addEventListener("resize", syncLive);
+    window.addEventListener("orientationchange", syncLive);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    syncLive();
+
+    return () => {
+      vv.removeEventListener("resize", syncLive);
+      vv.removeEventListener("scroll", syncLive);
+      window.removeEventListener("resize", syncLive);
+      window.removeEventListener("orientationchange", syncLive);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+      cancelClosing();
+      panel.style.bottom = "";
+    };
+  }, [panelRef]);
+}
 
 export interface RichComposerPayload {
   /** Final ProseMirror document (upload placeholders stripped, cover attached). */
@@ -201,6 +320,9 @@ export const RichComposer = ({
   const dragControls = useDragControls();
   const closeFinishedRef = useRef(false);
   const releaseVelocityRef = useRef(0);
+  // Keyboard ride: the sheet's `bottom` tracks the live visual-viewport
+  // keyboard height (exact, no easing on open); see useSheetKeyboardInset.
+  useSheetKeyboardInset(composerRootRef);
   // The sheet's actual position: entrance, drag and exit all move this one
   // value, so a flick keeps its velocity into the closing spring.
   const sheetY = useMotionValue(
@@ -687,6 +809,7 @@ export const RichComposer = ({
         role="dialog"
         aria-modal="true"
         data-testid={testId}
+        data-kb-sheet
         initial={reduceMotion ? false : isDesktop ? { scale: 0.9 } : { scale: 1 }}
         animate={
           reduceMotion
@@ -737,7 +860,7 @@ export const RichComposer = ({
         }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleRootDrop}
-        className={`group/panel fixed inset-x-0 bottom-[var(--kb-inset,0px)] top-[max(1.4rem,env(safe-area-inset-top,0px))] flex w-full flex-col overflow-hidden rounded-t-2xl border-t border-border/60 bg-background md:relative md:top-0 md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
+        className={`group/panel fixed inset-x-0 bottom-0 top-[max(1.4rem,env(safe-area-inset-top,0px))] flex w-full flex-col overflow-hidden rounded-t-2xl border-t border-border/60 bg-background md:relative md:top-0 md:border md:border-border/60 md:bg-card/85 md:shadow-2xl md:backdrop-blur-2xl ${
           fullscreen
             ? "md:h-[100dvh] md:max-h-none md:max-w-none md:rounded-none"
             : "md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-2xl"

@@ -8,6 +8,7 @@ import {
   initMobileKeyboard,
   isBeyondTouchSlop,
   isEditableElement,
+  isInKeyboardSheet,
   isIOSDevice,
   isLockedGestureTarget,
   isStickyGestureTarget,
@@ -213,6 +214,30 @@ describe("isStickyGestureTarget", () => {
     keep.appendChild(bubble);
     document.body.appendChild(keep);
     expect(isStickyGestureTarget(bubble)).toBe(true);
+  });
+});
+
+describe("isInKeyboardSheet", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("returns false for null / ordinary elements", () => {
+    expect(isInKeyboardSheet(null)).toBe(false);
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    expect(isInKeyboardSheet(el)).toBe(false);
+  });
+
+  it("returns true for the sheet and its descendants (editor, title input)", () => {
+    const sheet = document.createElement("div");
+    sheet.setAttribute("data-kb-sheet", "true");
+    const editor = document.createElement("div");
+    editor.setAttribute("contenteditable", "true");
+    sheet.appendChild(editor);
+    document.body.appendChild(sheet);
+    expect(isInKeyboardSheet(sheet)).toBe(true);
+    expect(isInKeyboardSheet(editor)).toBe(true);
   });
 });
 
