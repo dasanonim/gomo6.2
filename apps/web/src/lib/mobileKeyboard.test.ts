@@ -8,9 +8,12 @@ import {
   initMobileKeyboard,
   isBeyondTouchSlop,
   isEditableElement,
+  isInKeyboardSheet,
   isIOSDevice,
   isLockedGestureTarget,
+  isStaleUpwardJump,
   isStickyGestureTarget,
+  resolveSheetBottomAction,
 } from "./mobileKeyboard";
 
 describe("isIOSDevice", () => {
@@ -213,6 +216,95 @@ describe("isStickyGestureTarget", () => {
     keep.appendChild(bubble);
     document.body.appendChild(keep);
     expect(isStickyGestureTarget(bubble)).toBe(true);
+  });
+});
+
+describe("isInKeyboardSheet", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("returns false for null / ordinary elements", () => {
+    expect(isInKeyboardSheet(null)).toBe(false);
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    expect(isInKeyboardSheet(el)).toBe(false);
+  });
+
+  it("returns true for the sheet and its descendants (editor, title input)", () => {
+    const sheet = document.createElement("div");
+    sheet.setAttribute("data-kb-sheet", "true");
+    const editor = document.createElement("div");
+    editor.setAttribute("contenteditable", "true");
+    sheet.appendChild(editor);
+    document.body.appendChild(sheet);
+    expect(isInKeyboardSheet(sheet)).toBe(true);
+    expect(isInKeyboardSheet(editor)).toBe(true);
+  });
+});
+
+describe("resolveSheetBottomAction", () => {
+  it("tracks live opens and genuine re-opens with focus inside", () => {
+    expect(resolveSheetBottomAction({ viewportOpen: true, closing: false, focusedInSheet: false })).toBe("track");
+    expect(resolveSheetBottomAction({ viewportOpen: true, closing: false, focusedInSheet: true })).toBe("track");
+    // Keyboard coming back while the user is back in the sheet: genuine.
+    expect(resolveSheetBottomAction({ viewportOpen: true, closing: true, focusedInSheet: true })).toBe("track");
+  });
+
+  it("ignores the stale WebKit open transient mid-glide (the down-up-down)", () => {
+    // Close-glide running, focus already elsewhere: the "open" is stale.
+    expect(resolveSheetBottomAction({ viewportOpen: true, closing: true, focusedInSheet: false })).toBe("ignore");
+  });
+
+  it("never fights an active close-glide with a closed report", () => {
+    expect(resolveSheetBottomAction({ viewportOpen: false, closing: true, focusedInSheet: true })).toBe("ignore");
+    expect(resolveSheetBottomAction({ viewportOpen: false, closing: true, focusedInSheet: false })).toBe("ignore");
+  });
+
+  it("settles at zero when idle, glides when focus kept the keyboard", () => {
+    // iOS hide-button keeps focus in the editor while the keyboard is gone.
+    expect(resolveSheetBottomAction({ viewportOpen: false, closing: false, focusedInSheet: true })).toBe("begin-close");
+    expect(resolveSheetBottomAction({ viewportOpen: false, closing: false, focusedInSheet: false })).toBe("settle-zero");
+  });
+});
+
+describe("isStaleUpwardJump", () => {
+  it("honours genuine rises: no fall, fresh intent, or dense stream", () => {
+    // Plain open, no preceding fall.
+    expect(isStaleUpwardJump({
+      appliedBottom: 0, liveInset: 300,
+      msSinceLastEvent: 500, msSinceFallStart: Number.POSITIVE_INFINITY, intentAfterFallStart: false,
+    })).toBe(false);
+    // Re-tap resummon: user intent after the fall started.
+    expect(isStaleUpwardJump({
+      appliedBottom: 530, liveInset: 640,
+      msSinceLastEvent: 500, msSinceFallStart: 200, intentAfterFallStart: true,
+    })).toBe(false);
+    // Keyboard-type switch: dense event stream, no freeze gap.
+    expect(isStaleUpwardJump({
+      appliedBottom: 150, liveInset: 300,
+      msSinceLastEvent: 16, msSinceFallStart: 100, intentAfterFallStart: false,
+    })).toBe(false);
+    // Not an upward move at all.
+    expect(isStaleUpwardJump({
+      appliedBottom: 300, liveInset: 300,
+      msSinceLastEvent: 500, msSinceFallStart: 100, intentAfterFallStart: false,
+    })).toBe(false);
+  });
+
+  it("ignores the mid-hide stale transient (down, UP, down-glide)", () => {
+    // Falling live, then silence, then "open" again with no intent.
+    expect(isStaleUpwardJump({
+      appliedBottom: 530, liveInset: 640,
+      msSinceLastEvent: 300, msSinceFallStart: 200, intentAfterFallStart: false,
+    })).toBe(true);
+  });
+
+  it("honours upward moves once the fall is old", () => {
+    expect(isStaleUpwardJump({
+      appliedBottom: 530, liveInset: 640,
+      msSinceLastEvent: 500, msSinceFallStart: 5000, intentAfterFallStart: false,
+    })).toBe(false);
   });
 });
 

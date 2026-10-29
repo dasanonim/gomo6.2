@@ -21,7 +21,6 @@ import { useDateLocale } from "@/i18n/dateLocale";
 import { safeDate } from "@/utils/safeDate";
 import { processProfileBio } from "@/utils/profileBio";
 import { UserBadge } from "@/components/UserBadge";
-import { AdminBadge } from "@/components/AdminBadge";
 import { getProfileCustomization, parseCssToStyle } from "@/utils/profileCustomization";
 
 // Ключ 'post_count' сохранён для обратной совместимости с сохранёнными
@@ -302,7 +301,6 @@ const Placeholders = () => {
                       isAnonymous={false}
                       disableLink={true}
                     />
-                    <AdminBadge userId={user.id} />
                   </div>
                   {renderPlaceholders()}
                 </div>

@@ -16,12 +16,13 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/integrations/api/compat";
 import { invalidateByPrefix } from "@/integrations/api/queryCache";
 import { toast } from "sonner";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import type { AttachmentMeta } from "@/utils/mediaUpload";
 import { RichComposer, type RichComposerPayload } from "@/components/composer/RichComposer";
 import { SectionPicker } from "@/components/topic/SectionPicker";
 import { SectionIcon } from "@/components/topic/sectionIcons";
 import { useThreadSections, type ThreadSection, type ThreadSubsection } from "@/hooks/useThreadSections";
+import { countMediaNodes } from "@/components/editor/media/mediaSchema";
 import { Input } from "@/components/ui/input";
 import { entityParam } from "@/utils/entityUrl";
 
@@ -48,6 +49,7 @@ const CreateThread = () => {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [contentJson, setContentJson] = useState<unknown>(null);
+  const [hasMedia, setHasMedia] = useState(false);
   const [restored, setRestored] = useState<TopicDraft | null>(null);
 
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -78,6 +80,7 @@ const CreateThread = () => {
       if (draft?.title || draft?.contentJson) {
         setTitle(draft.title || "");
         setContentJson(draft.contentJson ?? null);
+        setHasMedia(countMediaNodes(draft.contentJson) > 0);
         setRestored({ title: draft.title || "", contentJson: draft.contentJson ?? null, attachments: [] });
       }
     } catch {
@@ -113,10 +116,10 @@ const CreateThread = () => {
       type="button"
       onClick={() => setPickerOpen(true)}
       title={section ? "Сменить раздел" : "Выбрать раздел"}
-      className={`inline-flex max-w-full items-center justify-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+      className={`inline-flex max-w-full items-center justify-center gap-1.5 rounded-full border transition-all ${
         section
-          ? "border-border/60 bg-foreground/[0.04] hover:bg-foreground/[0.08]"
-          : "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+          ? "border-border/60 bg-foreground/[0.04] px-3 py-1 text-xs font-semibold hover:bg-foreground/[0.08]"
+          : "border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary hover:bg-primary/15 active:scale-[0.98]"
       }`}
     >
       {section ? (
@@ -126,10 +129,7 @@ const CreateThread = () => {
           <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
         </>
       ) : (
-        <>
-          <Plus className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">Выбрать раздел</span>
-        </>
+        <span className="truncate">Выбрать раздел</span>
       )}
     </button>
   );
@@ -151,11 +151,12 @@ const CreateThread = () => {
         toast.error("Выберите раздел");
         return;
       }
-      if (!title.trim()) {
-        toast.error("Введите заголовок темы");
+      if (!title.trim() && attachments.length === 0) {
+        toast.error("Введите заголовок или прикрепите фото");
         return;
       }
-      // The body may be media-only — only the title is mandatory.
+      // The body may be media-only — a bare photo posts needs neither
+      // title nor text.
       if (!text.trim() && attachments.length === 0) {
         toast.error("Добавьте текст или медиафайл");
         return;
@@ -226,11 +227,14 @@ const CreateThread = () => {
         bucket="content"
         testId="topic-composer"
         headerLabel={placementPill}
-        placeholder="Текст темы…"
+        placeholder="Текст записи…"
         escapeDisabled={pickerOpen}
         initialContentJson={restored?.contentJson ?? contentJson}
-        publishDisabled={!title.trim() || !section}
-        onChange={({ json }) => setContentJson(json)}
+        publishDisabled={!section || (!title.trim() && !hasMedia)}
+        onChange={({ json }) => {
+          setContentJson(json);
+          setHasMedia(countMediaNodes(json) > 0);
+        }}
         onPublish={handlePublish}
         onClose={handleClose}
       >

@@ -28,6 +28,9 @@ gomo6_lan_ip() {
     if [ -z "$ip" ] && command -v hostname >/dev/null 2>&1; then
         ip="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -Ev '^$|^127\.' | head -1 || true)"
     fi
+    if [ -z "$ip" ] && command -v ip >/dev/null 2>&1; then
+        ip="$(ip route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1 || true)"
+    fi
     printf '%s' "$ip"
 }
 
@@ -39,6 +42,7 @@ gomo6_mdns_name() {
         name="$(scutil --get LocalHostName 2>/dev/null || true)"
     fi
     [ -n "$name" ] && printf '%s.local' "$name"
+    return 0
 }
 
 # gomo6_allowed_origins [web-port] [tls-port]

@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
  * lines bolder — `strokeWidth` is the thickness knob (in source units; the
  * viewBox is scaled 10x by the transform).
  */
-export const Gomo6Mark = ({ className }: { className?: string }) => (
+export const Gomo6Mark = ({ className, strokeWidth = 140 }: { className?: string; strokeWidth?: number }) => (
   <svg
     viewBox="0 0 1026 1024"
     data-gomo6-mark=""
@@ -18,7 +18,7 @@ export const Gomo6Mark = ({ className }: { className?: string }) => (
     focusable="false"
   >
       <g transform="translate(0.000000,1024.000000) scale(0.100000,-0.100000)"
-      fill="currentColor" stroke="currentColor" strokeWidth={140} strokeLinejoin="round" strokeLinecap="round">
+      fill="currentColor" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round">
       <path d="M1244 8556 c-67 -21 -114 -83 -114 -150 0 -39 5 -50 145 -291 54 -93
       105 -183 115 -200 75 -131 142 -247 198 -340 36 -60 81 -139 100 -175 19 -36
       43 -76 52 -90 14 -21 62 -102 114 -195 6 -11 37 -64 69 -117 95 -162 163 -280

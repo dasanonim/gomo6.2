@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import type { MediaAttachment } from "@/components/editor/media/mediaSchema";
+import { countMediaNodes } from "@/components/editor/media/mediaSchema";
 import { Loader2 } from "lucide-react";
 import { RichComposer, type RichComposerPayload } from "@/components/composer/RichComposer";
 import { entityParam } from "@/utils/entityUrl";
@@ -41,6 +42,7 @@ const CreateGomoThread = () => {
   const [channelId, setChannelId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [contentJson, setContentJson] = useState<unknown>(null);
+  const [hasMedia, setHasMedia] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [restoredDraft, setRestoredDraft] = useState<Draft | null>(null);
 
@@ -84,6 +86,7 @@ const CreateGomoThread = () => {
           if (draft?.title || draft?.contentJson || draft?.attachments?.length) {
             setTitle(draft.title || "");
             setContentJson(draft.contentJson ?? null);
+            setHasMedia(countMediaNodes(draft.contentJson) > 0);
             setRestoredDraft({
               title: draft.title || "",
               contentJson: draft.contentJson ?? null,
@@ -136,11 +139,12 @@ const CreateGomoThread = () => {
   const handlePublish = useCallback(
     async ({ json, text, attachments }: RichComposerPayload) => {
       if (!board) return;
-      if (!title.trim()) {
-        toast.error("Введите заголовок записи");
+      if (!title.trim() && attachments.length === 0) {
+        toast.error("Введите заголовок или прикрепите фото");
         return;
       }
-      // The body may be media-only — only the title is mandatory.
+      // The body may be media-only — a bare photo posts needs neither
+      // title nor text.
       if (!text.trim() && attachments.length === 0) {
         toast.error("Добавьте текст или медиафайл");
         return;
@@ -231,8 +235,11 @@ const CreateGomoThread = () => {
       headerMeta={restoredDraft ? "черновик" : undefined}
       initialContentJson={restoredDraft?.contentJson ?? null}
       initialAttachments={restoredDraft?.attachments ?? []}
-      publishDisabled={!title.trim()}
-      onChange={({ json }) => setContentJson(json)}
+      publishDisabled={!title.trim() && !hasMedia}
+      onChange={({ json }) => {
+        setContentJson(json);
+        setHasMedia(countMediaNodes(json) > 0);
+      }}
       onPublish={handlePublish}
       onClose={handleClose}
     >

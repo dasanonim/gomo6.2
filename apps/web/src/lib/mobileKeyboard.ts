@@ -386,6 +386,78 @@ export function isEditableElement(el: Element | null): boolean {
 }
 
 /**
+ * Whether the element lives inside a composer sheet ([data-kb-sheet],
+ * see RichComposer). Sheets ride the keyboard with their own single writer
+ * (an inline `bottom` updated per visualViewport event) and must never be
+ * steered by the global scroll machinery: any window/container correction
+ * computed mid-animation overshoots (rects are stale while the keyboard
+ * slides), which reads as the sheet jumping and the header flying away.
+ */
+export function isInKeyboardSheet(el: Element | null): boolean {
+  return !!(
+    el instanceof Element &&
+    typeof el.closest === "function" &&
+    el.closest("[data-kb-sheet]")
+  );
+}
+
+/** Decision of the composer-sheet writer for one visualViewport snapshot. */
+export type SheetBottomAction =
+  | "track" // follow the live keyboard height exactly (open / genuine re-open)
+  | "begin-close" // keyboard really gone while focus stayed: glide down
+  | "settle-zero" // closed and idle: glide to zero
+  | "ignore"; // stale event: the close-glide transition owns `bottom`
+
+/**
+ * One viewport event is never trusted on its own: WebKit emits a stale
+ * "open" transient mid-close, and honouring it snaps the bar back up in the
+ * middle of the close glide (the down-up-down nightmare). The arbiter is
+ * focus — the keyboard cannot genuinely come back without an editable owning
+ * it — so an "open" is honoured only while a close-glide is NOT running or
+ * focus is inside the sheet, and a "closed" never fights an active glide.
+ */
+export function resolveSheetBottomAction(input: {
+  viewportOpen: boolean;
+  closing: boolean;
+  focusedInSheet: boolean;
+}): SheetBottomAction {
+  if (input.viewportOpen) {
+    return input.focusedInSheet || !input.closing ? "track" : "ignore";
+  }
+  if (input.closing) return "ignore";
+  return input.focusedInSheet ? "begin-close" : "settle-zero";
+}
+
+/**
+ * Stale-upward-jump gate (composer sheet only).
+ *
+ * Mid-hide iOS goes silent, then emits one transient with the stale OPEN
+ * geometry: the applied bottom was falling live, the transient says "open"
+ * and honouring it snaps the bar back up — down, UP, down-glide. Three
+ * tells separate it from a genuine rise, and all three must hold:
+ *  • it reverses the applied direction (live > applied);
+ *  • it ends a silence (a gap with no viewport events — genuine movement,
+ *    including keyboard-type switches, streams densely);
+ *  • it reverses a FRESH fall (a recent downward run) with no user intent
+ *    after the fall started (a genuine re-open always starts with a tap or
+ *    a focus move; the transient arrives with neither).
+ */
+export function isStaleUpwardJump(input: {
+  appliedBottom: number;
+  liveInset: number;
+  /** ms since the previous viewport event (the freeze gap). */
+  msSinceLastEvent: number;
+  /** ms since the last applied downward move (the fall start). */
+  msSinceFallStart: number;
+  /** a tap/focus landed after the fall started. */
+  intentAfterFallStart: boolean;
+}): boolean {
+  if (input.liveInset <= input.appliedBottom + 2) return false;
+  if (input.intentAfterFallStart) return false;
+  return input.msSinceLastEvent > 150 && input.msSinceFallStart < 1500;
+}
+
+/**
  * Whether a touch that started on this target must not scroll the page or
  * dismiss the keyboard: the target (or an ancestor) carries [data-kb-locked],
  * which pinned composer bars set while they are fixed above the keyboard.
@@ -656,8 +728,12 @@ function applyState(next: MobileKeyboardState) {
     // already fully visible — skipping the scroll prevents the composer from
     // jumping when it's already at the bottom and the user focuses it
     // (e.g. replying to a comment).
+    //
+    // Composer sheets ([data-kb-sheet]) are exempt: their toolbar rides the
+    // keyboard via the sheet's own inline `bottom`, and every correction
+    // computed here mid-slide overshoots (stale rects) — the jump-then-settle.
     const el = focusedEditable;
-    if (el && el.isConnected) {
+    if (el && el.isConnected && !isInKeyboardSheet(el)) {
       const vv = typeof window !== 'undefined' ? window.visualViewport : null;
       const visibleHeight = vv ? vv.height : window.innerHeight;
       const rect = el.getBoundingClientRect();
@@ -754,6 +830,12 @@ function handleFocusIn(e: FocusEvent) {
   // collapses the URL bar) the moment the keyboard opens, which reads as the
   // composer "flying up" when re-tapped mid-page. Pin the scroll position for
   // the keyboard-animation window; a real user touch cancels the pin.
+  //
+  // Composer sheets ([data-kb-sheet]) are exempt: the sheet is fixed with its
+  // own scroller and the page behind it is locked, so there is nothing to
+  // restore — and each checkpoint races Safari's async pan, which is exactly
+  // the flaky up/down jump. The sheet's own writer keeps it glued instead.
+  if (isInKeyboardSheet(el)) return;
   if (getScrollContext(el).mode === "fixed") {
     guardFixedBarFocusScroll();
     return;
@@ -1119,6 +1201,9 @@ function scheduleScrollIntoView(delay: number) {
 export function scrollEditableIntoView() {
   const el = focusedEditable;
   if (!el || !el.isConnected || !state.isTouch) return;
+  // Composer sheets ride the keyboard themselves (inline `bottom` per
+  // visualViewport event) — steering anything here only fights that writer.
+  if (isInKeyboardSheet(el)) return;
   // Only steer the page for the element that actually owns focus. focusedEditable
   // is kept across blur on purpose (the keyboard still animates closed), but a
   // late resize/timer must never yank the page back to an editor the user has

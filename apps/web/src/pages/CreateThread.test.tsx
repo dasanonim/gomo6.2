@@ -89,7 +89,7 @@ vi.mock("@/components/GomoRichEditor", () => {
       />
     );
   });
-  return { GomoRichEditor: MockEditor };
+  return { GomoRichEditor: MockEditor, Toolbar: () => null };
 });
 vi.mock("@/components/EmojiPicker", () => ({ EmojiPicker: ({ children }: any) => <>{children}</> }));
 vi.mock("@/components/Lightbox", () => ({ Lightbox: () => null }));
