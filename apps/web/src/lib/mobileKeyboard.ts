@@ -405,7 +405,7 @@ export function isInKeyboardSheet(el: Element | null): boolean {
 export type SheetBottomAction =
   | "track" // follow the live keyboard height exactly (open / genuine re-open)
   | "begin-close" // keyboard really gone while focus stayed: glide down
-  | "settle-zero" // closed and idle: pin at 0
+  | "settle-zero" // closed and idle: glide to zero
   | "ignore"; // stale event: the close-glide transition owns `bottom`
 
 /**
@@ -426,6 +426,35 @@ export function resolveSheetBottomAction(input: {
   }
   if (input.closing) return "ignore";
   return input.focusedInSheet ? "begin-close" : "settle-zero";
+}
+
+/**
+ * Stale-upward-jump gate (composer sheet only).
+ *
+ * Mid-hide iOS goes silent, then emits one transient with the stale OPEN
+ * geometry: the applied bottom was falling live, the transient says "open"
+ * and honouring it snaps the bar back up — down, UP, down-glide. Three
+ * tells separate it from a genuine rise, and all three must hold:
+ *  • it reverses the applied direction (live > applied);
+ *  • it ends a silence (a gap with no viewport events — genuine movement,
+ *    including keyboard-type switches, streams densely);
+ *  • it reverses a FRESH fall (a recent downward run) with no user intent
+ *    after the fall started (a genuine re-open always starts with a tap or
+ *    a focus move; the transient arrives with neither).
+ */
+export function isStaleUpwardJump(input: {
+  appliedBottom: number;
+  liveInset: number;
+  /** ms since the previous viewport event (the freeze gap). */
+  msSinceLastEvent: number;
+  /** ms since the last applied downward move (the fall start). */
+  msSinceFallStart: number;
+  /** a tap/focus landed after the fall started. */
+  intentAfterFallStart: boolean;
+}): boolean {
+  if (input.liveInset <= input.appliedBottom + 2) return false;
+  if (input.intentAfterFallStart) return false;
+  return input.msSinceLastEvent > 150 && input.msSinceFallStart < 1500;
 }
 
 /**

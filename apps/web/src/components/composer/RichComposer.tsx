@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { animate, motion, useDragControls, useMotionValue, useReducedMotion } from "motion/react";
 import { EASE_OUT_EXPO, springFor } from "@/lib/motion";
-import { computeKeyboardMetrics, isEditableElement, resolveSheetBottomAction } from "@/lib/mobileKeyboard";
+import { computeKeyboardMetrics, isEditableElement, isStaleUpwardJump, resolveSheetBottomAction } from "@/lib/mobileKeyboard";
 import { apiClient } from "@/integrations/api/client";
 import { Popover, PopoverPanel } from "@/components/ui/popover";
 import { InkBar, InkButton, glassGhostButtonClass } from "@/components/ui/ink-bar";
@@ -119,6 +119,13 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
     // focus like any other event.
     let focusPollInterval: ReturnType<typeof setInterval> | null = null;
 
+    // Stale-transient wiring (see isStaleUpwardJump): pure timestamps, no
+    // timers. lastEventAt detects the freeze gap, lastDownAt the fresh fall,
+    // lastIntentAt genuine user intent (tap / focus move after the fall).
+    let lastEventAt = 0;
+    let lastDownAt = 0;
+    let lastIntentAt = 0;
+
     const setBottom = (px: number) => {
       const next = `${Math.max(0, Math.round(px))}px`;
       if (panel.style.bottom !== next) panel.style.bottom = next;
@@ -166,12 +173,22 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
       // transition already put us at 0 — just drop the class.
       settleTimer = setTimeout(cancelClosing, 350);
     };
+    const appliedBottom = () => {
+      const raw = Number.parseFloat(panel.style.bottom);
+      return Number.isFinite(raw) ? raw : 0;
+    };
     // Viewport event with no fresh user intent: honour it only when it agrees
     // with focus (see resolveSheetBottomAction). Any resync toward zero goes
     // through the glide — an instant snap after a frozen-viewport window is
     // exactly the visible jump (the keyboard is long gone, but the bar
     // teleporting reads as a glitch; gliding reads as settling).
-    const onViewportEvent = () => {
+    const onViewportEvent = (fromPoll = false) => {
+      const now = Date.now();
+      // Only real viewport/window events reset the silence clock: poll ticks
+      // re-read the same frozen geometry and must not disguise the freeze
+      // gap that identifies the stale transient.
+      const msSinceLastEvent = lastEventAt === 0 ? 0 : now - lastEventAt;
+      if (!fromPoll) lastEventAt = now;
       const m = readLive();
       const action = resolveSheetBottomAction({
         viewportOpen: m.isOpen,
@@ -179,7 +196,24 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
         focusedInSheet: focusedInSheet(),
       });
       if (action === "track") {
+        // Mid-hide stale transient: the bar was falling live, iOS went
+        // silent, and this event says "open" again with no user intent behind
+        // it — honouring it snaps the bar back up (down, UP, down-glide).
+        // Dense genuine movement (including keyboard-type switches) and any
+        // tap/focus intent pass straight through.
+        if (
+          isStaleUpwardJump({
+            appliedBottom: appliedBottom(),
+            liveInset: m.keyboardInset,
+            msSinceLastEvent,
+            msSinceFallStart: lastDownAt === 0 ? Number.POSITIVE_INFINITY : now - lastDownAt,
+            intentAfterFallStart: lastIntentAt >= lastDownAt && lastIntentAt > 0,
+          })
+        ) {
+          return;
+        }
         cancelClosing();
+        if (m.keyboardInset < appliedBottom() - 8) lastDownAt = now;
         setBottom(m.keyboardInset);
       } else if (action === "begin-close") {
         beginClosing();
@@ -195,10 +229,11 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
       // Genuine user intent: drop any in-flight glide. Tracking resumes via
       // the viewport stream; the poll below catches a silent iOS open/close
       // that fires no viewport event at all.
+      lastIntentAt = Date.now();
       cancelClosing();
       if (focusPollInterval === null) {
         focusPollInterval = setInterval(() => {
-          if (focusedInSheet()) onViewportEvent();
+          if (focusedInSheet()) onViewportEvent(true);
         }, 150);
       }
     };
@@ -211,22 +246,34 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
         if (!keyboardHeldByFocus()) beginClosing();
       }, 100);
     };
+    // A tap is user intent even when it moves no focus (re-tapping the
+    // already-focused field to resummon the keyboard): a genuine re-open
+    // must never be mistaken for the free-floating stale transient.
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.target instanceof HTMLElement && panel.contains(event.target)) {
+        lastIntentAt = Date.now();
+      }
+    };
 
-    vv.addEventListener("resize", onViewportEvent);
-    vv.addEventListener("scroll", onViewportEvent);
-    window.addEventListener("resize", onViewportEvent);
-    window.addEventListener("orientationchange", onViewportEvent);
+    const onRealEvent = () => onViewportEvent(false);
+
+    vv.addEventListener("resize", onRealEvent);
+    vv.addEventListener("scroll", onRealEvent);
+    window.addEventListener("resize", onRealEvent);
+    window.addEventListener("orientationchange", onRealEvent);
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
-    onViewportEvent();
+    document.addEventListener("touchstart", onTouchStart, { passive: true });
+    onViewportEvent(false);
 
     return () => {
-      vv.removeEventListener("resize", onViewportEvent);
-      vv.removeEventListener("scroll", onViewportEvent);
-      window.removeEventListener("resize", onViewportEvent);
-      window.removeEventListener("orientationchange", onViewportEvent);
+      vv.removeEventListener("resize", onRealEvent);
+      vv.removeEventListener("scroll", onRealEvent);
+      window.removeEventListener("resize", onRealEvent);
+      window.removeEventListener("orientationchange", onRealEvent);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener("touchstart", onTouchStart);
       if (focusPollInterval !== null) {
         clearInterval(focusPollInterval);
         focusPollInterval = null;
