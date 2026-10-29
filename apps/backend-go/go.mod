@@ -24,9 +24,9 @@ require (
 	github.com/redis/go-redis/v9 v9.6.3
 	github.com/swaggo/swag v1.16.4
 	go.n16f.net/thumbhash v1.1.0
-	golang.org/x/crypto v0.57.0
+	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.45.0
-	golang.org/x/net v0.60.0
+	golang.org/x/net v0.62.0
 )
 
 require (
@@ -82,9 +82,9 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	golang.org/x/arch v0.3.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
-	golang.org/x/tools v0.49.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/tools v0.51.0 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

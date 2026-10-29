@@ -2,6 +2,7 @@ package achievements
 
 import (
 	"database/sql/driver"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -10,41 +11,46 @@ import (
 	"github.com/gomo6/backend/internal/activity"
 )
 
-// testCatalog covers every milestone stat kind plus one hand-granted award.
+// testCatalog covers counter quests, the derived meta quest and one_time.
 func testCatalog(t *testing.T) *Catalog {
 	t.Helper()
 	cat, err := NewCatalog([]*Group{
 		{
-			Key: "entries", TitleKey: "t.entries", Category: CategoryContent,
-			Icon: "message-square", Kind: KindMilestone, Type: TypeProgressive, Stat: StatCounter, SortOrder: 1,
+			Key: "qs_first_thread", TitleKey: "t.thread", Category: CategoryContent,
+			Icon: "message-square", Kind: KindMilestone, Type: TypeOneTime, Stat: StatCounter, Track: TrackFirstSteps, SortOrder: 1,
 			Levels: []Level{
-				{Level: 1, Threshold: 1, NameKey: "k1", DescriptionKey: "d1"},
-				{Level: 2, Threshold: 10, NameKey: "k2", DescriptionKey: "d2"},
+				{Level: 1, Threshold: 1, NameKey: "k1", DescriptionKey: "d1", Rewards: []Reward{{Kind: RewardGems, Amount: 10}}},
+			},
+		},
+		{
+			Key: "qs_first_wall", TitleKey: "t.wall", Category: CategoryContent,
+			Icon: "pen-line", Kind: KindMilestone, Type: TypeOneTime, Stat: StatCounter, Track: TrackFirstSteps, SortOrder: 2,
+			Levels: []Level{
+				{Level: 1, Threshold: 1, NameKey: "k1", DescriptionKey: "d1", Rewards: []Reward{{Kind: RewardGems, Amount: 10}}},
+			},
+		},
+		{
+			Key: "entries", TitleKey: "t.entries", Category: CategoryContent,
+			Icon: "notebook-pen", Kind: KindMilestone, Type: TypeProgressive, Stat: StatCounter, Track: TrackMain, SortOrder: 3,
+			Levels: []Level{
+				{Level: 1, Threshold: 1, NameKey: "k1", DescriptionKey: "d1", Rewards: []Reward{{Kind: RewardGems, Amount: 10}}},
+				{Level: 2, Threshold: 10, NameKey: "k2", DescriptionKey: "d2", Rewards: []Reward{{Kind: RewardGems, Amount: 25}}},
 			},
 		},
 		{
 			Key: "likes_received", TitleKey: "t.likes", Category: CategoryContent,
-			Icon: "heart", Kind: KindMilestone, Type: TypeProgressive, Stat: StatCounter, SortOrder: 2,
+			Icon: "heart", Kind: KindMilestone, Type: TypeProgressive, Stat: StatCounter, Track: TrackMain, SortOrder: 4,
 			Levels: []Level{
-				{Level: 1, Threshold: 1, NameKey: "l1", DescriptionKey: "ld1"},
-				{Level: 2, Threshold: 10, NameKey: "l2", DescriptionKey: "ld2"},
+				{Level: 1, Threshold: 10, NameKey: "l1", DescriptionKey: "ld1", Rewards: []Reward{{Kind: RewardGems, Amount: 15}}},
+				{Level: 2, Threshold: 100, NameKey: "l2", DescriptionKey: "ld2", Rewards: []Reward{{Kind: RewardGems, Amount: 50}}},
 			},
 		},
 		{
-			Key: "resonance", TitleKey: "t.resonance", Category: CategoryContent,
-			Icon: "flame", Kind: KindMilestone, Type: TypeProgressive, Stat: StatDerived, SortOrder: 3,
+			Key: "qs_complete", TitleKey: "t.meta", Category: CategoryOnboarding,
+			Icon: "trophy", Kind: KindMilestone, Type: TypeOneTime, Stat: StatDerived, Track: TrackFirstSteps, SortOrder: 5,
 			Levels: []Level{
-				{Level: 1, Threshold: 10, NameKey: "r1", DescriptionKey: "rd1"},
-				{Level: 2, Threshold: 100, NameKey: "r2", DescriptionKey: "rd2"},
+				{Level: 1, Threshold: 2, NameKey: "m1", DescriptionKey: "md1", Rewards: []Reward{{Kind: RewardChest, Mechanic: "rarity_chest"}}},
 			},
-		},
-		{
-			Key: "tenure", TitleKey: "t.tenure", Category: CategoryRetention,
-			Icon: "calendar-check", Kind: KindMilestone, Stat: StatTenure, SortOrder: 4,
-		},
-		{
-			Key: "award_ktitor", TitleKey: "t.ktitor", DescriptionKey: "t.ktitor.d",
-			Category: CategoryAwards, Icon: "gem", Kind: KindAward, SortOrder: 5,
 		},
 	})
 	if err != nil {
@@ -95,62 +101,88 @@ func expectCounterReconcile(mock sqlmock.Sqlmock, fragment, key string, value, l
 	}
 }
 
-// expectDerivedQuery stubs a derived milestone query.
-func expectDerivedQuery(mock sqlmock.Sqlmock, fragment, key string, value int) {
-	mock.ExpectQuery(fragment).WithArgs("u1").
-		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(value))
-	expectCurrentLevel(mock, key, 0)
-}
-
 // ──────────────── counter events ────────────────
 
-// An entry crosses threshold 1 → the counter is reconciled from live data and
-// the level row upserted, then resonance is re-evaluated (no unlock here).
-func TestHandleEvent_CounterUnlock(t *testing.T) {
+// A thread crosses threshold 1 → the thread first-step and the combined
+// entries ladder reconcile from live data, then the meta quest is checked.
+func TestHandleEvent_ThreadUnlock(t *testing.T) {
 	e, mock := newEngine(t)
 
+	expectCounterReconcile(mock, "FROM threads t WHERE t.user_id", "qs_first_thread", 1, 1)
 	expectCounterReconcile(mock, "FROM threads t WHERE t.user_id", "entries", 1, 1)
-	expectDerivedQuery(mock, "GREATEST", "resonance", 3)
+	// meta: 1 of 2 first steps done → no unlock yet
+	mock.ExpectQuery("FROM user_achievements").WithArgs("u1", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(1))
+	expectCurrentLevel(mock, "qs_complete", 0)
 
-	e.HandleEvent(Event{UserID: "u1", Type: EventEntryCreated})
+	e.HandleEvent(Event{UserID: "u1", Type: EventEntryCreated, TargetType: "thread"})
 }
 
-// 2 entries still level 1 → counter synced, no level write, resonance checked.
-func TestHandleEvent_SameLevelNoUpsert(t *testing.T) {
+// A wall post feeds the wall first-step (not the thread one) plus entries.
+func TestHandleEvent_WallPostSplit(t *testing.T) {
 	e, mock := newEngine(t)
 
-	mock.ExpectQuery("FROM threads t WHERE t.user_id").
-		WithArgs("u1").WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(2))
-	mock.ExpectExec("INSERT INTO user_achievement_counters").
-		WithArgs("u1", "entries", 2).WillReturnResult(sqlmock.NewResult(1, 1))
-	expectCurrentLevel(mock, "entries", 1)
-	expectDerivedQuery(mock, "GREATEST", "resonance", 3)
+	expectCounterReconcile(mock, "FROM profile_wall_posts w WHERE", "qs_first_wall", 1, 1)
+	expectCounterReconcile(mock, "author_id", "entries", 1, 1)
+	mock.ExpectQuery("FROM user_achievements").WithArgs("u1", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(1))
+	expectCurrentLevel(mock, "qs_complete", 0)
 
-	e.HandleEvent(Event{UserID: "u1", Type: EventEntryCreated})
+	e.HandleEvent(Event{UserID: "u1", Type: EventEntryCreated, TargetType: "wall_post"})
 }
 
-// A received like reconciles likes_received and re-evaluates resonance; here it
-// crosses the resonance threshold too.
-func TestHandleEvent_LikeReceivedResonanceUnlock(t *testing.T) {
+// A received like reconciles likes_received (no meta: not a first-steps event)
+// and crosses level 1 here (test threshold 10, value 42).
+func TestHandleEvent_LikeReceivedUnlock(t *testing.T) {
 	e, mock := newEngine(t)
 
-	expectCounterReconcile(mock, "FROM post_likes pl", "likes_received", 1, 1)
-	// resonance crosses level 1 (threshold 10)
-	mock.ExpectQuery("GREATEST").WithArgs("u1").
-		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(42))
-	expectCurrentLevel(mock, "resonance", 0)
-	expectExactUpsert(mock, "resonance", 1, 42)
+	expectCounterReconcile(mock, "FROM post_likes pl", "likes_received", 42, 1)
 
 	e.HandleEvent(Event{UserID: "u1", Type: EventLikeReceived})
 }
 
+// A failed level write must not notify: otherwise the toast and the bell
+// promise a level the achievements page can never show (the reported
+// "toast says earned but nothing on the page" ghost).
+type stubNotifier struct {
+	calls int
+}
+
+func (s *stubNotifier) NotifyMilestone(userID string, g *Group, prevLevel, newLevel int) {
+	s.calls++
+}
+
+func TestHandleEvent_UpsertFailureSkipsNotify(t *testing.T) {
+	e, mock := newEngine(t)
+	stub := &stubNotifier{}
+	e.Notifier = stub
+
+	mock.ExpectQuery("FROM post_likes pl").WithArgs("u1").
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(42))
+	mock.ExpectExec("INSERT INTO user_achievement_counters").
+		WithArgs("u1", "likes_received", 42).WillReturnResult(sqlmock.NewResult(1, 1))
+	expectCurrentLevel(mock, "likes_received", 0)
+	mock.ExpectExec("INSERT INTO user_achievements").
+		WithArgs("u1", GroupID("likes_received"), 1, 42, sqlmock.AnyArg()).
+		WillReturnError(errors.New("boom"))
+
+	e.HandleEvent(Event{UserID: "u1", Type: EventLikeReceived})
+
+	if stub.calls != 0 {
+		t.Errorf("notify must not fire when the level write failed, got %d call(s)", stub.calls)
+	}
+}
+
 // The counter reconciles to the LIVE value even when an earlier event was
-// missed — the milestone never lags the real row count.
+// missed — the quest never lags the real row count.
 func TestHandleEvent_CounterSelfHeals(t *testing.T) {
 	e, mock := newEngine(t)
 
+	expectCounterReconcile(mock, "FROM threads t WHERE t.user_id", "qs_first_thread", 5, 1)
 	expectCounterReconcile(mock, "FROM threads t WHERE t.user_id", "entries", 5, 1)
-	expectDerivedQuery(mock, "GREATEST", "resonance", 3)
+	mock.ExpectQuery("FROM user_achievements").WithArgs("u1", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(1))
+	expectCurrentLevel(mock, "qs_complete", 0)
 
 	e.HandleEvent(Event{UserID: "u1", Type: EventEntryCreated})
 }
@@ -161,18 +193,20 @@ func TestHandleEvent_UnknownTypeNoop(t *testing.T) {
 	e.HandleEvent(Event{UserID: "u1", Type: "totally_unknown"})
 }
 
-// ──────────────── tenure ────────────────
+// ──────────────── meta quest ────────────────
 
-func TestHandleEvent_TenureOnDailyVisit(t *testing.T) {
+// An avatar event for a quest missing from the catalog is a no-op for the
+// counter, but the meta quest is still re-evaluated (and unlocks here).
+func TestHandleEvent_MetaUnlock(t *testing.T) {
 	e, mock := newEngine(t)
 
-	// 400 days on site → level 2 (1 year)
-	mock.ExpectQuery("EXTRACT").WithArgs("u1").
-		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(400))
-	expectCurrentLevel(mock, "tenure", 0)
-	expectExactUpsert(mock, "tenure", 2, 400)
+	// qs_avatar is not in the test catalog → no queries for it.
+	mock.ExpectQuery("FROM user_achievements").WithArgs("u1", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(2))
+	expectCurrentLevel(mock, "qs_complete", 0)
+	expectExactUpsert(mock, "qs_complete", 1, 2)
 
-	e.HandleEvent(Event{UserID: "u1", Type: EventDailyVisit})
+	e.HandleEvent(Event{UserID: "u1", Type: EventAvatarUpdated})
 }
 
 // ──────────────── sync / recompute ────────────────
@@ -255,8 +289,7 @@ func TestGroupID_Deterministic(t *testing.T) {
 	}
 }
 
-// RecomputeUser iterates every milestone (awards are skipped) and reconciles
-// each from live data.
+// RecomputeUser iterates every quest and reconciles each from live data.
 func TestRecomputeUser(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -266,35 +299,32 @@ func TestRecomputeUser(t *testing.T) {
 	e := New(db, testCatalog(t))
 
 	values := map[string]int{
-		"entries":        60,
-		"likes_received": 5,
-		"resonance":      700,
-		"tenure":         400,
+		"qs_first_thread": 1,
+		"qs_first_wall":   0,
+		"entries":         11,
+		"likes_received":  5,
+		"qs_complete":     2,
 	}
 	fragments := map[string]string{
-		"entries":        "FROM threads t WHERE t.user_id",
-		"likes_received": "FROM post_likes pl",
-		"resonance":      "GREATEST",
-		"tenure":         "EXTRACT",
+		"qs_first_thread": "FROM threads t WHERE t.user_id",
+		"qs_first_wall":   "FROM profile_wall_posts w WHERE",
+		"entries":         "author_id",
+		"likes_received":  "FROM post_likes pl",
+		"qs_complete":     "FROM user_achievements",
 	}
 	for _, g := range testCatalog(t).Groups() {
-		if g.IsAward() {
-			continue // awards are hand-granted; recompute must not touch them
-		}
-		v := values[g.Key]
-		mock.ExpectQuery(fragments[g.Key]).WithArgs("u1").
-			WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(v))
-		if g.Stat == StatCounter {
+		if g.Stat == StatDerived {
+			mock.ExpectQuery(fragments[g.Key]).WithArgs("u1", sqlmock.AnyArg()).
+				WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(values[g.Key]))
+		} else {
+			mock.ExpectQuery(fragments[g.Key]).WithArgs("u1").
+				WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow(values[g.Key]))
 			mock.ExpectExec("INSERT INTO user_achievement_counters").
-				WithArgs("u1", g.Key, v).WillReturnResult(sqlmock.NewResult(1, 1))
+				WithArgs("u1", g.Key, values[g.Key]).WillReturnResult(sqlmock.NewResult(1, 1))
 		}
 		expectCurrentLevel(mock, g.Key, 0)
-		lvl := g.LevelFor(v)
-		if g.IsDynamic() {
-			lvl = tenureLevel(v)
-		}
-		if lvl > 0 {
-			expectExactUpsert(mock, g.Key, lvl, v)
+		if lvl := g.LevelFor(values[g.Key]); lvl > 0 {
+			expectExactUpsert(mock, g.Key, lvl, values[g.Key])
 		}
 	}
 

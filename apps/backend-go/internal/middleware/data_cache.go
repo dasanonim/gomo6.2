@@ -69,6 +69,16 @@ func DataCacheMiddleware(redisClient *redis.Client, ttl time.Duration) gin.Handl
 			return
 		}
 
+		// Quest progress must be real-time: an unlock writes user_achievements
+		// and notifies over WS instantly, but a cached progress snapshot would
+		// keep hiding the new level (and its claim button) for the whole TTL.
+		// Claims and chest opens mutate quest_claims/quest_chests with no
+		// write-path invalidation, so caching this endpoint is never safe.
+		if strings.Contains(c.Request.URL.Path, "/quests") {
+			c.Next()
+			return
+		}
+
 		// Translation proposals can change after every submit/vote/delete. There
 		// is no generic CRUD write path to invalidate their GET cache, so caching
 		// this endpoint would keep the runtime catalog stale for the full TTL.
