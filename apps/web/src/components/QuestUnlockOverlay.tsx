@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { Coins, Gem, Gift, Trophy } from "lucide-react";
-import { SPRING } from "@/lib/motion";
+import { EASE_OUT_EXPO, pressFeedback, springFor, SPRING } from "@/lib/motion";
+import { useMotionOff } from "@/hooks/useTransitionStyle";
 import { eventManager } from "@/services/eventManager";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchQuestProgress, type QuestReward } from "@/hooks/useQuests";
@@ -11,42 +12,41 @@ import type { Notification } from "@/integrations/api/client";
 
 interface Unlock {
   key: string;
-  track: string;
-  title: string;
-  name: string;
-  desc: string;
+  nameKey: string;
+  descKey: string;
   rewards: QuestReward[];
   uid: string;
 }
 
-/** How long the card stays before gliding away on its own. */
+/** How long the toast stays before gliding away on its own. */
 const DWELL_MS = 4500;
 
+/** Reward chips — the same tile style as the achievements page. */
 function UnlockRewards({ rewards }: { rewards: QuestReward[] }) {
   const { t } = useTranslation();
   if (rewards.length === 0) return null;
   return (
-    <div className="flex flex-wrap items-center justify-center gap-1.5">
+    <div className="mt-1 flex flex-wrap gap-1">
       {rewards.map((r, i) => (
         <span
           key={`${r.kind}-${i}`}
-          className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs font-medium"
+          className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums"
         >
           {r.kind === "gems" && (
             <>
-              <Gem className="h-3.5 w-3.5" />
+              <Gem className="h-3 w-3" />
               {r.amount}
             </>
           )}
           {r.kind === "drops" && (
             <>
-              <Coins className="h-3.5 w-3.5" />
+              <Coins className="h-3 w-3" />
               {r.amount}
             </>
           )}
           {r.kind === "chest" && (
             <>
-              <Gift className="h-3.5 w-3.5" />
+              <Gift className="h-3 w-3" />
               {t("quests.chest")}
             </>
           )}
@@ -56,14 +56,76 @@ function UnlockRewards({ rewards }: { rewards: QuestReward[] }) {
   );
 }
 
+const CARD =
+  "pointer-events-auto w-full max-w-xs overflow-hidden rounded-xl border border-border/60 bg-surface/95 p-3.5 shadow-xl backdrop-blur";
+
 /**
- * Center-screen quest unlock card: appears above everything when the server
- * reports a completed level (`achievement_unlock` over WS), shows what the
- * quest is and what it gives, then glides away on its own. A button takes
- * the user to the quest page to claim — claiming itself stays there.
+ * The toast card: label, what was earned, the rewards — so the eye reads
+ * top-down in one pass. Geometry enters on the sheet spring (an overlay from
+ * an edge); the fade rides its own short expo tween, never the same curve.
+ */
+function UnlockToast({ unlock, onGo }: { unlock: Unlock; onGo: () => void }) {
+  const { t } = useTranslation();
+  const reduce = useReducedMotion();
+  const motionOff = useMotionOff();
+  const skipMotion = reduce || motionOff;
+
+  const content = (
+    <>
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+        <Trophy className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 flex-1 text-left">
+        <p className="text-xs text-muted-foreground">{t("quests.unlockTitle")}</p>
+        <p className="mt-0.5 truncate text-sm font-medium" title={t(unlock.descKey)}>
+          {t(unlock.nameKey)}
+        </p>
+        <UnlockRewards rewards={unlock.rewards} />
+      </div>
+      <motion.button
+        type="button"
+        onClick={onGo}
+        {...pressFeedback(reduce)}
+        transition={springFor("snappy", reduce)}
+        className="inline-flex shrink-0 items-center rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
+        {t("quests.unlockGo")}
+      </motion.button>
+    </>
+  );
+
+  if (skipMotion) {
+    return (
+      <div role="status" className={CARD}>
+        {content}
+      </div>
+    );
+  }
+  return (
+    <motion.div
+      role="status"
+      className={CARD}
+      initial={{ y: 80, scale: 0.97, opacity: 0 }}
+      animate={{ y: 0, scale: 1, opacity: 1 }}
+      exit={{ y: 44, scale: 0.98, opacity: 0 }}
+      transition={{ ...SPRING.sheet, opacity: { duration: 0.18, ease: EASE_OUT_EXPO } }}
+    >
+      {content}
+    </motion.div>
+  );
+}
+
+/**
+ * Quest unlock toast: appears above everything when the server reports a
+ * completed level (`achievement_unlock` over WS), shows what the quest is
+ * and what it gives, then glides away on its own. A button takes the user to
+ * the achievements page to claim — claiming itself stays there. One toast at
+ * a time; the next one waits in the queue.
+ *
+ * The dock sits above the mobile bottom nav (its height + safe area) and
+ * back at bottom-6 on ≥sm, where the nav is gone.
  */
 export function QuestUnlockOverlay() {
-  const { t } = useTranslation();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [queue, setQueue] = useState<Unlock[]>([]);
@@ -100,10 +162,8 @@ export function QuestUnlockOverlay() {
             ...q,
             {
               key: `${key}:${Date.now()}`,
-              track: quest.track,
-              title: t(quest.title_key),
-              name: t(level.name_key),
-              desc: t(level.description_key),
+              nameKey: level.name_key,
+              descKey: level.description_key,
               rewards: level.rewards,
               uid,
             },
@@ -112,7 +172,7 @@ export function QuestUnlockOverlay() {
         .catch(() => {});
     });
     return off;
-  }, [t, user?.id]);
+  }, [user?.id]);
 
   // Show the head of the queue; auto-dismiss after the dwell time.
   useEffect(() => {
@@ -139,50 +199,11 @@ export function QuestUnlockOverlay() {
   return (
     <AnimatePresence>
       {current && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-[200] flex justify-center px-4">
-          <motion.div
-            key={current.key}
-            role="status"
-            initial={{ opacity: 0, y: 80, scale: 0.94 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 60, scale: 0.96 }}
-            transition={SPRING.standard}
-            className="pointer-events-auto w-full max-w-xs overflow-hidden rounded-xl border border-border bg-card/95 shadow-xl backdrop-blur"
-          >
-            <div className="flex items-center gap-3 p-3.5">
-              <motion.div
-                initial={{ scale: 0.5, rotate: -12 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ ...SPRING.pop, delay: 0.05 }}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
-              >
-                <Trophy className="h-5 w-5" />
-              </motion.div>
-              <div className="min-w-0 flex-1 text-left">
-                <div className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-                  {t("quests.unlockTitle")}
-                </div>
-                <div className="truncate text-sm font-bold" title={current.desc}>{current.name}</div>
-                <div className="mt-0.5 flex flex-wrap gap-1">
-                  <UnlockRewards rewards={current.rewards} />
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={goToQuests}
-                className="shrink-0 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-transform active:scale-[0.98]"
-              >
-                {t("quests.unlockGo")}
-              </button>
-            </div>
-            <motion.div
-              key={`bar-${current.key}`}
-              initial={{ width: "100%" }}
-              animate={{ width: "0%" }}
-              transition={{ duration: DWELL_MS / 1000, ease: "linear" }}
-              className="h-0.5 bg-primary/70"
-            />
-          </motion.div>
+        <div
+          key={current.key}
+          className="pointer-events-none fixed inset-x-0 bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] z-[200] flex justify-center px-4 sm:bottom-6 sm:px-6"
+        >
+          <UnlockToast unlock={current} onGo={goToQuests} />
         </div>
       )}
     </AnimatePresence>
