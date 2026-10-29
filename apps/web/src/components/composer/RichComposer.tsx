@@ -93,6 +93,9 @@ const DISMISS_VELOCITY = 1000;
  * anything re-opens). Every viewport event meanwhile is arbitrated by focus
  * (see resolveSheetBottomAction): a stale WebKit "open" transient with focus
  * elsewhere is ignored instead of snapping the bar back up mid-glide.
+ * A 250ms poll while an editable owns focus covers the hide-button case —
+ * the keyboard gone, focus retained, viewport frozen: no focusout ever
+ * fires, so without the poll the bar floats until the next tap.
  */
 function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>) {
   useEffect(() => {
@@ -107,7 +110,14 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
     let closing = false;
     let blurTimer: ReturnType<typeof setTimeout> | null = null;
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
-    let openPollTimers: ReturnType<typeof setTimeout>[] = [];
+    // iOS can hide the keyboard while focus stays in the field (the
+    // keyboard's own hide button): no focusout fires and visualViewport stays
+    // frozen at the open geometry until the next gesture unfreezes it. A
+    // continuous poll while an editable owns focus bounds the stuck window:
+    // the moment the viewport unfreezes we glide down instead of floating
+    // until the next focus change. vv.height is live, so re-reading is
+    // enough; each tick is arbitrated by focus like any other event.
+    let focusPollInterval: ReturnType<typeof setInterval> | null = null;
 
     const setBottom = (px: number) => {
       const next = `${Math.max(0, Math.round(px))}px`;
@@ -157,7 +167,10 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
       settleTimer = setTimeout(cancelClosing, 350);
     };
     // Viewport event with no fresh user intent: honour it only when it agrees
-    // with focus (see resolveSheetBottomAction).
+    // with focus (see resolveSheetBottomAction). Any resync toward zero goes
+    // through the glide — an instant snap after a frozen-viewport window is
+    // exactly the visible jump (the keyboard is long gone, but the bar
+    // teleporting reads as a glitch; gliding reads as settling).
     const onViewportEvent = () => {
       const m = readLive();
       const action = resolveSheetBottomAction({
@@ -171,7 +184,7 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
       } else if (action === "begin-close") {
         beginClosing();
       } else if (action === "settle-zero") {
-        setBottom(0);
+        if (panel.style.bottom !== "0px") beginClosing();
       }
       // "ignore": the close-glide transition owns `bottom`.
     };
@@ -180,12 +193,13 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
       if (!(target instanceof HTMLElement) || !panel.contains(target)) return;
       if (!isEditableElement(target)) return;
       // Genuine user intent: drop any in-flight glide. Tracking resumes via
-      // the viewport stream; the polls below catch a silent iOS open that
-      // fires no viewport event at all (vv.height is live, so re-reading
-      // is enough to notice it).
+      // the viewport stream; the poll below catches a silent iOS open/close
+      // that fires no viewport event at all.
       cancelClosing();
-      for (const delay of [150, 350]) {
-        openPollTimers.push(setTimeout(onViewportEvent, delay));
+      if (focusPollInterval === null) {
+        focusPollInterval = setInterval(() => {
+          if (focusedInSheet()) onViewportEvent();
+        }, 250);
       }
     };
     const onFocusOut = () => {
@@ -213,8 +227,10 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
       window.removeEventListener("orientationchange", onViewportEvent);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
-      for (const timer of openPollTimers) clearTimeout(timer);
-      openPollTimers = [];
+      if (focusPollInterval !== null) {
+        clearInterval(focusPollInterval);
+        focusPollInterval = null;
+      }
       cancelClosing();
       panel.style.bottom = "";
     };
