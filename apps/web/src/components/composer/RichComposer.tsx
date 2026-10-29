@@ -93,7 +93,7 @@ const DISMISS_VELOCITY = 1000;
  * anything re-opens). Every viewport event meanwhile is arbitrated by focus
  * (see resolveSheetBottomAction): a stale WebKit "open" transient with focus
  * elsewhere is ignored instead of snapping the bar back up mid-glide.
- * A 250ms poll while an editable owns focus covers the hide-button case —
+ * A fast poll while an editable owns focus covers the hide-button case —
  * the keyboard gone, focus retained, viewport frozen: no focusout ever
  * fires, so without the poll the bar floats until the next tap.
  */
@@ -110,13 +110,13 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
     let closing = false;
     let blurTimer: ReturnType<typeof setTimeout> | null = null;
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
-    // iOS can hide the keyboard while focus stays in the field (the
-    // keyboard's own hide button): no focusout fires and visualViewport stays
-    // frozen at the open geometry until the next gesture unfreezes it. A
-    // continuous poll while an editable owns focus bounds the stuck window:
-    // the moment the viewport unfreezes we glide down instead of floating
-    // until the next focus change. vv.height is live, so re-reading is
-    // enough; each tick is arbitrated by focus like any other event.
+    // iOS can hide the keyboard while focus stays in the field (notably for
+    // contenteditable: the keyboard's own hide button keeps focus, unlike
+    // native inputs which blur). No focusout fires; the frozen properties
+    // unfreeze the moment the keyboard is gone. A fast poll while an editable
+    // owns focus bounds the stuck window to one tick + the glide.
+    // vv.height is live, so re-reading is enough; each tick is arbitrated by
+    // focus like any other event.
     let focusPollInterval: ReturnType<typeof setInterval> | null = null;
 
     const setBottom = (px: number) => {
@@ -199,7 +199,7 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
       if (focusPollInterval === null) {
         focusPollInterval = setInterval(() => {
           if (focusedInSheet()) onViewportEvent();
-        }, 250);
+        }, 150);
       }
     };
     const onFocusOut = () => {
