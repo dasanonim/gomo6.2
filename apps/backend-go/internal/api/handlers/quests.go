@@ -31,36 +31,36 @@ func NewQuestsHandler(db *sql.DB, engine *achievements.Engine) *QuestsHandler {
 
 // QuestProgressLevel is one level of a quest with its completion/claim state.
 type QuestProgressLevel struct {
-	Level            int                  `json:"level"`
-	Threshold        int                  `json:"threshold"`
-	NameKey          string               `json:"name_key"`
-	DescriptionKey   string               `json:"description_key"`
-	Rewards          []achievements.Reward `json:"rewards"`
-	Completed        bool                 `json:"completed"`
-	Claimed          bool                 `json:"claimed"`
-	CanClaim         bool                 `json:"can_claim"`
+	Level          int                   `json:"level"`
+	Threshold      int                   `json:"threshold"`
+	NameKey        string                `json:"name_key"`
+	DescriptionKey string                `json:"description_key"`
+	Rewards        []achievements.Reward `json:"rewards"`
+	Completed      bool                  `json:"completed"`
+	Claimed        bool                  `json:"claimed"`
+	CanClaim       bool                  `json:"can_claim"`
 }
 
 // QuestProgress is one catalog quest with the viewer's progress.
 type QuestProgress struct {
-	GroupKey       string               `json:"group_key"`
-	TitleKey       string               `json:"title_key"`
-	Category       string               `json:"category"`
-	Track          string               `json:"track"`
-	Icon           string               `json:"icon"`
-	SortOrder      int                  `json:"sort_order"`
-	CurrentLevel   int                  `json:"current_level"`
-	ProgressCurrent int                 `json:"progress_current"`
-	Levels         []QuestProgressLevel `json:"levels"`
+	GroupKey        string               `json:"group_key"`
+	TitleKey        string               `json:"title_key"`
+	Category        string               `json:"category"`
+	Track           string               `json:"track"`
+	Icon            string               `json:"icon"`
+	SortOrder       int                  `json:"sort_order"`
+	CurrentLevel    int                  `json:"current_level"`
+	ProgressCurrent int                  `json:"progress_current"`
+	Levels          []QuestProgressLevel `json:"levels"`
 }
 
 // QuestChest is one inventory chest row.
 type QuestChest struct {
-	ID        string `json:"id"`
-	QuestKey  string `json:"quest_key"`
-	Level     int    `json:"level"`
-	Mechanic  string `json:"mechanic"`
-	CreatedAt string `json:"created_at"`
+	ID        string  `json:"id"`
+	QuestKey  string  `json:"quest_key"`
+	Level     int     `json:"level"`
+	Mechanic  string  `json:"mechanic"`
+	CreatedAt string  `json:"created_at"`
 	OpenedAt  *string `json:"opened_at,omitempty"`
 }
 
@@ -141,9 +141,9 @@ ORDER BY a.sort_order, a.group_key`, targetID)
 			pl := QuestProgressLevel{
 				Level: lvl.Level, Threshold: lvl.Threshold,
 				NameKey: lvl.NameKey, DescriptionKey: lvl.DescriptionKey,
-				Rewards: lvl.Rewards,
+				Rewards:   lvl.Rewards,
 				Completed: qp.CurrentLevel >= lvl.Level,
-				Claimed: claimedSet[lvl.Level],
+				Claimed:   claimedSet[lvl.Level],
 			}
 			pl.CanClaim = isOwner && pl.Completed && !pl.Claimed && len(lvl.Rewards) > 0
 			if pl.CanClaim {

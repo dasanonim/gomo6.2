@@ -23,23 +23,23 @@ import (
 type EventType string
 
 const (
-	EventEntryCreated         EventType = "entry_created"   // thread or wall post (split by TargetType)
-	EventImageUploaded        EventType = "image_uploaded"  // retired
-	EventCommentCreated       EventType = "comment_created" // post-in-thread or wall comment
-	EventLikeGiven            EventType = "like_given"      // any like by the user
-	EventLikeReceived         EventType = "like_received"   // like on the user's content
-	EventRepostCreated        EventType = "repost_created"  // retired (no quest in MVP)
-	EventSubJoined            EventType = "sub_joined"      // gomosub membership
-	EventSubRulesAccepted     EventType = "rules_accepted"  // retired
-	EventSubCreated           EventType = "sub_created"     // gomosub created
-	EventGiftSent             EventType = "gift_sent"       // retired
-	EventGiftReceived         EventType = "gift_received"   // retired
-	EventAvatarUpdated        EventType = "avatar_updated"  // avatar set
-	EventBioUpdated           EventType = "bio_updated"     // bio filled
-	EventProfileStyled        EventType = "profile_styled"  // customization saved
+	EventEntryCreated         EventType = "entry_created"         // thread or wall post (split by TargetType)
+	EventImageUploaded        EventType = "image_uploaded"        // retired
+	EventCommentCreated       EventType = "comment_created"       // post-in-thread or wall comment
+	EventLikeGiven            EventType = "like_given"            // any like by the user
+	EventLikeReceived         EventType = "like_received"         // like on the user's content
+	EventRepostCreated        EventType = "repost_created"        // retired (no quest in MVP)
+	EventSubJoined            EventType = "sub_joined"            // gomosub membership
+	EventSubRulesAccepted     EventType = "rules_accepted"        // retired
+	EventSubCreated           EventType = "sub_created"           // gomosub created
+	EventGiftSent             EventType = "gift_sent"             // retired
+	EventGiftReceived         EventType = "gift_received"         // retired
+	EventAvatarUpdated        EventType = "avatar_updated"        // avatar set
+	EventBioUpdated           EventType = "bio_updated"           // bio filled
+	EventProfileStyled        EventType = "profile_styled"        // customization saved
 	EventIntegrationConnected EventType = "integration_connected" // retired
-	EventFollowAdded          EventType = "follow_added"    // subscription to a user
-	EventDailyVisit           EventType = "daily_visit"     // retired
+	EventFollowAdded          EventType = "follow_added"          // subscription to a user
+	EventDailyVisit           EventType = "daily_visit"           // retired
 )
 
 // Event is a user action handed to the engine. Handlers emit it after the
@@ -74,7 +74,7 @@ var eventCounters = map[EventType][]string{
 // firstStepsEvents marks the events that can complete an onboarding quest —
 // after any of them the meta quest (qs_complete) is re-evaluated.
 var firstStepsEvents = map[EventType]bool{
-	EventEntryCreated:  true,
+	EventEntryCreated:   true,
 	EventCommentCreated: true,
 	EventLikeGiven:      true,
 	EventSubJoined:      true,

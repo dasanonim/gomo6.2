@@ -116,14 +116,14 @@ type Level struct {
 // Group is one catalog entry: a milestone quest (auto) or an award (manual,
 // hidden from the UI since the quests MVP but kept for data compatibility).
 type Group struct {
-	Key        string   `json:"key"`
-	TitleKey   string   `json:"title_key"`
-	Category   Category `json:"category"`
-	Track      Track    `json:"track,omitempty"`
-	Icon       string   `json:"icon"`
-	Kind       Kind     `json:"kind"`
-	Origin     Origin   `json:"origin"`
-	SortOrder  int      `json:"sort_order"`
+	Key       string   `json:"key"`
+	TitleKey  string   `json:"title_key"`
+	Category  Category `json:"category"`
+	Track     Track    `json:"track,omitempty"`
+	Icon      string   `json:"icon"`
+	Kind      Kind     `json:"kind"`
+	Origin    Origin   `json:"origin"`
+	SortOrder int      `json:"sort_order"`
 	// Milestone fields.
 	Type   Type     `json:"type,omitempty"`
 	Stat   StatKind `json:"stat,omitempty"`

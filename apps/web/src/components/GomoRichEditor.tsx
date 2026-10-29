@@ -112,21 +112,45 @@ export const Toolbar = ({ editor, className = "" }: { editor: Editor; className?
 
   // Re-render the toolbar when the selection/marks change so toggle buttons
   // can show their active state (editor.isActive at the caret).
+  // NOTE: the selector must never throw. Tiptap nulls `extensionManager`
+  // on destroy (StrictMode remount / overlay navigation), and useEditorState
+  // still calls the selector once for the dying instance — that single throw
+  // surfaced as `can't access property "extensions", e.extensionManager
+  // is null` on entering the thread composer.
   const active = useEditorState({
     editor,
     selector: ({ editor: e }) => {
-      const charExtension = e.extensionManager.extensions.find((ext) => ext.name === "characterCount");
-      return {
-        bold: e.isActive("bold"),
-        italic: e.isActive("italic"),
-        underline: e.isActive("underline"),
-        strike: e.isActive("strike"),
-        link: e.isActive("link"),
-        spoiler: e.isActive("spoiler"),
-        characters: (e.storage.characterCount as { characters?: () => number } | undefined)?.characters?.() ?? 0,
-        limit: (charExtension?.options as { limit?: number | null } | undefined)?.limit ?? null,
-        fontSize: (e.getAttributes("textStyle") as { fontSize?: string } | undefined)?.fontSize ?? null,
+      const fallback = {
+        bold: false,
+        italic: false,
+        underline: false,
+        strike: false,
+        link: false,
+        spoiler: false,
+        characters: 0,
+        limit: null as number | null,
+        fontSize: null as string | null,
       };
+      try {
+        if (!e || (e as unknown as { isDestroyed?: boolean }).isDestroyed) return fallback;
+        const manager = (e as unknown as { extensionManager?: { extensions?: Array<{ name: string; options?: unknown }> } | null })
+          .extensionManager;
+        if (!manager?.extensions) return fallback;
+        const charExtension = manager.extensions.find((ext) => ext.name === "characterCount");
+        return {
+          bold: e.isActive("bold"),
+          italic: e.isActive("italic"),
+          underline: e.isActive("underline"),
+          strike: e.isActive("strike"),
+          link: e.isActive("link"),
+          spoiler: e.isActive("spoiler"),
+          characters: (e.storage.characterCount as { characters?: () => number } | undefined)?.characters?.() ?? 0,
+          limit: (charExtension?.options as { limit?: number | null } | undefined)?.limit ?? null,
+          fontSize: (e.getAttributes("textStyle") as { fontSize?: string } | undefined)?.fontSize ?? null,
+        };
+      } catch {
+        return fallback;
+      }
     },
   });
 
@@ -644,7 +668,7 @@ export const GomoRichEditor = forwardRef<GomoRichEditorHandle, GomoRichEditorPro
     };
   }, [editor]);
 
-  if (!editor) return null;
+  if (!editor || editor.isDestroyed) return null;
 
   return (
     <div className="space-y-2">

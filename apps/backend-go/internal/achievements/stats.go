@@ -36,8 +36,8 @@ func (e *Engine) sourceCount(ctx context.Context, userID, key string) (int, erro
 
 var sourceCountQueries = map[string]string{
 	// ── First steps ──
-	"qs_avatar": `SELECT CASE WHEN COALESCE(avatar_url, '') <> '' THEN 1 ELSE 0 END FROM users WHERE id = $1`,
-	"qs_bio": `SELECT CASE WHEN COALESCE(bio, '') <> '' OR COALESCE(bio_json::text, '') NOT IN ('', 'null') THEN 1 ELSE 0 END FROM users WHERE id = $1`,
+	"qs_avatar":       `SELECT CASE WHEN COALESCE(avatar_url, '') <> '' THEN 1 ELSE 0 END FROM users WHERE id = $1`,
+	"qs_bio":          `SELECT CASE WHEN COALESCE(bio, '') <> '' OR COALESCE(bio_json::text, '') NOT IN ('', 'null') THEN 1 ELSE 0 END FROM users WHERE id = $1`,
 	"qs_first_thread": `SELECT COUNT(*)::int FROM threads t WHERE t.user_id = $1`,
 	"qs_first_wall":   `SELECT COUNT(*)::int FROM profile_wall_posts w WHERE w.author_id = $1`,
 	"qs_first_comment": `SELECT (
