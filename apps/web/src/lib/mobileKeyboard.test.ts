@@ -12,6 +12,7 @@ import {
   isIOSDevice,
   isLockedGestureTarget,
   isStickyGestureTarget,
+  resolveSheetBottomAction,
 } from "./mobileKeyboard";
 
 describe("isIOSDevice", () => {
@@ -238,6 +239,31 @@ describe("isInKeyboardSheet", () => {
     document.body.appendChild(sheet);
     expect(isInKeyboardSheet(sheet)).toBe(true);
     expect(isInKeyboardSheet(editor)).toBe(true);
+  });
+});
+
+describe("resolveSheetBottomAction", () => {
+  it("tracks live opens and genuine re-opens with focus inside", () => {
+    expect(resolveSheetBottomAction({ viewportOpen: true, closing: false, focusedInSheet: false })).toBe("track");
+    expect(resolveSheetBottomAction({ viewportOpen: true, closing: false, focusedInSheet: true })).toBe("track");
+    // Keyboard coming back while the user is back in the sheet: genuine.
+    expect(resolveSheetBottomAction({ viewportOpen: true, closing: true, focusedInSheet: true })).toBe("track");
+  });
+
+  it("ignores the stale WebKit open transient mid-glide (the down-up-down)", () => {
+    // Close-glide running, focus already elsewhere: the "open" is stale.
+    expect(resolveSheetBottomAction({ viewportOpen: true, closing: true, focusedInSheet: false })).toBe("ignore");
+  });
+
+  it("never fights an active close-glide with a closed report", () => {
+    expect(resolveSheetBottomAction({ viewportOpen: false, closing: true, focusedInSheet: true })).toBe("ignore");
+    expect(resolveSheetBottomAction({ viewportOpen: false, closing: true, focusedInSheet: false })).toBe("ignore");
+  });
+
+  it("settles at zero when idle, glides when focus kept the keyboard", () => {
+    // iOS hide-button keeps focus in the editor while the keyboard is gone.
+    expect(resolveSheetBottomAction({ viewportOpen: false, closing: false, focusedInSheet: true })).toBe("begin-close");
+    expect(resolveSheetBottomAction({ viewportOpen: false, closing: false, focusedInSheet: false })).toBe("settle-zero");
   });
 });
 

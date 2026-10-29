@@ -401,6 +401,33 @@ export function isInKeyboardSheet(el: Element | null): boolean {
   );
 }
 
+/** Decision of the composer-sheet writer for one visualViewport snapshot. */
+export type SheetBottomAction =
+  | "track" // follow the live keyboard height exactly (open / genuine re-open)
+  | "begin-close" // keyboard really gone while focus stayed: glide down
+  | "settle-zero" // closed and idle: pin at 0
+  | "ignore"; // stale event: the close-glide transition owns `bottom`
+
+/**
+ * One viewport event is never trusted on its own: WebKit emits a stale
+ * "open" transient mid-close, and honouring it snaps the bar back up in the
+ * middle of the close glide (the down-up-down nightmare). The arbiter is
+ * focus — the keyboard cannot genuinely come back without an editable owning
+ * it — so an "open" is honoured only while a close-glide is NOT running or
+ * focus is inside the sheet, and a "closed" never fights an active glide.
+ */
+export function resolveSheetBottomAction(input: {
+  viewportOpen: boolean;
+  closing: boolean;
+  focusedInSheet: boolean;
+}): SheetBottomAction {
+  if (input.viewportOpen) {
+    return input.focusedInSheet || !input.closing ? "track" : "ignore";
+  }
+  if (input.closing) return "ignore";
+  return input.focusedInSheet ? "begin-close" : "settle-zero";
+}
+
 /**
  * Whether a touch that started on this target must not scroll the page or
  * dismiss the keyboard: the target (or an ancestor) carries [data-kb-locked],

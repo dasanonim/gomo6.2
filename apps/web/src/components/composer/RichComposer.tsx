@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { animate, motion, useDragControls, useMotionValue, useReducedMotion } from "motion/react";
 import { EASE_OUT_EXPO, springFor } from "@/lib/motion";
-import { computeKeyboardMetrics, isEditableElement } from "@/lib/mobileKeyboard";
+import { computeKeyboardMetrics, isEditableElement, resolveSheetBottomAction } from "@/lib/mobileKeyboard";
 import { apiClient } from "@/integrations/api/client";
 import { Popover, PopoverPanel } from "@/components/ui/popover";
 import { InkBar, InkButton, glassGhostButtonClass } from "@/components/ui/ink-bar";
@@ -87,10 +87,12 @@ const DISMISS_VELOCITY = 1000;
  *
  * Close is the one asymmetric case: iOS freezes visualViewport while the
  * keyboard slides away, so the last live value would stick until the
- * keyboard is gone and then teleport. `kb-sheet-closing` arms a plain CSS
- * transition on `bottom` (removed the moment anything re-opens), and the
- * 60ms blur delay keeps field-to-field transfers (title ↔ editor) from
- * flashing a descent.
+ * keyboard is gone and then teleport. The descent therefore starts on blur
+ * (100ms delay, so quick refocuses and dialog inputs never start it) and
+ * runs as a plain CSS transition (`kb-sheet-closing`, removed the moment
+ * anything re-opens). Every viewport event meanwhile is arbitrated by focus
+ * (see resolveSheetBottomAction): a stale WebKit "open" transient with focus
+ * elsewhere is ignored instead of snapping the bar back up mid-glide.
  */
 function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>) {
   useEffect(() => {
@@ -105,10 +107,33 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
     let closing = false;
     let blurTimer: ReturnType<typeof setTimeout> | null = null;
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    let openPollTimers: ReturnType<typeof setTimeout>[] = [];
 
     const setBottom = (px: number) => {
-      panel.style.bottom = `${Math.max(0, Math.round(px))}px`;
+      const next = `${Math.max(0, Math.round(px))}px`;
+      if (panel.style.bottom !== next) panel.style.bottom = next;
     };
+    // Focus still holds the keyboard open (an editable anywhere — the sheet
+    // editor, the title input, or a dialog input portaled outside the panel).
+    const keyboardHeldByFocus = () => {
+      const active = document.activeElement;
+      return active instanceof HTMLElement && isEditableElement(active);
+    };
+    const focusedInSheet = () => {
+      const active = document.activeElement;
+      return (
+        active instanceof HTMLElement &&
+        panel.contains(active) &&
+        isEditableElement(active)
+      );
+    };
+    const readLive = () =>
+      computeKeyboardMetrics({
+        innerHeight: window.innerHeight,
+        visualViewportHeight: vv.height,
+        visualViewportOffsetTop: vv.offsetTop,
+        isTouch: true,
+      });
     const cancelClosing = () => {
       closing = false;
       if (blurTimer) {
@@ -121,24 +146,6 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
       }
       panel.classList.remove("kb-sheet-closing");
     };
-    const syncLive = () => {
-      const m = computeKeyboardMetrics({
-        innerHeight: window.innerHeight,
-        visualViewportHeight: vv.height,
-        visualViewportOffsetTop: vv.offsetTop,
-        isTouch: true,
-      });
-      if (m.isOpen) {
-        // Live keyboard movement (open or re-open): exact tracking, the
-        // transition must be off or the toolbar trails the keyboard.
-        cancelClosing();
-        setBottom(m.keyboardInset);
-      } else if (!closing) {
-        setBottom(0);
-      }
-      // While closing the CSS transition owns `bottom`: the frozen viewport
-      // would otherwise pin it at the stale open value mid-slide.
-    };
     const beginClosing = () => {
       if (closing) return;
       closing = true;
@@ -149,43 +156,65 @@ function useSheetKeyboardInset(panelRef: React.RefObject<HTMLDivElement | null>)
       // transition already put us at 0 — just drop the class.
       settleTimer = setTimeout(cancelClosing, 350);
     };
+    // Viewport event with no fresh user intent: honour it only when it agrees
+    // with focus (see resolveSheetBottomAction).
+    const onViewportEvent = () => {
+      const m = readLive();
+      const action = resolveSheetBottomAction({
+        viewportOpen: m.isOpen,
+        closing,
+        focusedInSheet: focusedInSheet(),
+      });
+      if (action === "track") {
+        cancelClosing();
+        setBottom(m.keyboardInset);
+      } else if (action === "begin-close") {
+        beginClosing();
+      } else if (action === "settle-zero") {
+        setBottom(0);
+      }
+      // "ignore": the close-glide transition owns `bottom`.
+    };
     const onFocusIn = (event: FocusEvent) => {
       const target = event.target;
       if (!(target instanceof HTMLElement) || !panel.contains(target)) return;
       if (!isEditableElement(target)) return;
-      syncLive();
+      // Genuine user intent: drop any in-flight glide. Tracking resumes via
+      // the viewport stream; the polls below catch a silent iOS open that
+      // fires no viewport event at all (vv.height is live, so re-reading
+      // is enough to notice it).
+      cancelClosing();
+      for (const delay of [150, 350]) {
+        openPollTimers.push(setTimeout(onViewportEvent, delay));
+      }
     };
     const onFocusOut = () => {
       if (blurTimer) clearTimeout(blurTimer);
       blurTimer = setTimeout(() => {
         blurTimer = null;
-        const active = document.activeElement;
-        if (
-          active instanceof HTMLElement &&
-          panel.contains(active) &&
-          isEditableElement(active)
-        ) {
-          return;
-        }
-        beginClosing();
-      }, 60);
+        // Focus moved to another editable (dialog input, title ↔ editor):
+        // the keyboard stays up, so no descent.
+        if (!keyboardHeldByFocus()) beginClosing();
+      }, 100);
     };
 
-    vv.addEventListener("resize", syncLive);
-    vv.addEventListener("scroll", syncLive);
-    window.addEventListener("resize", syncLive);
-    window.addEventListener("orientationchange", syncLive);
+    vv.addEventListener("resize", onViewportEvent);
+    vv.addEventListener("scroll", onViewportEvent);
+    window.addEventListener("resize", onViewportEvent);
+    window.addEventListener("orientationchange", onViewportEvent);
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
-    syncLive();
+    onViewportEvent();
 
     return () => {
-      vv.removeEventListener("resize", syncLive);
-      vv.removeEventListener("scroll", syncLive);
-      window.removeEventListener("resize", syncLive);
-      window.removeEventListener("orientationchange", syncLive);
+      vv.removeEventListener("resize", onViewportEvent);
+      vv.removeEventListener("scroll", onViewportEvent);
+      window.removeEventListener("resize", onViewportEvent);
+      window.removeEventListener("orientationchange", onViewportEvent);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
+      for (const timer of openPollTimers) clearTimeout(timer);
+      openPollTimers = [];
       cancelClosing();
       panel.style.bottom = "";
     };
