@@ -114,7 +114,7 @@ var expectedRoutes = []string{
 	"GET /api/v1/translations",
 	"GET /api/v1/quests/progress",
 	"POST /api/v1/quests/claim",
-		"POST /api/v1/quests/reconcile",
+	"POST /api/v1/quests/reconcile",
 	"POST /api/v1/quests/chests/:id/open",
 
 	// Push (PWA) — public VAPID key; subscribe/preferences are protected below
