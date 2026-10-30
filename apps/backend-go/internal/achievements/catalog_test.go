@@ -10,8 +10,8 @@ func TestDefaultCatalog_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Default() error: %v", err)
 	}
-	if cat.Len() != 17 {
-		t.Errorf("expected 17 groups, got %d", cat.Len())
+	if cat.Len() != 24 {
+		t.Errorf("expected 24 groups, got %d", cat.Len())
 	}
 
 	var onboarding, main int
@@ -41,8 +41,8 @@ func TestDefaultCatalog_Valid(t *testing.T) {
 	if onboarding != 10 {
 		t.Errorf("expected 10 onboarding groups (9 steps + meta), got %d", onboarding)
 	}
-	if main != 7 {
-		t.Errorf("expected 7 main-ladder groups, got %d", main)
+	if main != 14 {
+		t.Errorf("expected 14 main-ladder groups, got %d", main)
 	}
 }
 

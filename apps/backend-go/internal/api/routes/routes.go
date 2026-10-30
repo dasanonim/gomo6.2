@@ -636,6 +636,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 
 			// Quests: idempotent reward claims and chest opens (self only).
 			protected.POST("/quests/claim", questsHandler.Claim)
+			protected.POST("/quests/reconcile", questsHandler.Reconcile)
 			protected.POST("/quests/chests/:id/open", questsHandler.OpenChest)
 
 			// Custom sidebar tabs (synced across devices).

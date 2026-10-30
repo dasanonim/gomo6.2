@@ -93,7 +93,7 @@ RETURNING TRUE`, userID, GroupID(groupKey), level, blob).Scan(&inserted)
 	granted := make([]GrantedReward, 0, len(rewards))
 	achievementID := GroupID(groupKey)
 	for _, r := range rewards {
-		gr, err := grantReward(ctx, tx, userID, achievementID, level, r)
+		gr, err := grantReward(ctx, tx, userID, achievementID, level, r, "quest")
 		if err != nil {
 			return nil, err
 		}
@@ -105,9 +105,15 @@ RETURNING TRUE`, userID, GroupID(groupKey), level, blob).Scan(&inserted)
 	return granted, nil
 }
 
-// grantReward credits one reward inside the claim transaction.
-func grantReward(ctx context.Context, tx *sql.Tx, userID, achievementID string, level int, r Reward) (GrantedReward, error) {
+// grantReward credits one reward inside the claim transaction. ref tags the
+// ledger row: 'quest' for fresh claims, 'quest_recalc' for rework top-ups, so
+// the wallet history distinguishes "добрал после реворка" from new rewards.
+func grantReward(ctx context.Context, tx *sql.Tx, userID, achievementID string, level int, r Reward, ref string) (GrantedReward, error) {
 	gr := GrantedReward{Reward: r}
+	noun := "Quest reward"
+	if ref == "quest_recalc" {
+		noun = "Quest recalc"
+	}
 	switch r.Kind {
 	case RewardGems:
 		var balance int
@@ -118,8 +124,8 @@ func grantReward(ctx context.Context, tx *sql.Tx, userID, achievementID string, 
 		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO drops_transactions (user_id, type, amount, balance_after, reference_type, description)
-VALUES ($1, 'quest_reward_gems', $2, $3, 'quest', $4)`,
-			userID, r.Amount, balance, fmt.Sprintf("Quest reward: +%d gems", r.Amount)); err != nil {
+VALUES ($1, 'quest_reward_gems', $2, $3, $4, $5)`,
+			userID, r.Amount, balance, ref, fmt.Sprintf("%s: +%d gems", noun, r.Amount)); err != nil {
 			return gr, fmt.Errorf("achievements: grant gems ledger: %w", err)
 		}
 	case RewardDrops:
@@ -131,8 +137,8 @@ VALUES ($1, 'quest_reward_gems', $2, $3, 'quest', $4)`,
 		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO drops_transactions (user_id, type, amount, balance_after, reference_type, description)
-VALUES ($1, 'quest_reward', $2, $3, 'quest', $4)`,
-			userID, r.Amount, balance, fmt.Sprintf("Quest reward: +%d drops", r.Amount)); err != nil {
+VALUES ($1, 'quest_reward', $2, $3, $4, $5)`,
+			userID, r.Amount, balance, ref, fmt.Sprintf("%s: +%d drops", noun, r.Amount)); err != nil {
 			return gr, fmt.Errorf("achievements: grant drops ledger: %w", err)
 		}
 	case RewardChest:
