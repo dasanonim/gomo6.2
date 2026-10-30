@@ -1174,6 +1174,8 @@ const ru: LocaleResources = {
     toastHint: "Нажми, чтобы увидеть награду",
     toastGo: "К квестам",
     recheck: "Проверить награды",
+    expandLevels: "Все уровни",
+    collapseLevels: "Свернуть",
     rechecking: "Проверяем…",
     reworkedTitle: "Квесты обновлены",
     reworkedText: "Мы пересобрали квесты — нажми «Проверить награды», недоданное долетит само.",

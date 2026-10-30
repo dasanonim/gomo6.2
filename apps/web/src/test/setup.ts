@@ -15,6 +15,14 @@ if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
+// Polyfill scrollTo/scrollBy for jsdom: motion's frameloop measures through
+// them, and without the stub exit animations never settle (collapsed quest
+// cards would stay in the DOM forever under test).
+if (typeof window !== "undefined") {
+  (window as any).scrollTo = () => {};
+  (window as any).scrollBy = () => {};
+}
+
 // Polyfill matchMedia for jsdom (required by embla-carousel)
 if (typeof window !== "undefined" && !window.matchMedia) {
   window.matchMedia = ((query: string) => ({

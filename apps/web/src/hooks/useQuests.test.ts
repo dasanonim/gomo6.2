@@ -1,6 +1,6 @@
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { useQuests } from "./useQuests";
+import { useQuests, type ToppedUpLevel } from "./useQuests";
 import { eventManager } from "@/services/eventManager";
 
 const mockFetch = vi.fn();
@@ -163,7 +163,7 @@ describe("useQuests", () => {
           )
         : Promise.resolve(ok(PROGRESS)),
     );
-    let topped: { group_key: string; level: number; granted: { kind: string; amount?: number }[] }[] = [];
+    let topped: ToppedUpLevel[] = [];
     await act(async () => {
       topped = await result.current.reconcile();
     });

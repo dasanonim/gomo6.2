@@ -6,6 +6,7 @@ import {
   CalendarCheck,
   Camera,
   Check,
+  ChevronDown,
   Clock,
   Flag,
   Flame,
@@ -16,8 +17,7 @@ import {
   Loader2,
   MessageSquare,
   MessagesSquare,
-  NotebookPen,
-  PackageOpen,
+  NotebookPen,  PackageOpen,
   Palette,
   PenLine,
   RefreshCw,
@@ -256,6 +256,123 @@ function FirstStepRow({
         <div className="flex shrink-0 flex-col items-end">
           <RowStatus level={level} progress={quest.progress_current} isOwner={isOwner} claiming={claiming} onClaim={onClaim} reduce={reduce} />
         </div>
+      </div>
+    </CascadeRow>
+  );
+}
+
+/**
+ * A main-track quest as one calm card: the header (icon, title, claimed
+ * counter, expand toggle) plus a single focused level — the first claimable
+ * one, else the level being worked on, else the top. Claiming advances the
+ * focus to the next level with a spring swap; the toggle reveals the full
+ * ladder (the old all-rows view) without leaving the card.
+ */
+function LadderCard({
+  quest,
+  cardIndex,
+  isOwner,
+  claimingKey,
+  onClaimLevel,
+}: {
+  quest: Quest;
+  cardIndex: number;
+  isOwner: boolean;
+  claimingKey: string | null;
+  onClaimLevel: (level: QuestLevel) => void;
+}) {
+  const { t } = useTranslation();
+  const reduce = useReducedMotion();
+  const [expanded, setExpanded] = useState(false);
+  const levels = quest.levels;
+  const focus =
+    levels.find((l) => l.can_claim) ??
+    levels.find((l) => !l.completed) ??
+    levels[levels.length - 1];
+  const claimedCount = levels.filter((l) => l.claimed).length;
+  const single = levels.length < 2;
+  if (!focus) return null;
+  return (
+    <CascadeRow index={cardIndex}>
+      <div className="overflow-hidden rounded-xl border border-border/60 bg-surface">
+        <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <QuestIcon name={quest.icon} className="h-4 w-4" />
+          </div>
+          <h3 className="min-w-0 flex-1 truncate text-sm font-medium">{t(quest.title_key)}</h3>
+          {!single && (
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+              {claimedCount}/{levels.length}
+            </span>
+          )}
+          {!single && (
+            <motion.button
+              type="button"
+              aria-expanded={expanded}
+              aria-label={t(expanded ? "quests.collapseLevels" : "quests.expandLevels")}
+              onClick={() => setExpanded((v) => !v)}
+              {...pressFeedback(reduce)}
+              transition={springFor("snappy", reduce)}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              <motion.span
+                animate={{ rotate: expanded ? 180 : 0 }}
+                transition={springFor("snappy", reduce)}
+                className="flex"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </motion.span>
+            </motion.button>
+          )}
+        </div>
+        {!expanded && (
+          <AnimatePresence initial={false} mode="popLayout">
+            <motion.div
+              key={focus.level}
+              initial={reduce ? false : { opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reduce ? { opacity: 0 } : { opacity: 0, y: -10 }}
+              transition={springFor("snappy", reduce)}
+            >
+              <LadderRow
+                quest={quest}
+                level={focus}
+                index={0}
+                isLast
+                isOwner={isOwner}
+                claiming={claimingKey === `${quest.group_key}:${focus.level}`}
+                onClaim={() => onClaimLevel(focus)}
+              />
+            </motion.div>
+          </AnimatePresence>
+        )}
+        <AnimatePresence initial={false}>
+          {expanded && (
+            <motion.div
+              key="full-ladder"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={springFor("snappy", reduce)}
+              className="overflow-hidden"
+            >
+              <div className="divide-y divide-border/60">
+                {levels.map((level, li) => (
+                  <LadderRow
+                    key={level.level}
+                    quest={quest}
+                    level={level}
+                    index={li}
+                    isLast={li === levels.length - 1}
+                    isOwner={isOwner}
+                    claiming={claimingKey === `${quest.group_key}:${level.level}`}
+                    onClaim={() => onClaimLevel(level)}
+                  />
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </CascadeRow>
   );
@@ -727,32 +844,15 @@ export default function Achievements() {
           <section aria-label={t("quests.mainLadder")}>
             <h2 className="text-sm font-medium text-muted-foreground">{t("quests.mainLadder")}</h2>
             <div className="mt-3 space-y-4">
-              {main.map((quest) => (
-                <div
+              {main.map((quest, qi) => (
+                <LadderCard
                   key={quest.group_key}
-                  className="overflow-hidden rounded-xl border border-border/60 bg-surface"
-                >
-                  <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                      <QuestIcon name={quest.icon} className="h-4 w-4" />
-                    </div>
-                    <h3 className="min-w-0 truncate text-sm font-medium">{t(quest.title_key)}</h3>
-                  </div>
-                  <div className="divide-y divide-border/60">
-                    {quest.levels.map((level, li) => (
-                      <LadderRow
-                        key={level.level}
-                        quest={quest}
-                        level={level}
-                        index={li}
-                        isLast={li === quest.levels.length - 1}
-                        isOwner={isOwner}
-                        claiming={claimingKey === `${quest.group_key}:${level.level}`}
-                        onClaim={() => void handleClaim(quest, level)}
-                      />
-                    ))}
-                  </div>
-                </div>
+                  quest={quest}
+                  cardIndex={qi}
+                  isOwner={isOwner}
+                  claimingKey={claimingKey}
+                  onClaimLevel={(level) => void handleClaim(quest, level)}
+                />
               ))}
             </div>
           </section>

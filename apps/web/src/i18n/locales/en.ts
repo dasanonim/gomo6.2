@@ -1140,6 +1140,8 @@ const en: LocaleResources = {
     toastHint: "Tap to see your reward",
     toastGo: "To quests",
     recheck: "Check rewards",
+    expandLevels: "Show all levels",
+    collapseLevels: "Collapse",
     rechecking: "Checking…",
     reworkedTitle: "Quests reworked",
     reworkedText: "We rebuilt the quests — hit “Check rewards” and anything owed will land.",
