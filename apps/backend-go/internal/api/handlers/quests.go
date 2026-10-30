@@ -187,32 +187,33 @@ ORDER BY a.sort_order, a.group_key`, targetID)
 
 // recalcOwes reports whether a claimed level is owed a rework top-up.
 func recalcOwes(already, current []achievements.Reward) bool {
-	have := map[achievements.RewardKind]int{}
-	for _, r := range already {
-		if r.Kind == achievements.RewardDrops || r.Kind == achievements.RewardGems {
-			have[r.Kind] += r.Amount
+	sumCoins := func(rs []achievements.Reward) map[achievements.RewardKind]int {
+		out := map[achievements.RewardKind]int{}
+		for _, r := range rs {
+			switch r.Kind {
+			case achievements.RewardDrops, achievements.RewardGems:
+				out[r.Kind] += r.Amount
+			}
 		}
+		return out
 	}
-	want := map[achievements.RewardKind]int{}
-	chestsHave, chestsWant := 0, 0
-	for _, r := range already {
-		if r.Kind == achievements.RewardChest {
-			chestsHave++
+	countChests := func(rs []achievements.Reward) int {
+		n := 0
+		for _, r := range rs {
+			switch r.Kind {
+			case achievements.RewardChest:
+				n++
+			}
 		}
+		return n
 	}
-	for _, r := range current {
-		if r.Kind == achievements.RewardDrops || r.Kind == achievements.RewardGems {
-			want[r.Kind] += r.Amount
-		} else if r.Kind == achievements.RewardChest {
-			chestsWant++
-		}
-	}
+	have, want := sumCoins(already), sumCoins(current)
 	for _, k := range []achievements.RewardKind{achievements.RewardDrops, achievements.RewardGems} {
 		if want[k] > have[k] {
 			return true
 		}
 	}
-	return chestsWant > chestsHave
+	return countChests(current) > countChests(already)
 }
 
 // catalogUpdatedAt is the newest code-catalog mirror write — the frontend
