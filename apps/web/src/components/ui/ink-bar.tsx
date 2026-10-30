@@ -2,7 +2,7 @@
 // hovered/focused child marked with `data-ink`. Wrap a row of buttons; the
 // blob never intercepts pointer events.
 
-import { forwardRef, useCallback, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useRef, useState, type FocusEvent, type ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { springFor } from "@/lib/motion";
 
@@ -60,13 +60,45 @@ export const InkBar = ({
   // mouseover bubbles from every child — gliding to the same element twice is
   // a wasted render, not motion.
   const lastTargetRef = useRef<HTMLElement | null>(null);
+  // Hiding is debounced: sliding fast across a gap to the next button must
+  // keep gliding, but resting on a gap (or anywhere off the buttons) has to
+  // drop the blob — otherwise it stays stuck on the last button.
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const moveTo = useCallback((element: HTMLElement | null) => {
-    if (!element || lastTargetRef.current === element) return;
-    lastTargetRef.current = element;
-    // offsetLeft/Top are relative to the positioned container and scroll-safe.
-    setInk({ x: element.offsetLeft, y: element.offsetTop, visible: true });
+  const cancelHide = useCallback(() => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
   }, []);
+
+  useEffect(() => cancelHide, [cancelHide]);
+
+  const hideNow = useCallback(() => {
+    cancelHide();
+    lastTargetRef.current = null;
+    setInk((prev) => (prev.visible ? { ...prev, visible: false } : prev));
+  }, [cancelHide]);
+
+  const scheduleHide = useCallback(() => {
+    if (hideTimerRef.current) return;
+    hideTimerRef.current = setTimeout(() => {
+      hideTimerRef.current = null;
+      lastTargetRef.current = null;
+      setInk((prev) => (prev.visible ? { ...prev, visible: false } : prev));
+    }, 90);
+  }, []);
+
+  const moveTo = useCallback(
+    (element: HTMLElement | null) => {
+      if (!element || lastTargetRef.current === element) return;
+      cancelHide();
+      lastTargetRef.current = element;
+      // offsetLeft/Top are relative to the positioned container and scroll-safe.
+      setInk({ x: element.offsetLeft, y: element.offsetTop, visible: true });
+    },
+    [cancelHide],
+  );
 
   const findInkTarget = (target: EventTarget | null): HTMLElement | null => {
     if (!(target instanceof HTMLElement)) return null;
@@ -78,12 +110,17 @@ export const InkBar = ({
     <div
       ref={containerRef}
       className={`relative ${className}`}
-      onMouseLeave={() => {
-        lastTargetRef.current = null;
-        setInk((prev) => ({ ...prev, visible: false }));
+      onMouseLeave={hideNow}
+      onMouseOver={(event) => {
+        const element = findInkTarget(event.target);
+        if (element) moveTo(element);
+        else scheduleHide();
       }}
-      onMouseOver={(event) => moveTo(findInkTarget(event.target))}
       onFocusCapture={(event) => moveTo(findInkTarget(event.target))}
+      onBlurCapture={(event: FocusEvent<HTMLDivElement>) => {
+        const next = event.relatedTarget;
+        if (!(next instanceof HTMLElement) || !containerRef.current?.contains(next)) hideNow();
+      }}
     >
       <motion.span
         aria-hidden="true"
