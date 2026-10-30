@@ -21,7 +21,9 @@ initCustomThemes();
 import "@/components/Lightbox.css";
 
 // Mobile virtual keyboard: tracks the visual viewport, publishes --app-vh /
-// --kb-inset CSS variables and keeps the focused input above the keyboard.
+// --kb-inset CSS variables, and plays a single eased descent when the keyboard
+// closes. Open/close are each exactly one motion; layout heights never change
+// (the topbar cannot move) — see lib/mobileKeyboard.ts.
 const disposeMobileKeyboard = initMobileKeyboard();
 
 // Whether the engine compensates a layout change above the viewport with native

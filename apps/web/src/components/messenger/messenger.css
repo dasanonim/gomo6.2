@@ -4286,12 +4286,27 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
 }
 
 @media (max-width: 980px) {
+  /* Chat is full-screen on mobile: the document must not scroll at all while
+     a chat is open, so Safari physically cannot pan it to "reveal" a focused
+     input. That pan is what used to throw the whole fixed messenger shell —
+     topbar included — off-screen mid-frame (see IMG_2487). Deliberately NOT
+     position:fixed: pinning the body resets its scroll offset and re-anchors
+     every fixed descendant, which itself reads as the topbar flying away.
+     overflow:hidden keeps the current position and just removes the pan. */
+  body.messenger-mobile-chat-active {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   .messenger-app {
     position: fixed;
     inset: 0;
-    /* Visual-viewport height: the whole messenger shrinks when the keyboard
-       opens so the composer (grid row auto) stays above it on iOS. */
-    height: var(--app-vh, 100svh);
+    /* Constant full-screen height — NEVER the visual viewport. Shrinking the
+       shell with the keyboard used to re-layout every fixed descendant
+       mid-animation on iOS (another source of the flying topbar). The keyboard
+       is handled purely by the compositor-only `translate` lift on the chat
+       body below; the header grid row is untouched and cannot move. */
+    height: 100dvh;
     min-height: 0;
     border: 0;
     border-radius: 0;
@@ -4358,20 +4373,21 @@ body:not(.is-scrolling-messages) .chat-sticky-date {
     pointer-events: auto;
   }
 
-  /* Lift the message list and composer above the soft keyboard with a GPU-only
-     transform (no layout). The header (first grid row) is left untouched, so
-     it stays pinned while the chat body rides up/down with the keyboard.
+  /* The whole panel — topbar included — rides above the soft keyboard with
+     one GPU-only motion (no layout): standard native behavior, no resistance.
      The inset is the classic visual-viewport delta (innerHeight − vv.height)
      published by lib/mobileKeyboard.ts: the real keyboard height on iOS
-     Safari, where the layout viewport never resizes. Browsers that DO resize
-     the layout viewport with the keyboard (Chrome/Firefox Android with
-     interactive-widget=resizes-content, Firefox on iOS) already move the fixed
-     panel so the composer clears the keyboard natively — there the delta is 0
-     and no translate is applied; the message list then re-pins to its new
-     bottom in MessageList. */
-  .chat-panel.is-open .chat-messages-area,
-  .chat-panel.is-open .composer {
+     Safari, where the layout viewport never resizes. The single `transition`
+     is the ONLY smoothing in the system — it turns both the choppy open
+     steps and the late close event into one continuous glide, so there is no
+     JS animation to double-play or fight. Browsers that DO resize the layout
+     viewport with the keyboard (Chrome/Firefox Android with
+     interactive-widget=resizes-content, Firefox on iOS) already move the
+     fixed panel so the composer clears the keyboard natively — there the
+     delta is 0 and no lift is applied. */
+  .chat-panel.is-open {
     translate: 0 calc(-1 * var(--kb-inset, 0px));
+    transition: translate 0.2s ease-out;
     will-change: translate;
   }
 
