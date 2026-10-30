@@ -50,17 +50,31 @@ export interface ChestResult {
   drops: number;
 }
 
+export interface ToppedUpLevel {
+  group_key: string;
+  level: number;
+  granted: QuestReward[];
+}
+
 export interface UseQuestsResult {
   quests: Quest[];
   chests: QuestChest[];
   drops: number;
   unclaimedCount: number;
+  /** The catalog owes top-ups for already-claimed levels (rework landed). */
+  recalcAvailable: boolean;
+  /** Newest code-catalog write; drives the "quests reworked" banner. */
+  catalogUpdatedAt: string;
   loading: boolean;
   claim: (questKey: string, level: number) => Promise<QuestReward[]>;
+  /** Top up reworked rewards ("забрать недоданное"). Idempotent. */
+  reconcile: () => Promise<ToppedUpLevel[]>;
   openChest: (id: string) => Promise<ChestResult>;
   reload: () => Promise<void>;
   /** Patch one level as claimed without any request (after a successful claim). */
   applyClaim: (questKey: string, level: number, granted: QuestReward[]) => void;
+  /** Credit a reconcile top-up without any request (levels stay claimed). */
+  applyRecalc: (topped: ToppedUpLevel[]) => void;
   /** Drop an opened chest and credit its drops without any request. */
   applyChestOpen: (id: string, drops: number) => void;
 }
@@ -69,6 +83,8 @@ interface ProgressResponse {
   user_id: string;
   drops: number;
   unclaimed_count: number;
+  recalc_available?: boolean;
+  catalog_updated_at?: string;
   quests: Quest[];
   chests?: QuestChest[];
 }
@@ -96,6 +112,8 @@ export function useQuests(userId: string | undefined): UseQuestsResult {
   const [quests, setQuests] = useState<Quest[]>([]);
   const [chests, setChests] = useState<QuestChest[]>([]);
   const [drops, setDrops] = useState(0);
+  const [recalcAvailable, setRecalcAvailable] = useState(false);
+  const [catalogUpdatedAt, setCatalogUpdatedAt] = useState("");
   const [loading, setLoading] = useState(Boolean(userId));
   // After the first settled load, refreshes are silent background syncs.
   const firstLoad = useRef(true);
@@ -118,6 +136,8 @@ export function useQuests(userId: string | undefined): UseQuestsResult {
       setQuests(data.quests ?? []);
       setChests(data.chests ?? []);
       setDrops(data.drops ?? 0);
+      setRecalcAvailable(Boolean(data.recalc_available));
+      setCatalogUpdatedAt(data.catalog_updated_at ?? "");
     } finally {
       if (initial) {
         firstLoad.current = false;
@@ -234,16 +254,51 @@ export function useQuests(userId: string | undefined): UseQuestsResult {
     if (dropsWon > 0) setDrops((g) => g + dropsWon);
   }, []);
 
+  const reconcile = useCallback(async (): Promise<ToppedUpLevel[]> => {
+    const body = await apiClient.request<{ topped_up?: ToppedUpLevel[] }>(
+      "/api/v1/quests/reconcile",
+      { method: "POST" },
+    );
+    const data = body.data as { topped_up?: ToppedUpLevel[] } | undefined;
+    return data?.topped_up ?? [];
+  }, []);
+
+  const applyRecalc = useCallback((topped: ToppedUpLevel[]) => {
+    let dropsWon = 0;
+    const newChests: QuestChest[] = [];
+    for (const t of topped) {
+      for (const g of t.granted ?? []) {
+        if (g.kind === "drops") dropsWon += g.amount ?? 0;
+        if (g.kind === "chest" && g.chest_id) {
+          newChests.push({
+            id: g.chest_id,
+            quest_key: t.group_key,
+            level: t.level,
+            mechanic: g.mechanic || "rarity_chest",
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
+    }
+    if (dropsWon > 0) setDrops((g) => g + dropsWon);
+    if (newChests.length > 0) setChests((prev) => [...prev, ...newChests]);
+    if (topped.length > 0) setRecalcAvailable(false);
+  }, []);
+
   return {
     quests,
     chests,
     drops,
     unclaimedCount,
+    recalcAvailable,
+    catalogUpdatedAt,
     loading,
     claim,
+    reconcile,
     openChest,
     reload,
     applyClaim,
+    applyRecalc,
     applyChestOpen,
   };
 }

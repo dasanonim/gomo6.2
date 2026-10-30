@@ -3,8 +3,12 @@ import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
+  CalendarCheck,
+  Camera,
   Check,
+  Clock,
   Flag,
+  Flame,
   Gift,
   Heart,
   HeartHandshake,
@@ -13,8 +17,10 @@ import {
   MessageSquare,
   MessagesSquare,
   NotebookPen,
+  PackageOpen,
   Palette,
   PenLine,
+  RefreshCw,
   Smile,
   Sparkles,
   Trophy,
@@ -52,6 +58,12 @@ const ICONS: Record<string, LucideIcon> = {
   trophy: Trophy,
   "notebook-pen": NotebookPen,
   flag: Flag,
+  gift: Gift,
+  "package-open": PackageOpen,
+  camera: Camera,
+  "calendar-check": CalendarCheck,
+  flame: Flame,
+  clock: Clock,
 };
 
 function QuestIcon({ name, className }: { name: string; className?: string }) {
@@ -450,7 +462,7 @@ export default function Achievements() {
 
   const trophyUserId =
     profile?.id ?? (userId && isPublicId(userId) ? undefined : userId);
-  const { quests, chests, drops, unclaimedCount, loading, claim, openChest, reload, applyClaim, applyChestOpen } =
+  const { quests, chests, drops, unclaimedCount, recalcAvailable, catalogUpdatedAt, loading, claim, reconcile, openChest, reload, applyClaim, applyRecalc, applyChestOpen } =
     useQuests(trophyUserId);
   const isOwner = Boolean(user?.id && trophyUserId && user.id === trophyUserId);
   // In-flight claim/open guard: state-driven `disabled` flips only after a
@@ -512,8 +524,68 @@ export default function Achievements() {
     }
   };
 
-  const handleOpenChest = async (id: string) => {
-    const key = `chest:${id}`;
+  // Rework top-up ("забрать недоданное"): the catalog version the user last
+  // saw lives in localStorage; a newer catalog_updated_at raises the banner.
+  const seenKey = user?.id ? `quests:catalog:seen:${user.id}` : null;
+  const [reconciling, setReconciling] = useState(false);
+  const [reworkedSeen, setReworkedSeen] = useState(() => {
+    try {
+      return seenKey ? localStorage.getItem(seenKey) : null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    try {
+      setReworkedSeen(seenKey ? localStorage.getItem(seenKey) : null);
+    } catch {
+      setReworkedSeen(null);
+    }
+  }, [seenKey]);
+  const showReworked = isOwner && Boolean(catalogUpdatedAt) && reworkedSeen !== catalogUpdatedAt;
+  const markReworkedSeen = () => {
+    if (!seenKey || !catalogUpdatedAt) return;
+    try {
+      localStorage.setItem(seenKey, catalogUpdatedAt);
+    } catch {
+      /* ignore */
+    }
+    setReworkedSeen(catalogUpdatedAt);
+  };
+
+  const handleReconcile = async () => {
+    if (reconciling) return;
+    setReconciling(true);
+    try {
+      const topped = await reconcile();
+      applyRecalc(topped);
+      markReworkedSeen();
+      if (topped.length === 0) {
+        toast.message(t("quests.recalcEmpty"));
+        return;
+      }
+      const dropsWon = topped.flatMap((lvl) => lvl.granted ?? [])
+        .filter((g) => g.kind === "drops")
+        .reduce((sum, g) => sum + (g.amount ?? 0), 0);
+      const gemsWon = topped.flatMap((lvl) => lvl.granted ?? [])
+        .filter((g) => g.kind === "gems")
+        .reduce((sum, g) => sum + (g.amount ?? 0), 0);
+      const chestsWon = topped.flatMap((lvl) => lvl.granted ?? [])
+        .filter((g) => g.kind === "chest").length;
+      const parts: string[] = [];
+      if (dropsWon > 0) parts.push(t("quests.claimedDrops", { count: dropsWon, label: formatDropsLabel(dropsWon) }));
+      if (gemsWon > 0) parts.push(t("quests.claimedGems", { count: gemsWon, label: formatGemsLabel(gemsWon) }));
+      if (chestsWon > 0) parts.push(t("quests.recalcChest", { count: chestsWon }));
+      toast.success(parts.length > 0 ? parts.join(", ") : t("quests.claimedDone"));
+      void reload();
+    } catch {
+      toast.error(t("quests.recalcFailed"));
+    } finally {
+      setReconciling(false);
+    }
+  };
+
+  const handleOpenChest = async (id: string) => {    const key = `chest:${id}`;
     if (inflight.current.has(key)) return;
     inflight.current.add(key);
     setClaimingKey(key);
@@ -590,6 +662,24 @@ export default function Achievements() {
       </ContentEnter>
 
       <div className="mt-8 space-y-9">
+        {isOwner && (recalcAvailable || showReworked) && (
+          <section
+            aria-label={t("quests.reworkedTitle")}
+            className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4"
+          >
+            <h2 className="text-sm font-semibold">{t("quests.reworkedTitle")}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{t("quests.reworkedText")}</p>
+            <button
+              type="button"
+              onClick={() => void handleReconcile()}
+              disabled={reconciling}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-sm font-medium text-primary-foreground transition-opacity disabled:opacity-60"
+            >
+              <RefreshCw className={cn("h-4 w-4", reconciling && "animate-spin")} />
+              {t(reconciling ? "quests.rechecking" : "quests.recheck")}
+            </button>
+          </section>
+        )}
         {isOwner && chests.length > 0 && (
           <section aria-label={t("quests.chestsSection", { count: chests.length })}>
             <h2 className="text-sm font-medium text-muted-foreground">

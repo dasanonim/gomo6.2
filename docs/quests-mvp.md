@@ -24,22 +24,34 @@
 - Типы наград (`RewardKind`): `gems` (`users.gems`), `drops`
   (`drops_transactions` тип `quest_reward`), `chest` (строка в `quest_chests`).
   Новый тип = ветка в `grantReward`, движок и таблицы клеймов не меняются.
-- Правило экономики MVP: обычные уровни — гемы по нарастающей, дропсы —
-  только топ-уровни и мета-квест. Конвертации гемы→дропсы нет.
+- Правило экономики (реворк kvestikiref): мелкие уровни — скромные дропсы
+  (анти-инфляция, ~500–1000 дропсов за активный первый месяц), топы жирнее,
+  гемы — на финале каждого трека, сундуки — только верхние уровни сложных
+  треков. Конвертации нет. Леджер отличает свежие клеймы (`quest`, типы
+  `quest_reward`/`quest_reward_gems`) от доплат после реворка (`quest_recalc`).
+- Пересчёт после смены каталога: `Engine.ReconcileUser` доплачивает
+  `max(новая сумма − уже выдано, 0)` по каждому заслуженному уровню (без
+  отката), `POST /quests/reconcile` — кнопка «Проверить награды», прогресс
+  отдаёт `recalc_available` + `catalog_updated_at` для баннера «Квесты обновлены».
 - Сундук: `POST /quests/chests/:id/open` играет полную сессию
-  `gamification` на сервере (crypto/rand) и кредитует гемы. Открытие
+  `gamification` на сервере (crypto/rand) и кредитует дропсы. Открытие
   идемпотентно (`opened_at`).
 
-## Каталог MVP (17 групп)
+## Каталог (24 группы, реворк kvestikiref)
 
-Первые шаги (one_time, по 10–20 гемов): `qs_avatar`, `qs_bio`,
+Первые шаги (one_time, по 8–12 дропсов): `qs_avatar`, `qs_bio`,
 `qs_first_thread`, `qs_first_wall`, `qs_first_comment`, `qs_like_given`,
-`qs_sub_join`, `qs_follow`, `qs_style`. Мета `qs_complete` (9/9): 100 гемов +
-5 дропсов + сундук.
+`qs_sub_join`, `qs_follow`, `qs_style`. Мета `qs_complete` (9/9): 80 дропсов +
+5 гемов + сундук.
 
-Лестница: `entries` 1/10/50/250/1000, `comments` 1/25/150/750,
-`likes_given` 1/50/300, `likes_received` 10/100/500/2000,
-`subs_joined` 1/5, `sub_created` 1, `follows` 1/10/50.
+Лестницы: `entries` 1/10/25/100/500/1500, `comments` 1/15/60/250/1000,
+`likes_given` 1/25/100/500/1500, `likes_received` 10/50/200/800/3000,
+`media_uploads` 1/10/50/200, `subs_joined` 1/3/8/20, `sub_created` 1,
+`follows` 1/5/20/80, `friends_mutual` 1/5/15, `gifts_sent` 1/5/25,
+`gifts_received` 1/5/25, `visits_total` 3/10/30/100/365,
+`visit_streak` 3/7/14/30, `tenure_days` 10/30/100/365.
+
+Дейлики — только архитектура (хуки движка), без UI: следующим заходом.
 
 ## Фронт
 

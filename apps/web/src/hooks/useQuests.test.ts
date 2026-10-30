@@ -135,4 +135,46 @@ describe("useQuests", () => {
     );
     unmount();
   });
+
+  it("surfaces recalc flags and tops up via reconcile", async () => {
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(ok({ ...PROGRESS, recalc_available: true, catalog_updated_at: "2026-10-31T00:00:00Z" })),
+    );
+    const { result } = renderHook(() => useQuests("u1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.recalcAvailable).toBe(true);
+    expect(result.current.catalogUpdatedAt).toBe("2026-10-31T00:00:00Z");
+
+    mockFetch.mockImplementation((url: string) =>
+      String(url).includes("/quests/reconcile")
+        ? Promise.resolve(
+            ok({
+              topped_up: [
+                {
+                  group_key: "entries",
+                  level: 1,
+                  granted: [
+                    { kind: "drops", amount: 15 },
+                    { kind: "chest", chest_id: "c1", mechanic: "rarity_chest" },
+                  ],
+                },
+              ],
+            }),
+          )
+        : Promise.resolve(ok(PROGRESS)),
+    );
+    let topped: { group_key: string; level: number; granted: { kind: string; amount?: number }[] }[] = [];
+    await act(async () => {
+      topped = await result.current.reconcile();
+    });
+    expect(topped).toHaveLength(1);
+
+    act(() => {
+      result.current.applyRecalc(topped);
+    });
+    expect(result.current.drops).toBe(45);
+    expect(result.current.chests).toHaveLength(1);
+    expect(result.current.chests[0].id).toBe("c1");
+    expect(result.current.recalcAvailable).toBe(false);
+  });
 });

@@ -91,11 +91,15 @@ function setupFetch({
   quests = QUESTS,
   drops = 30,
   unclaimed = 1,
+  recalcAvailable = false,
+  catalogUpdatedAt = "",
 }: {
   profile?: { id: string; username: string } | null;
   quests?: typeof QUESTS;
   drops?: number;
   unclaimed?: number;
+  recalcAvailable?: boolean;
+  catalogUpdatedAt?: string;
 } = {}) {
   const ok = (data: unknown) => ({
     ok: true,
@@ -104,13 +108,24 @@ function setupFetch({
     json: () => Promise.resolve({ success: true, data }),
     text: () => Promise.resolve(JSON.stringify({ success: true, data })),
   });
-  mockFetch.mockImplementation((url: string) => {
+  mockFetch.mockImplementation((url: string, opts?: RequestInit) => {
     if (url.includes("/profiles")) {
       return Promise.resolve(ok(profile ? [profile] : []));
     }
+    if (url.includes("/quests/reconcile") && opts?.method === "POST") {
+      return Promise.resolve(ok({ topped_up: [] }));
+    }
     if (url.includes("/quests/progress")) {
       return Promise.resolve(
-        ok({ user_id: "profile-user-1", drops, unclaimed_count: unclaimed, quests, chests: [] }),
+        ok({
+          user_id: "profile-user-1",
+          drops,
+          unclaimed_count: unclaimed,
+          recalc_available: recalcAvailable,
+          catalog_updated_at: catalogUpdatedAt,
+          quests,
+          chests: [],
+        }),
       );
     }
     return Promise.resolve(ok([]));
@@ -201,5 +216,50 @@ describe("Achievements page", () => {
       );
       expect(posts.length).toBe(1);
     });
+  });
+
+  it("shows the rework banner and checks rewards on click", async () => {
+    setupFetch({ recalcAvailable: true, catalogUpdatedAt: "2026-10-31T00:00:00Z" });
+    render(<Achievements />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Квесты обновлены")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("Проверить награды"));
+
+    await waitFor(() => {
+      const posts = mockFetch.mock.calls.filter(
+        ([url, opts]: any[]) =>
+          typeof url === "string" &&
+          url.includes("/quests/reconcile") &&
+          (opts as RequestInit)?.method === "POST",
+      );
+      expect(posts.length).toBe(1);
+    });
+  });
+
+  it("hides the rework banner once the catalog version is seen", async () => {
+    const store: Record<string, string> = { "quests:catalog:seen:profile-user-1": "seen-v1" };
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => {
+        store[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete store[k];
+      },
+      clear: () => {
+        for (const k of Object.keys(store)) delete store[k];
+      },
+    });
+    setupFetch({ recalcAvailable: false, catalogUpdatedAt: "seen-v1" });
+    render(<Achievements />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Квесты — testuser")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Квесты обновлены")).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
+    vi.stubGlobal("fetch", mockFetch);
   });
 });
