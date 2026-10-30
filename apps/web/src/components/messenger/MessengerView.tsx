@@ -315,9 +315,7 @@ export const MessengerView = () => {
   // ── Render ────────────────────────────────────────────────────────────
   return (
     <MessengerErrorBoundary>
-      {/* data-kb-app marks the full-screen messenger shell: lib/mobileKeyboard
-          resets Safari's document pan for inputs inside it. */}
-      <div className="messenger-app" data-kb-app>
+      <div className="messenger-app">
         <div
           className={`messenger-shell ${showMobileChat ? "mobile-chat-open" : ""}`}
           style={!isMobile ? { gridTemplateColumns: `${sidebarWidth}px minmax(0, 1fr)` } : undefined}
@@ -358,10 +356,6 @@ export const MessengerView = () => {
           <motion.section
             ref={swipeBack.panelRef}
             className={`chat-panel${showMobileChat ? " is-open" : ""}${!conversation ? " is-empty" : ""}${swipeBack.isBackDragging ? " is-back-dragging" : ""}`}
-            // Scrolling the chat (history, composer) must keep the soft
-            // keyboard up — like the emoji swap panel does — instead of
-            // triggering the iOS scroll-to-dismiss (see mobileKeyboard.ts).
-            data-kb-keep
             style={{ x: swipeBack.x }}
           >
             <ChatView
