@@ -16,18 +16,21 @@ import { MobileMenu } from "@/components/MobileMenu";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
 import { TopLoadingBar } from "@/components/TopLoadingBar";
 import { HeaderUsername } from "@/components/HeaderUsername";
+import { HeaderIconButton, HeaderIconLink } from "@/components/HeaderIconButton";
+import { UnreadBadge } from "@/components/UnreadBadge";
+import { InkBar } from "@/components/ui/ink-bar";
+import { useUnclaimedCount } from "@/hooks/useUnclaimedRewards";
 import { Footer } from "@/components/Footer";
 import { CookieBanner } from "@/components/CookieBanner";
 import { GuestSignupBanner } from "@/components/GuestSignupBanner";
 import { Gomo6Mark } from "@/components/Gomo6Mark";
-import { Settings, SkipBack, SkipForward, Play, Pause, Volume2, X, Search } from "lucide-react";
+import { Settings, SkipBack, SkipForward, Play, Pause, Volume2, X, Search, ScrollText } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { searchGlobal, type GlobalSearchResult } from "@/utils/globalSearch";
 import { HighlightText } from "@/components/search/HighlightText";
 import { useAuth } from "@/hooks/useAuth";
 import { useProfileInvalidation } from "@/hooks/useProfileInvalidation";
 import { useQueryClient } from "@tanstack/react-query";
-import { DropsShop } from "@/components/DropsShop";
 import { eventManager } from "@/services/eventManager";
 import { useTabTitle } from "@/hooks/useTabTitle";
 import { useProfileRealtimeInvalidation } from "@/hooks/useProfileRealtimeInvalidation";
@@ -86,6 +89,8 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   const { user } = useAuth(); // Use cached auth hook instead of local state
+  // Claimable quest rewards for the header badge (0 for guests — no fetch).
+  const unclaimedCount = useUnclaimedCount(user?.id);
   const { loadProfile } = useProfileCache();
   const [isModerator, setIsModerator] = useState(false);
   const [isHeaderVisible, setIsHeaderVisible] = useState(true);
@@ -130,7 +135,6 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
   const lastPlayEventRef = useRef<string | null>(null);
   const isBackgroundResumeRef = useRef(false);
   const { scrollY } = useScroll();
-  const [showDropsShop, setShowDropsShop] = useState(false);
 
   // ── Header hide/show animation ─────────────────────────────────────────────
   // The header is position:fixed, so the content below it is padded to
@@ -176,13 +180,6 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
     12 + headerHeight * p * cp);
 
   useTabTitle();
-
-  // Global DropsShop listener
-  useEffect(() => {
-    const handler = () => setShowDropsShop(true);
-    window.addEventListener('open-drops-shop', handler);
-    return () => window.removeEventListener('open-drops-shop', handler);
-  }, []);
 
   // Global SPA navigation listener (used by ProfileHoverCard etc.)
   useEffect(() => {
@@ -1354,10 +1351,17 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
           <motion.div
             className={`flex items-center justify-between gap-2 sm:gap-3 min-h-[49px]${mobileSearchOpen ? " hidden lg:flex" : ""}`}
           >
-          <NavigationLink to="/" aria-label="gomo6" className="shrink-0 inline-flex items-center group">
-            <Gomo6Mark className="app-header-logo h-11 w-11 text-primary transition-transform duration-200 ease-out group-hover:scale-105" />
+          <NavigationLink to="/" aria-label="gomo6" className="shrink-0 inline-flex items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <motion.span
+              className="inline-flex"
+              whileHover={reduceMotion ? undefined : { scale: 1.06, rotate: -2 }}
+              whileTap={reduceMotion ? undefined : { scale: 0.94 }}
+              transition={springFor("snappy", reduceMotion)}
+            >
+              <Gomo6Mark className="app-header-logo h-11 w-11 text-primary" />
+            </motion.span>
           </NavigationLink>
-          <div className="flex gap-1 sm:gap-2 items-center shrink-0">
+          <InkBar className="flex gap-1 sm:gap-2 items-center shrink-0">
             {/* Desktop search: one element that morphs — the lens button IS
                 the pill's right end, and the field unrolls leftward out of it
                 with a spring (width via framer, colors via CSS transition).
@@ -1402,16 +1406,15 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
                     }}
                   />
                 </motion.div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  aria-label={desktopSearchExpanded ? t('nav.closeSearch') : t('nav.openSearch')}
-                  className="absolute right-0 top-0 h-9 w-9 p-0 rounded-full shrink-0"
+                <HeaderIconButton
+                  label={desktopSearchExpanded ? t('nav.closeSearch') : t('nav.openSearch')}
                   onClick={() => setDesktopSearchExpanded((prev) => !prev)}
+                  ink={false}
+                  testId="desktop-search-toggle"
+                  className="absolute right-0 top-0 h-9 w-9"
                 >
                   <Search className="h-4 w-4" />
-                </Button>
+                </HeaderIconButton>
               </motion.form>
 
               {searchOpen && desktopSearchExpanded && (
@@ -1426,22 +1429,41 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
                 </div>
               )}
             </div>
-            <Button
-              variant="ghost"
-              className="lg:hidden h-8 w-8 p-0"
+            <HeaderIconButton
+              label={mobileSearchOpen ? t('nav.closeSearch') : t('nav.openSearch')}
               onClick={() => setMobileSearchOpen((prev) => !prev)}
+              testId="mobile-search-toggle"
+              className="lg:hidden"
             >
               <Search className="h-4 w-4" />
-            </Button>
+            </HeaderIconButton>
             {/* Настройки в хедере — только на десктопе; на мобилке пункт
-                переехал в бургер-панель (над дропсами). */}
-            <NavigationLink to="/settings" className="hidden lg:block">
-              <Button variant="ghost" className="relative h-8 w-8 p-0 hover:bg-[oklch(var(--foreground)/0.12)] transition-colors group">
-                <Settings className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
-                <span className="absolute bottom-0 left-0 w-0 h-[1.5px] bg-current transition-all duration-300 ease-out group-hover:w-full"></span>
-              </Button>
-            </NavigationLink>
+                переехал в бургер-панель (над гемами). */}
+            <div className="hidden lg:block">
+              <HeaderIconLink
+                to="/settings"
+                label={t('nav.settings')}
+                active={location.pathname === "/settings" || location.pathname.startsWith("/settings/")}
+              >
+                <Settings className="h-4 w-4" />
+              </HeaderIconLink>
+            </div>
             {user && <NotificationBell userId={user.id} />}
+            {/* Quests sit between notifications and messages: one glance shows
+                the bell, the claimable rewards and the chats, in that order. */}
+            {user && (
+              <div className="hidden lg:block">
+                <HeaderIconLink
+                  to={`/achievements/${user.id}`}
+                  label={t('nav.quests')}
+                  title={t('nav.quests')}
+                  active={location.pathname.startsWith("/achievements")}
+                  badge={<UnreadBadge count={unclaimedCount} />}
+                >
+                  <ScrollText className="h-4 w-4" />
+                </HeaderIconLink>
+              </div>
+            )}
             {/* Messenger lives in the bottom nav on phones — keep the header
                 one for desktop only to avoid two identical entry points. */}
             {user && (
@@ -1457,7 +1479,7 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
             {/* The login CTA lives inside the menu's profile block, so guests
                 get the hamburger instead of a separate header button. */}
             <MobileMenu user={user} isModerator={isModerator} />
-          </div>
+          </InkBar>
           </motion.div>
         </div>
         <TopLoadingBar />
@@ -1663,8 +1685,6 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
         <CookieBanner />
       </div>
       ) : null}
-
-      <DropsShop open={showDropsShop} onOpenChange={setShowDropsShop} />
 
       {/* Registration CTA for anonymous visitors (small, collapsible) */}
       {!user && <GuestSignupBanner mobileNavVisible={showBottomNavigation} />}

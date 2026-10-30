@@ -294,6 +294,9 @@ type NotificationParams struct {
 	Level int `json:"level,omitempty"`
 	// AwardKey is the hand-granted award key for award_granted.
 	AwardKey string `json:"award_key,omitempty"`
+	// AwardTitle is the award's display title at grant time, so the frontend
+	// does not need an i18n key for admin-created awards (which have none).
+	AwardTitle string `json:"award_title,omitempty"`
 	// Reason is the grant/revoke reason shown for award_granted/award_revoked.
 	Reason string `json:"reason,omitempty"`
 }
@@ -506,16 +509,6 @@ type SendGiftRequest struct {
 	IsAnonymous bool    `json:"is_anonymous"`
 }
 
-// DropsPackage — a package of drops available for purchase
-type DropsPackage struct {
-	ID          string  `json:"id" db:"id"`
-	Name        string  `json:"name" db:"name"`
-	DropsAmount int     `json:"drops_amount" db:"drops_amount"`
-	PriceUSD    float64 `json:"price_usd" db:"price_usd"`
-	IsActive    bool    `json:"is_active" db:"is_active"`
-	SortOrder   int     `json:"sort_order" db:"sort_order"`
-}
-
 // DropsTransaction — ledger entry for drops balance changes
 type DropsTransaction struct {
 	ID            string    `json:"id" db:"id"`
@@ -563,10 +556,11 @@ type TransferDropsRequest struct {
 	Description       *string `json:"description"`
 }
 
-// WalletInfo — wallet address and balance
+// WalletInfo — wallet address and currency balances
 type WalletInfo struct {
 	Address string `json:"address"`
 	Balance int    `json:"balance"`
+	Drops   int    `json:"drops"`
 }
 
 // TransferResult — response after a successful transfer

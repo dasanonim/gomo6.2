@@ -217,6 +217,8 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 	notifService := notifications.New(db, redis, wsHub, pushService)
 	// Milestone unlocks land in the notifications panel (no toast).
 	achEngine.Notifier = handlers.NewAchievementNotifier(notifService)
+	// Automatic award grants notify "@curator вручил награду".
+	achEngine.AwardNotifier = handlers.NewAchievementNotifier(notifService)
 	likesHandler.SetNotifier(notifService)
 
 	rpcHandler := rpc.NewRPCHandler(db)
@@ -303,6 +305,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 	storiesHandler.StartMaintenance(context.Background(), 30*time.Minute)
 
 	awardsAdminHandler := handlers.NewAwardsAdminHandler(db, storageClient, notifService)
+	awardsAdminHandler.SetEngine(achEngine)
 
 	backupHandler := backup.NewBackupHandler(db)
 	backupHandler.SetStorage(storageClient)
@@ -533,21 +536,9 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 		// ranked by net votes with the caller's own vote when authenticated.
 		rest.GET("/translations", translationsHandler.ListTranslations)
 
-		// Drops packages (public)
-		rest.GET("/drops/packages", dropsHandler.GetDropsPackages)
-
 		// Quest progress (public read with optional auth; the handler applies
 		// the achievements privacy rule for other users' pages).
 		rest.GET("/quests/progress", questsHandler.GetProgress)
-
-		// DePay integration. Both handlers authenticate the request themselves:
-		// /drops/callback requires a valid DePay signature (fail-closed, C1),
-		// /drops/config accepts either a valid DePay signature or an
-		// authenticated session with user_id bound to the caller (C2). The
-		// OptionalAuthMiddleware above populates claims from cookie/Bearer so
-		// the browser widget flow works without extra middleware here.
-		rest.POST("/drops/config", dropsHandler.DropsConfig)
-		rest.POST("/drops/callback", dropsHandler.DropsCallback)
 
 		// Additional tables (frontend compatibility)
 		//
@@ -728,7 +719,6 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 			// Drops
 			protected.GET("/user/drops", dropsHandler.GetDropsBalance)
 			protected.GET("/drops/history", dropsHandler.GetDropsHistory)
-			protected.POST("/drops/manual-verify", dropsHandler.ManualVerify)
 			protected.GET("/drops/wallet", dropsHandler.GetWalletInfo)
 			protected.POST("/drops/transfer", dropsHandler.TransferDrops)
 			protected.GET("/drops/users/search", dropsHandler.SearchUsers)
@@ -751,6 +741,10 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 			protected.PATCH("/admin/awards", awardsAdminHandler.UpdateAward)
 			protected.DELETE("/admin/awards", awardsAdminHandler.DeleteAward)
 			protected.POST("/admin/awards/image", awardsAdminHandler.UploadAwardImage)
+			protected.PUT("/admin/awards/rule", awardsAdminHandler.UpsertAwardRule)
+			protected.DELETE("/admin/awards/rule", awardsAdminHandler.DeleteAwardRule)
+			protected.GET("/admin/awards/rules", awardsAdminHandler.ListAwardRules)
+			protected.POST("/admin/awards/evaluate", awardsAdminHandler.EvaluateAwards)
 			protected.POST("/admin/awards/grant", awardsAdminHandler.GrantAward)
 			protected.POST("/admin/awards/revoke", awardsAdminHandler.RevokeAward)
 			protected.GET("/admin/awards/grants", awardsAdminHandler.ListAwardGrants)
@@ -1280,6 +1274,12 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 	} else {
 		go achEngine.RecomputeDirty(context.Background())
 	}
+
+	// Rarity (owner-share percentages for the award cards) and automatic
+	// award issuance run hourly. Both are idempotent best-effort passes;
+	// failures are logged inside the loops.
+	go achEngine.RarityLoop(context.Background(), time.Hour)
+	go achEngine.AutoAwardLoop(context.Background(), time.Hour)
 
 	// One-time full backfill: after a catalog rework (or a fresh DB) everyone's
 	// progress is recomputed from live data — old rows that don't match the new

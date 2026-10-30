@@ -12,7 +12,6 @@ import {
   Hammer,
   LogOut,
   Users,
-  Droplets,
   Plus,
   Bookmark,
   ChevronRight,
@@ -21,13 +20,17 @@ import {
   Home,
   X,
   Settings,
+  ScrollText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { HeaderUsername } from "@/components/HeaderUsername";
+import { HeaderIconButton } from "@/components/HeaderIconButton";
+import { useUnclaimedCount } from "@/hooks/useUnclaimedRewards";
 import { storageUrl } from "@/utils/storage";
+import { CurrencyIcon } from "@/components/CurrencyIcon";
 import { useProfileCache } from "@/contexts/ProfileCacheContext";
 import { useQuery } from "@tanstack/react-query";
-import { formatDropsLabel } from "@/utils/formatDropsLabel";
+import { formatGemsLabel } from "@/utils/formatGemsLabel";
 import { SectionIcon } from "@/components/topic/sectionIcons";
 import { MrRandom } from "@/components/MrRandom";
 import { AddTabDialog } from "@/components/AddTabDialog";
@@ -64,6 +67,7 @@ export const MobileMenu = ({ user, isModerator }: MobileMenuProps) => {
 
   // Sidebar data (fetched lazily — only while the sheet is open).
   const { sections, loading: sectionsLoading } = useThreadSections(open);
+  const unclaimedCount = useUnclaimedCount(user?.id);
   const sidebarTabs = useSidebarTabsStore((state) => state.tabs);
   const removeSidebarTab = useSidebarTabsStore((state) => state.removeTab);
 
@@ -121,7 +125,7 @@ export const MobileMenu = ({ user, isModerator }: MobileMenuProps) => {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json();
-      if (json.success) return json.data as { drops: number };
+      if (json.success) return json.data as { gems: number };
       return null;
     },
     enabled: open && !!user?.id,
@@ -178,17 +182,16 @@ export const MobileMenu = ({ user, isModerator }: MobileMenuProps) => {
 
   return (
     <>
-      <Button
-        variant="ghost"
-        aria-label={t('nav.menu')}
-        data-testid="mobile-menu-trigger"
+      <HeaderIconButton
+        label={t('nav.menu')}
+        testId="mobile-menu-trigger"
         // Logged in: mobile-only (desktop shows the username in the header).
         // Guest: shown at every size — this menu holds the only login entry.
-        className={`${user ? "lg:hidden " : ""}h-8 w-8 p-0 hover:bg-[oklch(var(--foreground)/0.12)] transition-colors`}
+        className={user ? "lg:hidden" : ""}
         onClick={() => setOpen(true)}
       >
         <Menu className="h-5 w-5" />
-      </Button>
+      </HeaderIconButton>
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="right" className="w-[300px] sm:w-[340px] p-0 flex flex-col">
@@ -426,13 +429,28 @@ export const MobileMenu = ({ user, isModerator }: MobileMenuProps) => {
               </Button>
             </NavigationLink>
 
-            {/* Drops */}
+            {/* Gems */}
             {dropsData && (
               <NavigationLink to="/wallet" onClick={() => setOpen(false)} className="block">
                 <Button variant="ghost" className="w-full justify-start relative group hover:translate-x-0.5 transition-transform duration-200 !hover:bg-primary/10 !hover:text-primary">
-                  <Droplets className="w-4 h-4 mr-2" />
-                  {t('nav.drops')}
-                  <span className="ml-auto text-sm text-muted-foreground">{dropsData.drops} {formatDropsLabel(dropsData.drops)}</span>
+                  <CurrencyIcon kind="gems" className="w-4 h-4 mr-2" />
+                  {t('nav.gems')}
+                  <span className="ml-auto text-sm text-muted-foreground">{dropsData.gems} {formatGemsLabel(dropsData.gems)}</span>
+                </Button>
+              </NavigationLink>
+            )}
+
+            {/* Quests — personal progress page; logged-in users only. */}
+            {user && (
+              <NavigationLink to={`/achievements/${user.id}`} onClick={() => setOpen(false)} className="block">
+                <Button variant="ghost" className="w-full justify-start relative group hover:translate-x-0.5 transition-transform duration-200 !hover:bg-primary/10 !hover:text-primary">
+                  <ScrollText className="w-4 h-4 mr-2" />
+                  {t('nav.quests')}
+                  {unclaimedCount > 0 && (
+                    <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold tabular-nums text-primary-foreground">
+                      {unclaimedCount}
+                    </span>
+                  )}
                 </Button>
               </NavigationLink>
             )}

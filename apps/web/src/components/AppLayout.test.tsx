@@ -4,9 +4,10 @@ import { AppLayout } from "./AppLayout";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
-const { mockAuth, mockProfileCache, mockSearchGlobal, mockEventManager, mockAnimate } = vi.hoisted(() => {
+const { mockAuth, mockProfileCache, mockSearchGlobal, mockEventManager, mockAnimate, mockUnclaimedCount } = vi.hoisted(() => {
   return {
     mockAnimate: vi.fn(() => ({ stop: vi.fn() })),
+    mockUnclaimedCount: { value: 0 },
     mockAuth: {
       user: null as any,
       isLoading: false,
@@ -74,6 +75,11 @@ vi.mock("@/hooks/useTabTitle", () => ({
   useTabTitle: () => {},
 }));
 
+vi.mock("@/hooks/useUnclaimedRewards", () => ({
+  useUnclaimedCount: () => mockUnclaimedCount.value,
+  refreshUnclaimedCount: vi.fn(),
+}));
+
 vi.mock("@/services/eventManager", () => ({
   eventManager: mockEventManager,
 }));
@@ -130,9 +136,6 @@ vi.mock("@/components/Footer", () => ({
 vi.mock("@/components/CookieBanner", () => ({
   CookieBanner: () => <div data-testid="cookie-banner">Cookies</div>,
 }));
-vi.mock("@/components/DropsShop", () => ({
-  DropsShop: ({ open }: any) => (open ? <div data-testid="drops-shop">Shop</div> : null),
-}));
 vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: any) => <>{children}</>,
   TooltipTrigger: ({ children }: any) => <>{children}</>,
@@ -147,6 +150,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockAuth.user = null;
   mockAuth.isAuthenticated = false;
+  mockUnclaimedCount.value = 0;
   mockLocation.pathname = "/";
   mockSearchGlobal.mockResolvedValue({ users: [], boards: [], threads: [], posts: [], wall_posts: [] });
   mockProfileCache.loadProfile.mockResolvedValue({
@@ -216,6 +220,14 @@ describe("AppLayout", () => {
       expect(screen.queryByRole("button", { name: "Войти" })).not.toBeInTheDocument();
     });
 
+    it("shows the unclaimed quest count on the quests entry", async () => {
+      mockAuth.user = { id: "user-1" };
+      mockAuth.isAuthenticated = true;
+      mockUnclaimedCount.value = 4;
+      renderLayout();
+      expect(screen.getByRole("link", { name: "Квесты" })).toHaveTextContent("4");
+    });
+
     it("loads profile for authenticated user (moderator state)", async () => {
       mockAuth.user = { id: "user-1" };
       mockAuth.isAuthenticated = true;
@@ -234,13 +246,6 @@ describe("AppLayout", () => {
   });
 
   describe("global events", () => {
-    it("opens the drops shop on 'open-drops-shop' event", () => {
-      renderLayout();
-      expect(screen.queryByTestId("drops-shop")).not.toBeInTheDocument();
-      fireEvent(window, new CustomEvent("open-drops-shop"));
-      expect(screen.getByTestId("drops-shop")).toBeInTheDocument();
-    });
-
     it("navigates on 'navigate-to' event", () => {
       renderLayout();
       fireEvent(window, new CustomEvent("navigate-to", { detail: "/profile/42" }));
@@ -284,7 +289,7 @@ describe("AppLayout", () => {
       renderLayout();
 
       // Open desktop search
-      fireEvent.click(screen.getByRole("button", { name: "Открыть поиск" }));
+      fireEvent.click(screen.getByTestId("desktop-search-toggle"));
       fireEvent.change(screen.getByPlaceholderText("Поиск: юзер, g-саб, запись..."), {
         target: { value: "ali" },
       });
@@ -299,7 +304,7 @@ describe("AppLayout", () => {
 
     it("shows 'Ничего не найдено' when search has no results", async () => {
       renderLayout();
-      fireEvent.click(screen.getByRole("button", { name: "Открыть поиск" }));
+      fireEvent.click(screen.getByTestId("desktop-search-toggle"));
       fireEvent.change(screen.getByPlaceholderText("Поиск: юзер, g-саб, запись..."), {
         target: { value: "zzz" },
       });
@@ -310,7 +315,7 @@ describe("AppLayout", () => {
 
     it("navigates to /search on submit", async () => {
       renderLayout();
-      fireEvent.click(screen.getByRole("button", { name: "Открыть поиск" }));
+      fireEvent.click(screen.getByTestId("desktop-search-toggle"));
       fireEvent.change(screen.getByPlaceholderText("Поиск: юзер, g-саб, запись..."), {
         target: { value: "алиса" },
       });
@@ -320,7 +325,7 @@ describe("AppLayout", () => {
 
     it("does not search for queries shorter than 2 chars", async () => {
       renderLayout();
-      fireEvent.click(screen.getByRole("button", { name: "Открыть поиск" }));
+      fireEvent.click(screen.getByTestId("desktop-search-toggle"));
       fireEvent.change(screen.getByPlaceholderText("Поиск: юзер, g-саб, запись..."), {
         target: { value: "a" },
       });
@@ -338,7 +343,7 @@ describe("AppLayout", () => {
       const { rerender } = renderLayout();
 
       // Open search and wait for real results to appear
-      fireEvent.click(screen.getByRole("button", { name: "Открыть поиск" }));
+      fireEvent.click(screen.getByTestId("desktop-search-toggle"));
       fireEvent.change(screen.getByPlaceholderText("Поиск: юзер, g-саб, запись..."), {
         target: { value: "ali" },
       });

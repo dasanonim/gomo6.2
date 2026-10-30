@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCached, invalidateByPrefix } from "@/integrations/api/queryCache";
+import { eventManager } from "@/services/eventManager";
 import {
   buildTrophies,
   mapUserAchievementRaw,
@@ -17,6 +18,9 @@ const TROPHIES_TTL_MS = 30_000;
 export interface UseTrophiesOptions {
   /** Defer the fetch until true (the profile loads on tab open). */
   enabled?: boolean;
+  /** Skip the auto milestones and fetch hand-granted awards only
+   * (the profile trophy case shows no quest content). */
+  awardsOnly?: boolean;
 }
 
 export interface UseTrophiesResult {
@@ -34,16 +38,16 @@ export interface UseTrophiesResult {
 }
 
 /**
- * Fetch a user's trophies — `user_achievements` and `user_awards` in parallel —
- * and normalize them into one rarest-first list. Both endpoints enforce the
- * achievements privacy rule server-side, so an unauthorized visitor simply gets
- * an empty list.
+ * Fetch a user's trophies — `user_achievements` and `user_awards` in parallel
+ * (awards only when `awardsOnly` is set) — and normalize them into one
+ * rarest-first list. Both endpoints enforce the achievements privacy rule
+ * server-side, so an unauthorized visitor simply gets an empty list.
  */
 export function useTrophies(
   userId: string | undefined,
   options: UseTrophiesOptions = {},
 ): UseTrophiesResult {
-  const { enabled = true } = options;
+  const { enabled = true, awardsOnly = false } = options;
   const [milestones, setMilestones] = useState<AchievementData[]>([]);
   const [awards, setAwards] = useState<UserAward[]>([]);
   const [loading, setLoading] = useState(false);
@@ -63,17 +67,19 @@ export function useTrophies(
     setLoading(true);
     try {
       const [achRows, awardRows] = await Promise.all([
-        getCached<UserAchievementRaw[]>(
-          `trophies:achievements:${userId}`,
-          async () => {
-            const res = await fetch(
-              `/api/v1/user_achievements?user_id=eq.${userId}&order=current_level.desc&order=unlocked_at.desc`,
-            );
-            const json = await res.json();
-            return (json.data || []) as UserAchievementRaw[];
-          },
-          { ttlMs: TROPHIES_TTL_MS },
-        ),
+        awardsOnly
+          ? Promise.resolve([] as UserAchievementRaw[])
+          : getCached<UserAchievementRaw[]>(
+              `trophies:achievements:${userId}`,
+              async () => {
+                const res = await fetch(
+                  `/api/v1/user_achievements?user_id=eq.${userId}&order=current_level.desc&order=unlocked_at.desc`,
+                );
+                const json = await res.json();
+                return (json.data || []) as UserAchievementRaw[];
+              },
+              { ttlMs: TROPHIES_TTL_MS },
+            ),
         getCached<UserAwardRaw[]>(
           `trophies:awards:${userId}`,
           async () => {
@@ -96,7 +102,7 @@ export function useTrophies(
       setLoading(false);
       setLoaded(true);
     }
-  }, [userId]);
+  }, [userId, awardsOnly]);
 
   // Reset immediately when the target user changes so the previous profile's
   // trophies never flash on the next one.
@@ -121,6 +127,21 @@ export function useTrophies(
     loadedFor.current = userId;
     await load();
   }, [userId, load]);
+
+  // Live grant updates: when an award is granted/revoked while the profile
+  // is open, refetch at once instead of waiting out the 30s cache TTL.
+  // The notification room is already scoped to the viewer, so only the
+  // recipient's own row can arrive here.
+  useEffect(() => {
+    if (!enabled || !userId) return;
+    return eventManager.on("new_notification", (message) => {
+      const data = message.data as { type?: string; user_id?: string } | undefined;
+      if (!data) return;
+      if (data.type !== "award_granted" && data.type !== "award_revoked") return;
+      if (data.user_id && data.user_id !== userId) return;
+      void reload();
+    });
+  }, [enabled, userId, reload]);
 
   const trophies = useMemo(() => buildTrophies(milestones, awards), [milestones, awards]);
 
