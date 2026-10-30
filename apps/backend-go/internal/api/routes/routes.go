@@ -1289,7 +1289,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 	// a Redis marker so it only runs once per Redis lifetime; on a fresh DB the
 	// backfill also populates the user_achievement_counters table.
 	if redis != nil {
-		backfillKey := "achievements:backfill:v3"
+		backfillKey := "achievements:backfill:v4"
 		claimed, err := redis.SetNX(context.Background(), backfillKey, "1", 0).Result()
 		if err == nil && claimed {
 			go func() {
