@@ -3,8 +3,13 @@ import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
+  CalendarCheck,
+  Camera,
   Check,
+  ChevronDown,
+  Clock,
   Flag,
+  Flame,
   Gift,
   Heart,
   HeartHandshake,
@@ -12,9 +17,10 @@ import {
   Loader2,
   MessageSquare,
   MessagesSquare,
-  NotebookPen,
+  NotebookPen,  PackageOpen,
   Palette,
   PenLine,
+  RefreshCw,
   Smile,
   Sparkles,
   Trophy,
@@ -52,6 +58,12 @@ const ICONS: Record<string, LucideIcon> = {
   trophy: Trophy,
   "notebook-pen": NotebookPen,
   flag: Flag,
+  gift: Gift,
+  "package-open": PackageOpen,
+  camera: Camera,
+  "calendar-check": CalendarCheck,
+  flame: Flame,
+  clock: Clock,
 };
 
 function QuestIcon({ name, className }: { name: string; className?: string }) {
@@ -244,6 +256,123 @@ function FirstStepRow({
         <div className="flex shrink-0 flex-col items-end">
           <RowStatus level={level} progress={quest.progress_current} isOwner={isOwner} claiming={claiming} onClaim={onClaim} reduce={reduce} />
         </div>
+      </div>
+    </CascadeRow>
+  );
+}
+
+/**
+ * A main-track quest as one calm card: the header (icon, title, claimed
+ * counter, expand toggle) plus a single focused level — the first claimable
+ * one, else the level being worked on, else the top. Claiming advances the
+ * focus to the next level with a spring swap; the toggle reveals the full
+ * ladder (the old all-rows view) without leaving the card.
+ */
+function LadderCard({
+  quest,
+  cardIndex,
+  isOwner,
+  claimingKey,
+  onClaimLevel,
+}: {
+  quest: Quest;
+  cardIndex: number;
+  isOwner: boolean;
+  claimingKey: string | null;
+  onClaimLevel: (level: QuestLevel) => void;
+}) {
+  const { t } = useTranslation();
+  const reduce = useReducedMotion();
+  const [expanded, setExpanded] = useState(false);
+  const levels = quest.levels;
+  const focus =
+    levels.find((l) => l.can_claim) ??
+    levels.find((l) => !l.completed) ??
+    levels[levels.length - 1];
+  const claimedCount = levels.filter((l) => l.claimed).length;
+  const single = levels.length < 2;
+  if (!focus) return null;
+  return (
+    <CascadeRow index={cardIndex}>
+      <div className="overflow-hidden rounded-xl border border-border/60 bg-surface">
+        <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <QuestIcon name={quest.icon} className="h-4 w-4" />
+          </div>
+          <h3 className="min-w-0 flex-1 truncate text-sm font-medium">{t(quest.title_key)}</h3>
+          {!single && (
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+              {claimedCount}/{levels.length}
+            </span>
+          )}
+          {!single && (
+            <motion.button
+              type="button"
+              aria-expanded={expanded}
+              aria-label={t(expanded ? "quests.collapseLevels" : "quests.expandLevels")}
+              onClick={() => setExpanded((v) => !v)}
+              {...pressFeedback(reduce)}
+              transition={springFor("snappy", reduce)}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              <motion.span
+                animate={{ rotate: expanded ? 180 : 0 }}
+                transition={springFor("snappy", reduce)}
+                className="flex"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </motion.span>
+            </motion.button>
+          )}
+        </div>
+        {!expanded && (
+          <AnimatePresence initial={false} mode="popLayout">
+            <motion.div
+              key={focus.level}
+              initial={reduce ? false : { opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reduce ? { opacity: 0 } : { opacity: 0, y: -10 }}
+              transition={springFor("snappy", reduce)}
+            >
+              <LadderRow
+                quest={quest}
+                level={focus}
+                index={0}
+                isLast
+                isOwner={isOwner}
+                claiming={claimingKey === `${quest.group_key}:${focus.level}`}
+                onClaim={() => onClaimLevel(focus)}
+              />
+            </motion.div>
+          </AnimatePresence>
+        )}
+        <AnimatePresence initial={false}>
+          {expanded && (
+            <motion.div
+              key="full-ladder"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={springFor("snappy", reduce)}
+              className="overflow-hidden"
+            >
+              <div className="divide-y divide-border/60">
+                {levels.map((level, li) => (
+                  <LadderRow
+                    key={level.level}
+                    quest={quest}
+                    level={level}
+                    index={li}
+                    isLast={li === levels.length - 1}
+                    isOwner={isOwner}
+                    claiming={claimingKey === `${quest.group_key}:${level.level}`}
+                    onClaim={() => onClaimLevel(level)}
+                  />
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </CascadeRow>
   );
@@ -450,7 +579,7 @@ export default function Achievements() {
 
   const trophyUserId =
     profile?.id ?? (userId && isPublicId(userId) ? undefined : userId);
-  const { quests, chests, drops, unclaimedCount, loading, claim, openChest, reload, applyClaim, applyChestOpen } =
+  const { quests, chests, drops, unclaimedCount, recalcAvailable, catalogUpdatedAt, loading, claim, reconcile, openChest, reload, applyClaim, applyRecalc, applyChestOpen } =
     useQuests(trophyUserId);
   const isOwner = Boolean(user?.id && trophyUserId && user.id === trophyUserId);
   // In-flight claim/open guard: state-driven `disabled` flips only after a
@@ -512,8 +641,68 @@ export default function Achievements() {
     }
   };
 
-  const handleOpenChest = async (id: string) => {
-    const key = `chest:${id}`;
+  // Rework top-up ("забрать недоданное"): the catalog version the user last
+  // saw lives in localStorage; a newer catalog_updated_at raises the banner.
+  const seenKey = user?.id ? `quests:catalog:seen:${user.id}` : null;
+  const [reconciling, setReconciling] = useState(false);
+  const [reworkedSeen, setReworkedSeen] = useState(() => {
+    try {
+      return seenKey ? localStorage.getItem(seenKey) : null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    try {
+      setReworkedSeen(seenKey ? localStorage.getItem(seenKey) : null);
+    } catch {
+      setReworkedSeen(null);
+    }
+  }, [seenKey]);
+  const showReworked = isOwner && Boolean(catalogUpdatedAt) && reworkedSeen !== catalogUpdatedAt;
+  const markReworkedSeen = () => {
+    if (!seenKey || !catalogUpdatedAt) return;
+    try {
+      localStorage.setItem(seenKey, catalogUpdatedAt);
+    } catch {
+      /* ignore */
+    }
+    setReworkedSeen(catalogUpdatedAt);
+  };
+
+  const handleReconcile = async () => {
+    if (reconciling) return;
+    setReconciling(true);
+    try {
+      const topped = await reconcile();
+      applyRecalc(topped);
+      markReworkedSeen();
+      if (topped.length === 0) {
+        toast.message(t("quests.recalcEmpty"));
+        return;
+      }
+      const dropsWon = topped.flatMap((lvl) => lvl.granted ?? [])
+        .filter((g) => g.kind === "drops")
+        .reduce((sum, g) => sum + (g.amount ?? 0), 0);
+      const gemsWon = topped.flatMap((lvl) => lvl.granted ?? [])
+        .filter((g) => g.kind === "gems")
+        .reduce((sum, g) => sum + (g.amount ?? 0), 0);
+      const chestsWon = topped.flatMap((lvl) => lvl.granted ?? [])
+        .filter((g) => g.kind === "chest").length;
+      const parts: string[] = [];
+      if (dropsWon > 0) parts.push(t("quests.claimedDrops", { count: dropsWon, label: formatDropsLabel(dropsWon) }));
+      if (gemsWon > 0) parts.push(t("quests.claimedGems", { count: gemsWon, label: formatGemsLabel(gemsWon) }));
+      if (chestsWon > 0) parts.push(t("quests.recalcChest", { count: chestsWon }));
+      toast.success(parts.length > 0 ? parts.join(", ") : t("quests.claimedDone"));
+      void reload();
+    } catch {
+      toast.error(t("quests.recalcFailed"));
+    } finally {
+      setReconciling(false);
+    }
+  };
+
+  const handleOpenChest = async (id: string) => {    const key = `chest:${id}`;
     if (inflight.current.has(key)) return;
     inflight.current.add(key);
     setClaimingKey(key);
@@ -590,6 +779,24 @@ export default function Achievements() {
       </ContentEnter>
 
       <div className="mt-8 space-y-9">
+        {isOwner && (recalcAvailable || showReworked) && (
+          <section
+            aria-label={t("quests.reworkedTitle")}
+            className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4"
+          >
+            <h2 className="text-sm font-semibold">{t("quests.reworkedTitle")}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{t("quests.reworkedText")}</p>
+            <button
+              type="button"
+              onClick={() => void handleReconcile()}
+              disabled={reconciling}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-sm font-medium text-primary-foreground transition-opacity disabled:opacity-60"
+            >
+              <RefreshCw className={cn("h-4 w-4", reconciling && "animate-spin")} />
+              {t(reconciling ? "quests.rechecking" : "quests.recheck")}
+            </button>
+          </section>
+        )}
         {isOwner && chests.length > 0 && (
           <section aria-label={t("quests.chestsSection", { count: chests.length })}>
             <h2 className="text-sm font-medium text-muted-foreground">
@@ -637,32 +844,15 @@ export default function Achievements() {
           <section aria-label={t("quests.mainLadder")}>
             <h2 className="text-sm font-medium text-muted-foreground">{t("quests.mainLadder")}</h2>
             <div className="mt-3 space-y-4">
-              {main.map((quest) => (
-                <div
+              {main.map((quest, qi) => (
+                <LadderCard
                   key={quest.group_key}
-                  className="overflow-hidden rounded-xl border border-border/60 bg-surface"
-                >
-                  <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                      <QuestIcon name={quest.icon} className="h-4 w-4" />
-                    </div>
-                    <h3 className="min-w-0 truncate text-sm font-medium">{t(quest.title_key)}</h3>
-                  </div>
-                  <div className="divide-y divide-border/60">
-                    {quest.levels.map((level, li) => (
-                      <LadderRow
-                        key={level.level}
-                        quest={quest}
-                        level={level}
-                        index={li}
-                        isLast={li === quest.levels.length - 1}
-                        isOwner={isOwner}
-                        claiming={claimingKey === `${quest.group_key}:${level.level}`}
-                        onClaim={() => void handleClaim(quest, level)}
-                      />
-                    ))}
-                  </div>
-                </div>
+                  quest={quest}
+                  cardIndex={qi}
+                  isOwner={isOwner}
+                  claimingKey={claimingKey}
+                  onClaimLevel={(level) => void handleClaim(quest, level)}
+                />
               ))}
             </div>
           </section>

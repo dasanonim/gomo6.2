@@ -32,14 +32,14 @@ const (
 	EventSubJoined            EventType = "sub_joined"            // gomosub membership
 	EventSubRulesAccepted     EventType = "rules_accepted"        // retired
 	EventSubCreated           EventType = "sub_created"           // gomosub created
-	EventGiftSent             EventType = "gift_sent"             // retired
-	EventGiftReceived         EventType = "gift_received"         // retired
+	EventGiftSent             EventType = "gift_sent"             // gift sent (gifts_sent ladder)
+	EventGiftReceived         EventType = "gift_received"         // gift received (gifts_received ladder)
 	EventAvatarUpdated        EventType = "avatar_updated"        // avatar set
 	EventBioUpdated           EventType = "bio_updated"           // bio filled
 	EventProfileStyled        EventType = "profile_styled"        // customization saved
 	EventIntegrationConnected EventType = "integration_connected" // retired
 	EventFollowAdded          EventType = "follow_added"          // subscription to a user
-	EventDailyVisit           EventType = "daily_visit"           // retired
+	EventDailyVisit           EventType = "daily_visit"           // distinct visit day (visits + tenure)
 )
 
 // Event is a user action handed to the engine. Handlers emit it after the
@@ -60,12 +60,15 @@ type Event struct {
 // anything else (thread, legacy empty target) feeds the thread first-step;
 // both feed the combined entries ladder.
 var eventCounters = map[EventType][]string{
-	EventCommentCreated: {"qs_first_comment", "comments"},
+	EventCommentCreated: {"qs_first_comment", "comments", "media_uploads"},
 	EventLikeGiven:      {"qs_like_given", "likes_given"},
 	EventLikeReceived:   {"likes_received"},
 	EventSubJoined:      {"qs_sub_join", "subs_joined"},
 	EventSubCreated:     {"sub_created"},
-	EventFollowAdded:    {"qs_follow", "follows"},
+	EventGiftSent:       {"gifts_sent"},
+	EventGiftReceived:   {"gifts_received"},
+	EventDailyVisit:     {"visits_total", "visit_streak", "tenure_days"},
+	EventFollowAdded:    {"qs_follow", "follows", "friends_mutual"},
 	EventAvatarUpdated:  {"qs_avatar"},
 	EventBioUpdated:     {"qs_bio"},
 	EventProfileStyled:  {"qs_style"},
@@ -173,9 +176,9 @@ func (e *Engine) HandleEvent(ev Event) {
 func counterKeys(ev Event) []string {
 	if ev.Type == EventEntryCreated {
 		if ev.TargetType == "wall_post" {
-			return []string{"qs_first_wall", "entries"}
+			return []string{"qs_first_wall", "entries", "media_uploads"}
 		}
-		return []string{"qs_first_thread", "entries"}
+		return []string{"qs_first_thread", "entries", "media_uploads"}
 	}
 	return eventCounters[ev.Type]
 }

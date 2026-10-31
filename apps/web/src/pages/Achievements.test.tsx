@@ -1,4 +1,5 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { MotionConfig } from "motion/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import Achievements from "./Achievements";
 import { clearQueryCache } from "@/integrations/api/queryCache";
@@ -91,11 +92,15 @@ function setupFetch({
   quests = QUESTS,
   drops = 30,
   unclaimed = 1,
+  recalcAvailable = false,
+  catalogUpdatedAt = "",
 }: {
   profile?: { id: string; username: string } | null;
   quests?: typeof QUESTS;
   drops?: number;
   unclaimed?: number;
+  recalcAvailable?: boolean;
+  catalogUpdatedAt?: string;
 } = {}) {
   const ok = (data: unknown) => ({
     ok: true,
@@ -104,13 +109,24 @@ function setupFetch({
     json: () => Promise.resolve({ success: true, data }),
     text: () => Promise.resolve(JSON.stringify({ success: true, data })),
   });
-  mockFetch.mockImplementation((url: string) => {
+  mockFetch.mockImplementation((url: string, opts?: RequestInit) => {
     if (url.includes("/profiles")) {
       return Promise.resolve(ok(profile ? [profile] : []));
     }
+    if (url.includes("/quests/reconcile") && opts?.method === "POST") {
+      return Promise.resolve(ok({ topped_up: [] }));
+    }
     if (url.includes("/quests/progress")) {
       return Promise.resolve(
-        ok({ user_id: "profile-user-1", drops, unclaimed_count: unclaimed, quests, chests: [] }),
+        ok({
+          user_id: "profile-user-1",
+          drops,
+          unclaimed_count: unclaimed,
+          recalc_available: recalcAvailable,
+          catalog_updated_at: catalogUpdatedAt,
+          quests,
+          chests: [],
+        }),
       );
     }
     return Promise.resolve(ok([]));
@@ -122,18 +138,28 @@ beforeEach(() => {
   mockFetch.mockReset();
 });
 
+// Motion reduced to instant: AnimatePresence exits settle synchronously,
+// so collapse/focus-swap assertions don't depend on spring timing in jsdom.
+function renderPage() {
+  return render(
+    <MotionConfig reducedMotion="always">
+      <Achievements />
+    </MotionConfig>,
+  );
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("Achievements page", () => {
   it("shows a loader while fetching", () => {
     mockFetch.mockReturnValue(new Promise(() => {}));
-    render(<Achievements />);
+    renderPage();
     expect(screen.getByTestId("pentagram-loader")).toBeInTheDocument();
   });
 
   it("renders the quest header with the first-steps counter", async () => {
     setupFetch();
-    render(<Achievements />);
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByText("Квесты — testuser")).toBeInTheDocument();
@@ -143,18 +169,131 @@ describe("Achievements page", () => {
 
   it("shows a claim button for completed unclaimed levels", async () => {
     setupFetch();
-    render(<Achievements />);
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByText("Лицо")).toBeInTheDocument();
     });
     expect(screen.getAllByText("Забрать").length).toBeGreaterThan(0);
-    expect(screen.getByText("Забрано")).toBeInTheDocument();
+    // The claimed entries rung hides inside the collapsed ladder card.
+    fireEvent.click(screen.getAllByLabelText("Все уровни")[0]);
+    expect(await screen.findByText("Забрано")).toBeInTheDocument();
+  });
+
+  it("collapses each ladder to the focused level until expanded", async () => {
+    setupFetch();
+    renderPage();
+
+    // entries: L1 claimed, L2 in progress → the card shows only L2.
+    await waitFor(() => {
+      expect(screen.getByText("Писатель")).toBeInTheDocument();
+    });
+    {
+      const all = screen.getAllByText("Писатель");
+      console.log("PISATEL_COUNT:" + all.length);
+      console.log("BODY_CARDS:" + document.querySelectorAll("main").length);
+    }
+    expect(screen.queryByText("Пробы пера")).not.toBeInTheDocument();
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByLabelText("Все уровни")[0]);
+    expect(await screen.findByText("Пробы пера")).toBeInTheDocument();
+    expect(screen.getByText("Писатель")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Свернуть"));
+    await waitFor(() => {
+      expect(screen.queryByText("Пробы пера")).not.toBeInTheDocument();
+    });
+  });
+
+  it("advances the focused card after a claim", async () => {
+    const ladder = [
+      {
+        group_key: "entries",
+        title_key: "achievements.entries.title",
+        category: "content",
+        track: "main",
+        icon: "notebook-pen",
+        sort_order: 20,
+        current_level: 2,
+        progress_current: 30,
+        levels: [
+          {
+            level: 1,
+            threshold: 1,
+            name_key: "achievements.entries.1.name",
+            description_key: "achievements.entries.1.description",
+            rewards: [{ kind: "drops", amount: 8 }],
+            completed: true,
+            claimed: true,
+            can_claim: false,
+          },
+          {
+            level: 2,
+            threshold: 10,
+            name_key: "achievements.entries.2.name",
+            description_key: "achievements.entries.2.description",
+            rewards: [{ kind: "drops", amount: 20 }],
+            completed: true,
+            claimed: false,
+            can_claim: true,
+          },
+          {
+            level: 3,
+            threshold: 25,
+            name_key: "achievements.entries.3.name",
+            description_key: "achievements.entries.3.description",
+            rewards: [{ kind: "drops", amount: 45 }],
+            completed: false,
+            claimed: false,
+            can_claim: false,
+          },
+        ],
+      },
+    ];
+    const ok = (data: unknown) => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ success: true, data }),
+      text: () => Promise.resolve(JSON.stringify({ success: true, data })),
+    });
+    mockFetch.mockImplementation((url: string, opts?: RequestInit) => {
+      if (url.includes("/profiles")) {
+        return Promise.resolve(ok([{ id: "profile-user-1", username: "testuser" }]));
+      }
+      if (url.includes("/quests/claim") && opts?.method === "POST") {
+        return Promise.resolve(ok({ granted: [{ kind: "drops", amount: 20 }] }));
+      }
+      if (url.includes("/quests/progress")) {
+        return Promise.resolve(
+          ok({ user_id: "profile-user-1", drops: 30, unclaimed_count: 1, quests: ladder, chests: [] }),
+        );
+      }
+      return Promise.resolve(ok([]));
+    });
+    renderPage();
+
+    // Focus is the claimable L2; claiming flips the card to L3.
+    await waitFor(() => {
+      expect(screen.getByText("Писатель")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Летописец")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Забрать"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Летописец")).toBeInTheDocument();
+    });
+    // The outgoing card leaves with its exit spring — wait for it, don't
+    // assert instantly.
+    await waitFor(() => {
+      expect(screen.queryByText("Писатель")).not.toBeInTheDocument();
+    });
   });
 
   it("shows progress for locked levels", async () => {
     setupFetch();
-    render(<Achievements />);
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByText("Писатель")).toBeInTheDocument();
@@ -164,7 +303,7 @@ describe("Achievements page", () => {
 
   it("shows an empty state when there are no quests", async () => {
     setupFetch({ quests: [] });
-    render(<Achievements />);
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByText("Пока нет наград")).toBeInTheDocument();
@@ -173,7 +312,7 @@ describe("Achievements page", () => {
 
   it("handles a missing profile gracefully", async () => {
     setupFetch({ profile: null });
-    render(<Achievements />);
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByText("Назад")).toBeInTheDocument();
@@ -183,7 +322,7 @@ describe("Achievements page", () => {
 
   it("sends a single claim request on fast double click", async () => {
     setupFetch();
-    render(<Achievements />);
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByText("Лицо")).toBeInTheDocument();
@@ -202,4 +341,51 @@ describe("Achievements page", () => {
       expect(posts.length).toBe(1);
     });
   });
+
+  it("shows the rework banner and checks rewards on click", async () => {
+    setupFetch({ recalcAvailable: true, catalogUpdatedAt: "2026-10-31T00:00:00Z" });
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Квесты обновлены")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("Проверить награды"));
+
+    await waitFor(() => {
+      const posts = mockFetch.mock.calls.filter(
+        ([url, opts]: any[]) =>
+          typeof url === "string" &&
+          url.includes("/quests/reconcile") &&
+          (opts as RequestInit)?.method === "POST",
+      );
+      expect(posts.length).toBe(1);
+    });
+  });
+
+  it("hides the rework banner once the catalog version is seen", async () => {
+    const store: Record<string, string> = { "quests:catalog:seen:profile-user-1": "seen-v1" };
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => {
+        store[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete store[k];
+      },
+      clear: () => {
+        for (const k of Object.keys(store)) delete store[k];
+      },
+    });
+    setupFetch({ recalcAvailable: false, catalogUpdatedAt: "seen-v1" });
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Квесты — testuser")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Квесты обновлены")).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
+    vi.stubGlobal("fetch", mockFetch);
+  });
+
+
 });

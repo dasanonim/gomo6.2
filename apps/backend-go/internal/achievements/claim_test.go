@@ -43,12 +43,12 @@ func TestClaimLevel_GemsAndDrops(t *testing.T) {
 	mock.ExpectQuery("UPDATE users SET gems").
 		WithArgs(20, "u1").WillReturnRows(sqlmock.NewRows([]string{"gems"}).AddRow(120))
 	mock.ExpectExec("INSERT INTO drops_transactions").
-		WithArgs("u1", 20, 120, "Quest reward: +20 gems").
+		WithArgs("u1", 20, 120, "quest", "Quest reward: +20 gems").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("UPDATE users SET drops").
 		WithArgs(5, "u1").WillReturnRows(sqlmock.NewRows([]string{"drops"}).AddRow(105))
 	mock.ExpectExec("INSERT INTO drops_transactions").
-		WithArgs("u1", 5, 105, "Quest reward: +5 drops").
+		WithArgs("u1", 5, 105, "quest", "Quest reward: +5 drops").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 

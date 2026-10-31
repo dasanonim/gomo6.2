@@ -78,6 +78,25 @@ var sourceCountQueries = map[string]string{
 	"subs_joined": `SELECT COUNT(*)::int FROM gomosub_memberships gm WHERE gm.user_id = $1`,
 	"sub_created": `SELECT COUNT(*)::int FROM boards b WHERE b.owner_id = $1::uuid AND COALESCE(b.is_gomosub, FALSE)`,
 	"follows":     `SELECT COUNT(*)::int FROM subscriptions s WHERE s.subscriber_id = $1`,
+
+	// ── Kvestikiref wave: gifts, media, friends, visits, tenure ──
+	"gifts_sent":     `SELECT COUNT(*)::int FROM user_gifts WHERE sender_id = $1`,
+	"gifts_received": `SELECT COUNT(*)::int FROM user_gifts WHERE recipient_id = $1`,
+	"media_uploads": `SELECT (
+  (SELECT COUNT(*)::int FROM threads t WHERE t.user_id = $1 AND COALESCE(t.attachments::text, '') NOT IN ('', 'null', '[]'))
+  + (SELECT COUNT(*)::int FROM posts p WHERE p.user_id = $1 AND COALESCE(p.attachments::text, '') NOT IN ('', 'null', '[]'))
+  + (SELECT COUNT(*)::int FROM profile_wall_posts w WHERE w.author_id = $1 AND (COALESCE(w.image_url, '') <> '' OR COALESCE(w.attachments::text, '') NOT IN ('', 'null', '[]')))
+)`,
+	"friends_mutual": `SELECT COUNT(*)::int FROM subscriptions s1 WHERE s1.subscriber_id = $1 AND EXISTS (SELECT 1 FROM subscriptions s2 WHERE s2.subscriber_id = s1.target_id AND s2.target_id = $1)`,
+	"visits_total":   `SELECT COUNT(*)::int FROM user_daily_visits WHERE user_id = $1`,
+	"visit_streak": `SELECT CASE WHEN (SELECT MAX(visit_date) FROM user_daily_visits WHERE user_id = $1) >= CURRENT_DATE - 1 THEN COALESCE((
+  SELECT COUNT(*)::int FROM (
+    SELECT visit_date, ROW_NUMBER() OVER (ORDER BY visit_date DESC) AS rn
+    FROM user_daily_visits WHERE user_id = $1
+  ) t
+  WHERE t.visit_date = ((SELECT MAX(visit_date) FROM user_daily_visits WHERE user_id = $1) - ((t.rn - 1) || ' days')::interval)::date
+), 0) ELSE 0 END`,
+	"tenure_days": `SELECT (CURRENT_DATE - created_at::date)::int FROM users WHERE id = $1`,
 }
 
 // derivedValue computes a derived quest's value from live data. The only

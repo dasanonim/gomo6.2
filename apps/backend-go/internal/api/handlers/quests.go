@@ -97,27 +97,30 @@ func (h *QuestsHandler) GetProgress(c *gin.Context) {
 	}
 	isOwner := viewerID != "" && viewerID == targetID
 
-	rows, err := h.db.Query(`
+	var rows *sql.Rows
+	var qerr error
+	rows, qerr = h.db.Query(`
 SELECT a.group_key, COALESCE(a.title, a.name, ''), COALESCE(a.category, ''),
        COALESCE(a.icon, 'sparkles'), COALESCE(a.sort_order, 0),
        COALESCE(ua.current_level, 0), COALESCE(ua.progress_current, 0),
        COALESCE(a.levels, '[]'::jsonb),
        COALESCE((
-         SELECT json_agg(qc.level ORDER BY qc.level)
+         SELECT json_agg(json_build_object('level', qc.level, 'rewards', qc.rewards) ORDER BY qc.level)
          FROM quest_claims qc WHERE qc.user_id = $1 AND qc.achievement_id = a.id
        ), '[]'::json)
 FROM achievements a
 LEFT JOIN user_achievements ua ON ua.achievement_id = a.id AND ua.user_id = $1
 WHERE a.origin = 'code' AND COALESCE(a.kind, 'milestone') = 'milestone'
 ORDER BY a.sort_order, a.group_key`, targetID)
-	if err != nil {
-		httpx.ServerError(c, "handler error", err)
+	if qerr != nil {
+		httpx.ServerError(c, "handler error", qerr)
 		return
 	}
 	defer rows.Close()
 
 	quests := []QuestProgress{}
 	unclaimed := 0
+	recalcAvailable := false
 	for rows.Next() {
 		var qp QuestProgress
 		var levelsJSON []byte
@@ -130,11 +133,16 @@ ORDER BY a.sort_order, a.group_key`, targetID)
 		if err := json.Unmarshal(levelsJSON, &levels); err != nil {
 			continue
 		}
-		var claimedLevels []int
-		_ = json.Unmarshal(claimedJSON, &claimedLevels)
+		var claimedObjs []struct {
+			Level   int                   `json:"level"`
+			Rewards []achievements.Reward `json:"rewards"`
+		}
+		_ = json.Unmarshal(claimedJSON, &claimedObjs)
 		claimedSet := map[int]bool{}
-		for _, l := range claimedLevels {
-			claimedSet[l] = true
+		claimedRewards := map[int][]achievements.Reward{}
+		for _, co := range claimedObjs {
+			claimedSet[co.Level] = true
+			claimedRewards[co.Level] = co.Rewards
 		}
 		qp.Levels = make([]QuestProgressLevel, 0, len(levels))
 		for _, lvl := range levels {
@@ -148,6 +156,9 @@ ORDER BY a.sort_order, a.group_key`, targetID)
 			pl.CanClaim = isOwner && pl.Completed && !pl.Claimed && len(lvl.Rewards) > 0
 			if pl.CanClaim {
 				unclaimed++
+			}
+			if isOwner && pl.Completed && pl.Claimed && recalcOwes(claimedRewards[lvl.Level], lvl.Rewards) {
+				recalcAvailable = true
 			}
 			qp.Levels = append(qp.Levels, pl)
 		}
@@ -166,11 +177,54 @@ ORDER BY a.sort_order, a.group_key`, targetID)
 	var drops int
 	_ = h.db.QueryRow("SELECT COALESCE(drops, 0) FROM users WHERE id = $1", targetID).Scan(&drops)
 
-	payload := gin.H{"user_id": targetID, "drops": drops, "unclaimed_count": unclaimed, "quests": quests}
+	payload := gin.H{"user_id": targetID, "drops": drops, "unclaimed_count": unclaimed,
+		"recalc_available": recalcAvailable, "catalog_updated_at": h.catalogUpdatedAt(), "quests": quests}
 	if isOwner {
 		payload["chests"] = h.openChests(targetID)
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(payload))
+}
+
+// recalcOwes reports whether a claimed level is owed a rework top-up.
+func recalcOwes(already, current []achievements.Reward) bool {
+	sumCoins := func(rs []achievements.Reward) map[achievements.RewardKind]int {
+		out := map[achievements.RewardKind]int{}
+		for _, r := range rs {
+			switch r.Kind {
+			case achievements.RewardDrops, achievements.RewardGems:
+				out[r.Kind] += r.Amount
+			}
+		}
+		return out
+	}
+	countChests := func(rs []achievements.Reward) int {
+		n := 0
+		for _, r := range rs {
+			switch r.Kind {
+			case achievements.RewardChest:
+				n++
+			}
+		}
+		return n
+	}
+	have, want := sumCoins(already), sumCoins(current)
+	for _, k := range []achievements.RewardKind{achievements.RewardDrops, achievements.RewardGems} {
+		if want[k] > have[k] {
+			return true
+		}
+	}
+	return countChests(current) > countChests(already)
+}
+
+// catalogUpdatedAt is the newest code-catalog mirror write — the frontend
+// compares it with the seen version to show the "quests reworked" banner.
+func (h *QuestsHandler) catalogUpdatedAt() string {
+	var ts string
+	if err := h.db.QueryRow(
+		"SELECT COALESCE(MAX(updated_at)::text, '') FROM achievements WHERE origin = 'code'").Scan(&ts); err != nil {
+		return ""
+	}
+	return ts
 }
 
 func (h *QuestsHandler) openChests(userID string) []QuestChest {
@@ -243,6 +297,34 @@ func (h *QuestsHandler) Claim(c *gin.Context) {
 	default:
 		httpx.ServerError(c, "claim failed", err)
 	}
+}
+
+// Reconcile godoc
+// @Summary      Top up reworked quest rewards
+// @Description  Grants the positive difference for every already-claimed level whose catalog rewards grew ("забрать недоданное"). Idempotent: repeats grant nothing.
+// @Tags         Quests
+// @Produce      json
+// @Success      200 {object} models.APIResponse
+// @Router       /quests/reconcile [post]
+// @Security     BearerAuth
+func (h *QuestsHandler) Reconcile(c *gin.Context) {
+	claims := httpx.EnsureAuth(c)
+	if claims == nil {
+		return
+	}
+	if h.engine == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Quests unavailable"))
+		return
+	}
+	topped, err := h.engine.ReconcileUser(c.Request.Context(), claims.UserID)
+	if err != nil {
+		httpx.ServerError(c, "reconcile failed", err)
+		return
+	}
+	if topped == nil {
+		topped = []achievements.ToppedUpLevel{}
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"topped_up": topped}))
 }
 
 // OpenChest godoc
