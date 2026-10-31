@@ -143,6 +143,11 @@ export function ChestOpenModal({
   const imgRef = useRef<HTMLImageElement | null>(null);
   const [imgFailed, setImgFailed] = useState(false);
   const doneRef = useRef(false);
+  // StrictMode mounts effects twice in dev: the play call must fire exactly
+  // once per modal, otherwise two racing opens double-credit (the row lock
+  // serializes them, but the loser must not even be sent). Refs survive the
+  // double-mount, so this guard holds where a cleanup flag cannot.
+  const firedRef = useRef(false);
 
   useEffect(() => {
     void loadCatalog().then((c) => {
@@ -154,6 +159,8 @@ export function ChestOpenModal({
 
   // The point of no return: the session plays and credits on mount.
   useEffect(() => {
+    if (firedRef.current) return;
+    firedRef.current = true;
     let cancelled = false;
     openChest()
       .then((res) => {
@@ -173,8 +180,10 @@ export function ChestOpenModal({
       })
       .catch((err) => {
         if (cancelled) return;
-        // 409 = opened elsewhere: the row is dead, drop it.
-        if ((err as { status?: number })?.status === 409) {
+        // The row is gone — opened elsewhere, raced, or already claimed:
+        // drop it quietly, the vault resyncs. Anything else is a real
+        // failure (nothing was committed), so it toasts.
+        if ((err as { status?: number })?.status === 409 || (err as { status?: number })?.status === 404) {
           onExpired();
         } else {
           toast.error(t("quests.openFailed"));

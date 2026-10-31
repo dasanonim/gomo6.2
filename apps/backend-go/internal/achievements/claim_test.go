@@ -160,6 +160,11 @@ func TestOpenChestQueries_PlaceholderCounts(t *testing.T) {
 	if got := highest(openChestLedgerQuery); got != 6 {
 		t.Errorf("ledger: query has $%d but the call site passes 6 args", got)
 	}
+	// Concurrent opens must serialize on the row lock: without FOR UPDATE
+	// two racing opens both see opened_at IS NULL and both credit.
+	if !strings.Contains(fmt.Sprintf(openChestSelectQuery, "quest_chests"), "FOR UPDATE") {
+		t.Errorf("select: concurrent opens must serialize with FOR UPDATE")
+	}
 }
 
 // An opened chest reads as unknown (opened_at IS NULL filter): no double

@@ -234,9 +234,7 @@ func (e *Engine) openChest(ctx context.Context, table, ledgerType, ref, desc, us
 	defer tx.Rollback()
 
 	var mechanic string
-	err = tx.QueryRowContext(ctx, `
-SELECT mechanic FROM `+table+`
-WHERE id = $1::uuid AND user_id = $2 AND opened_at IS NULL`,
+	err = tx.QueryRowContext(ctx, fmt.Sprintf(openChestSelectQuery, table),
 		chestID, userID).Scan(&mechanic)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -287,6 +285,12 @@ func (e *Engine) OpenDailyChest(ctx context.Context, userID, chestID string) (*C
 const openChestLedgerQuery = `
 INSERT INTO drops_transactions (user_id, type, amount, balance_after, reference_type, description)
 VALUES ($1, $2, $3, $4, $5, $6)`
+
+// openChestSelectQuery locks the chest row: two concurrent opens must
+// serialize, otherwise both see opened_at IS NULL and both credit.
+const openChestSelectQuery = `
+SELECT mechanic FROM %s
+WHERE id = $1::uuid AND user_id = $2 AND opened_at IS NULL FOR UPDATE`
 
 // cryptoSource is a gamification.Source backed by crypto/rand.
 type cryptoSource struct{}

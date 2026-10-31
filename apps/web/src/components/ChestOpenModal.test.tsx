@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MotionConfig } from "motion/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -34,11 +35,11 @@ function setupCatalog() {
   );
 }
 
-function renderModal(openChest: () => Promise<any>) {
+function renderModal(openChest: () => Promise<any>, strict = false) {
   const onApplied = vi.fn();
   const onExpired = vi.fn();
   const onClose = vi.fn();
-  render(
+  const ui = (
     <MotionConfig reducedMotion="always">
       <ChestOpenModal
         title="Сундук"
@@ -47,8 +48,9 @@ function renderModal(openChest: () => Promise<any>) {
         onExpired={onExpired}
         onClose={onClose}
       />
-    </MotionConfig>,
+    </MotionConfig>
   );
+  render(strict ? <StrictMode>{ui}</StrictMode> : ui);
   return { onApplied, onExpired, onClose };
 }
 
@@ -93,9 +95,21 @@ describe("ChestOpenModal", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // catalog only
   });
 
-  it("drops the row when the chest is already gone server-side", async () => {
+  it("fires the play call exactly once under StrictMode double-mount", async () => {
     setupCatalog();
-    const err = Object.assign(new Error("gone"), { status: 409 });
+    const openChest = vi.fn(() =>
+      Promise.resolve({ rarity: "common", drops: 20, steps: [{ type: "opened", rarity: "common", attempts_left: 0 }] }),
+    );
+    renderModal(openChest, true);
+    await waitFor(() => expect(openChest).toHaveBeenCalledTimes(1));
+    // A second racing open would double-credit without the row lock.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(openChest).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([409, 404])("drops the row when the chest is gone (status %i)", async (status) => {
+    setupCatalog();
+    const err = Object.assign(new Error("gone"), { status });
     const { onExpired, onClose } = renderModal(() => Promise.reject(err));
     await waitFor(() => expect(onExpired).toHaveBeenCalledTimes(1));
     expect(onClose).toHaveBeenCalledTimes(1);
