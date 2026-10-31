@@ -4,9 +4,11 @@ import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
   CalendarCheck,
+  CalendarDays,
   Camera,
   Check,
   ChevronDown,
+  ChevronRight,
   Clock,
   Flag,
   Flame,
@@ -39,6 +41,7 @@ import { CurrencyIcon } from "@/components/CurrencyIcon";
 import { formatDropsLabel } from "@/utils/formatDropsLabel";
 import { formatGemsLabel } from "@/utils/formatGemsLabel";
 import { useQuests, questErrorStatus, type Quest, type QuestLevel, type QuestReward, type QuestChest } from "@/hooks/useQuests";
+import { useDailyQuests, dailySeenKey } from "@/hooks/useDailyQuests";
 import { smoothScrollToElement } from "@/utils/smoothScroll";
 import { refreshUnclaimedCount } from "@/hooks/useUnclaimedRewards";
 import { useAuth } from "@/hooks/useAuth";
@@ -601,6 +604,16 @@ export default function Achievements() {
   const { quests, chests, drops, unclaimedCount, recalcAvailable, catalogUpdatedAt, loading, claim, reconcile, openChest, reload, applyClaim, applyRecalc, applyChestOpen } =
     useQuests(trophyUserId);
   const isOwner = Boolean(user?.id && trophyUserId && user.id === trophyUserId);
+  // Daily button state: one extra light read; the day may already contain
+  // auto-grants (settle runs on every read, idempotent).
+  const daily = useDailyQuests(isOwner ? user?.id : undefined);
+  const dailyDone = daily.quests.filter((q) => q.completed).length;
+  let dailySeen = "";
+  try {
+    dailySeen = user?.id ? (localStorage.getItem(dailySeenKey(user.id)) ?? "") : "";
+  } catch {
+    dailySeen = "";
+  }
   // In-flight claim/open guard: state-driven `disabled` flips only after a
   // re-render, so a fast double click fires two POSTs — the second gets a 409
   // while the first already granted. The ref blocks the second synchronously.
@@ -827,6 +840,39 @@ export default function Achievements() {
       </ContentEnter>
 
       <div className="mt-8 space-y-9">
+        {isOwner && (
+          <section aria-label={t("quests.daily.title")}>
+            <Link
+              to="/achievements/daily"
+              className="group flex items-center gap-3 rounded-xl border border-border/60 bg-surface px-4 py-3 transition-colors hover:bg-card/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <CalendarDays className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{t("quests.daily.title")}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {t("quests.daily.teaser", { done: dailyDone, total: daily.quests.length })}
+                </p>
+              </div>
+              {daily.unclaimed > 0 ? (
+                <span className="inline-flex shrink-0 items-center rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground tabular-nums">
+                  {t("quests.unclaimed", { count: daily.unclaimed })}
+                </span>
+              ) : daily.day && dailySeen !== daily.day ? (
+                <span
+                  role="img"
+                  aria-label={t("quests.daily.newToday")}
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500 text-[11px] font-bold text-white"
+                >
+                  !
+                </span>
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+              )}
+            </Link>
+          </section>
+        )}
         {isOwner && (recalcAvailable || showReworked) && (
           <section
             aria-label={t("quests.reworkedTitle")}

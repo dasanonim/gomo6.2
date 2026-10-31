@@ -639,6 +639,13 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 			protected.POST("/quests/reconcile", questsHandler.Reconcile)
 			protected.POST("/quests/chests/:id/open", questsHandler.OpenChest)
 
+			// Daily quests: rotating server-day set, self only (every read
+			// settles yesterday, so reads write).
+			protected.GET("/quests/daily", questsHandler.GetDaily)
+			protected.POST("/quests/daily/claim", questsHandler.ClaimDaily)
+			protected.POST("/quests/daily/restore", questsHandler.RestoreDailyStreak)
+			protected.POST("/quests/daily/chests/:id/open", questsHandler.OpenDailyChest)
+
 			// Custom sidebar tabs (synced across devices).
 			protected.GET("/sidebar_tabs", sidebarTabsHandler.GetTabs)
 			protected.POST("/sidebar_tabs", sidebarTabsHandler.CreateTab)

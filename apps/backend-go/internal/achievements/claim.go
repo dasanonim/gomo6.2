@@ -168,8 +168,39 @@ type ChestResult struct {
 	Detail []gamification.Reward `json:"rewards"`
 }
 
+// playChestSession runs one full gamification chest session server-side and
+// rolls its rewards. Shared by the quest-catalog chests and the daily ones.
+func playChestSession(mechanic string) (*ChestResult, error) {
+	m, ok := gamification.Lookup(mechanic)
+	if !ok {
+		return nil, fmt.Errorf("achievements: unknown chest mechanic %q", mechanic)
+	}
+	st, err := gamification.Start(mechanic)
+	if err != nil {
+		return nil, fmt.Errorf("achievements: chest start: %w", err)
+	}
+	src := cryptoSource{}
+	var ev gamification.Event
+	for i := 0; i < 1000 && !st.IsOpened(); i++ {
+		st, ev, err = gamification.Tap(st, src)
+		if err != nil {
+			return nil, fmt.Errorf("achievements: chest tap: %w", err)
+		}
+		_ = ev
+	}
+	if !st.IsOpened() {
+		return nil, fmt.Errorf("achievements: chest did not open")
+	}
+	detail := gamification.RollRewards(m, st.FinalRarity, src)
+	drops := 0
+	for _, r := range detail {
+		drops += r.Amount
+	}
+	return &ChestResult{Rarity: string(st.FinalRarity), Drops: drops, Detail: detail}, nil
+}
+
 // OpenChest plays a full gamification session for one of the user's unopened
-// chests and credits the rolled drops. One chest opens exactly once
+// quest chests and credits the rolled drops. One chest opens exactly once
 // (opened_at guard); a retry after a crash returns ErrChestOpened.
 func (e *Engine) OpenChest(ctx context.Context, userID, chestID string) (*ChestResult, error) {
 	if e.db == nil {
@@ -192,33 +223,11 @@ WHERE id = $1::uuid AND user_id = $2 AND opened_at IS NULL`,
 		}
 		return nil, fmt.Errorf("achievements: open chest read: %w", err)
 	}
-	m, ok := gamification.Lookup(mechanic)
-	if !ok {
-		return nil, fmt.Errorf("achievements: unknown chest mechanic %q", mechanic)
-	}
-
-	// Play the whole session server-side: Start, then tap until opened.
-	st, err := gamification.Start(mechanic)
+	res, err := playChestSession(mechanic)
 	if err != nil {
-		return nil, fmt.Errorf("achievements: chest start: %w", err)
+		return nil, err
 	}
-	src := cryptoSource{}
-	var ev gamification.Event
-	for i := 0; i < 1000 && !st.IsOpened(); i++ {
-		st, ev, err = gamification.Tap(st, src)
-		if err != nil {
-			return nil, fmt.Errorf("achievements: chest tap: %w", err)
-		}
-		_ = ev
-	}
-	if !st.IsOpened() {
-		return nil, fmt.Errorf("achievements: chest did not open")
-	}
-	detail := gamification.RollRewards(m, st.FinalRarity, src)
-	drops := 0
-	for _, r := range detail {
-		drops += r.Amount
-	}
+	drops := res.Drops
 	var balance int
 	if err := tx.QueryRowContext(ctx,
 		"UPDATE users SET drops = COALESCE(drops, 0) + $1 WHERE id = $2 RETURNING COALESCE(drops, 0)",
@@ -239,7 +248,7 @@ VALUES ($1, 'quest_reward', $2, $3, 'quest', $4)`,
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("achievements: open commit: %w", err)
 	}
-	return &ChestResult{Rarity: string(st.FinalRarity), Drops: drops, Detail: detail}, nil
+	return res, nil
 }
 
 // cryptoSource is a gamification.Source backed by crypto/rand.

@@ -93,6 +93,39 @@ const QUESTS = [
   },
 ];
 
+const DAILY = {
+  day: "2026-10-31",
+  quests: [
+    {
+      key: "daily_likes",
+      name_key: "achievements.daily.daily_likes.name",
+      desc_key: "achievements.daily.daily_likes.description",
+      threshold: 5,
+      progress: 5,
+      completed: true,
+      claimed: false,
+      can_claim: true,
+      rewards: [{ kind: "drops", amount: 10 }],
+    },
+    {
+      key: "daily_comments",
+      name_key: "achievements.daily.daily_comments.name",
+      desc_key: "achievements.daily.daily_comments.description",
+      threshold: 2,
+      progress: 1,
+      completed: false,
+      claimed: false,
+      can_claim: false,
+      rewards: [{ kind: "drops", amount: 12 }],
+    },
+  ],
+  unclaimed_count: 2,
+  full_claimed: false,
+  streak: { current: 3, longest: 7 },
+  chests: [],
+  drops: 100,
+};
+
 function setupFetch({
   profile = { id: "profile-user-1", username: "testuser" },
   quests = QUESTS,
@@ -100,6 +133,7 @@ function setupFetch({
   unclaimed = 1,
   recalcAvailable = false,
   catalogUpdatedAt = "",
+  daily = DAILY,
 }: {
   profile?: { id: string; username: string } | null;
   quests?: typeof QUESTS;
@@ -107,6 +141,7 @@ function setupFetch({
   unclaimed?: number;
   recalcAvailable?: boolean;
   catalogUpdatedAt?: string;
+  daily?: typeof DAILY;
 } = {}) {
   const ok = (data: unknown) => ({
     ok: true,
@@ -118,6 +153,9 @@ function setupFetch({
   mockFetch.mockImplementation((url: string, opts?: RequestInit) => {
     if (url.includes("/profiles")) {
       return Promise.resolve(ok(profile ? [profile] : []));
+    }
+    if (url.includes("/quests/daily")) {
+      return Promise.resolve(ok(daily));
     }
     if (url.includes("/quests/reconcile") && opts?.method === "POST") {
       return Promise.resolve(ok({ topped_up: [] }));
@@ -339,6 +377,38 @@ describe("Achievements page", () => {
     });
     expect(document.getElementById("quest-nope")).toBeNull();
     expect(routerCtl.calls).toContainEqual(["/achievements/profile-user-1", { replace: true }]);
+  });
+
+  it("links to the daily quests with the claimable count", async () => {
+    setupFetch();
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Ежедневные")).toBeInTheDocument();
+    });
+    const link = screen.getByRole("link", { name: /Ежедневные/ });
+    expect(link.getAttribute("href")).toBe("/achievements/daily");
+    expect(screen.getByText("Выполнено 1 из 2")).toBeInTheDocument();
+  });
+
+  it("raises «!» on the daily button for an unvisited day", async () => {
+    const store: Record<string, string> = {};
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => {
+        store[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete store[k];
+      },
+    });
+    setupFetch({ daily: { ...DAILY, quests: [], unclaimed_count: 0 } });
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Ежедневные")).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("Новые задания")).toBeInTheDocument();
   });
 
   it("shows progress for locked levels", async () => {

@@ -1107,6 +1107,17 @@ const ru: LocaleResources = {
       title: "Первые шаги",
       "1": { name: "Своя тарелка", description: "Закрой все 9 первых шагов" },
     },
+    // ── Дейлики: пул шаблонов, каждый день выбираются 3 ──
+    daily: {
+      daily_likes: { name: "Лайк-машина", description: "Поставь 5 лайков" },
+      daily_comments: { name: "Собеседник", description: "Напиши 2 комментария" },
+      daily_wall: { name: "Настенный вестник", description: "Опубликуй 1 запись на стене" },
+      daily_follows: { name: "Новые лица", description: "Подпишись на 2 человек" },
+      daily_thread: { name: "Зачинщик", description: "Создай 1 тему" },
+      daily_entries: { name: "Плодовитость", description: "Опубликуй 3 любые записи" },
+      daily_media: { name: "Покажи, не рассказывай", description: "Опубликуй 1 запись с картинкой" },
+      daily_likes_received: { name: "Нарасхват", description: "Собери 10 лайков" },
+    },
     resonance: {
       title: "Резонанс",
       "1": { name: "Волна", description: "Резонанс 100" },
@@ -1182,6 +1193,21 @@ const ru: LocaleResources = {
     recalcEmpty: "Всё уже забрано, недоданного нет",
     recalcFailed: "Не получилось проверить награды",
     recalcChest: "сундук",
+    daily: {
+      title: "Ежедневные",
+      back: "К квестам",
+      subtitle: "Выполнено {{done}} из {{total}} · новые в 00:00 UTC",
+      teaser: "Выполнено {{done}} из {{total}}",
+      newToday: "Новые задания",
+      dayClosed: "День закрыт. Новые задания — в 00:00 UTC",
+      chestFromDay: "Награда за день",
+      restoreTitle: "Серия прервалась",
+      restoreText: "Вчера не хватило одного дня. Вернуть серию за {{price}} {{label}}?",
+      restoreButton: "Восстановить серию",
+      restoreDone: "Серия продолжается!",
+      restoreFailed: "Не получилось восстановить серию",
+      restoreNoDrops: "Не хватает дропсов для восстановления",
+    },
   },
 };
 
