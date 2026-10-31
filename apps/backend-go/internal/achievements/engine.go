@@ -60,7 +60,7 @@ type Event struct {
 // anything else (thread, legacy empty target) feeds the thread first-step;
 // both feed the combined entries ladder.
 var eventCounters = map[EventType][]string{
-	EventCommentCreated: {"qs_first_comment", "comments", "media_uploads"},
+	EventCommentCreated: {"qs_first_comment", "comments"},
 	EventLikeGiven:      {"qs_like_given", "likes_given"},
 	EventLikeReceived:   {"likes_received"},
 	EventSubJoined:      {"qs_sub_join", "subs_joined"},

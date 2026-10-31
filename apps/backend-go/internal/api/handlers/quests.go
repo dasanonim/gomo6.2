@@ -105,7 +105,7 @@ SELECT a.group_key, COALESCE(a.title, a.name, ''), COALESCE(a.category, ''),
        COALESCE(ua.current_level, 0), COALESCE(ua.progress_current, 0),
        COALESCE(a.levels, '[]'::jsonb),
        COALESCE((
-         SELECT json_agg(json_build_object('level', qc.level, 'rewards', qc.rewards) ORDER BY qc.level)
+         SELECT json_agg(json_build_object('level', qc.level, 'rewards', qc.rewards, 'topup', qc.topup_rewards) ORDER BY qc.level)
          FROM quest_claims qc WHERE qc.user_id = $1 AND qc.achievement_id = a.id
        ), '[]'::json)
 FROM achievements a
@@ -136,13 +136,15 @@ ORDER BY a.sort_order, a.group_key`, targetID)
 		var claimedObjs []struct {
 			Level   int                   `json:"level"`
 			Rewards []achievements.Reward `json:"rewards"`
+			Topup   []achievements.Reward `json:"topup"`
 		}
 		_ = json.Unmarshal(claimedJSON, &claimedObjs)
 		claimedSet := map[int]bool{}
 		claimedRewards := map[int][]achievements.Reward{}
 		for _, co := range claimedObjs {
 			claimedSet[co.Level] = true
-			claimedRewards[co.Level] = co.Rewards
+			// Effective grant: what was claimed plus every reconcile top-up.
+			claimedRewards[co.Level] = append(append([]achievements.Reward{}, co.Rewards...), co.Topup...)
 		}
 		qp.Levels = make([]QuestProgressLevel, 0, len(levels))
 		for _, lvl := range levels {

@@ -80,10 +80,11 @@ func (e *Engine) levelRewards(groupKey string, level int) []Reward {
 // ReconcileUser tops up every already-claimed level whose catalog rewards grew
 // since the claim (rewards rework, threshold reshuffle — anything). It is the
 // "забрать недоданное" behind POST /quests/reconcile: safe to run any number
-// of times, grants only positive diffs, and rewrites the claim row to the new
-// catalog rewards so the next run is a no-op. Levels completed but never
-// claimed are left alone — they stay claimable for the full new amount via
-// the regular claim flow.
+// of times, grants only positive diffs, and appends them to the claim row's
+// topup_rewards — the original rewards column is never rewritten, so the row
+// keeps what was actually granted at claim time plus every later top-up.
+// Levels completed but never claimed are left alone — they stay claimable for
+// the full new amount via the regular claim flow.
 //
 // The whole pass runs in ONE transaction under a transaction-scoped advisory
 // lock on the user: concurrent reconciles for the same user (double click,
@@ -149,13 +150,16 @@ func (e *Engine) ReconcileUser(ctx context.Context, userID string) ([]ToppedUpLe
 				}
 				granted = append(granted, gr)
 			}
-			newBlob, err := marshalRewards(lvl.Rewards)
+			// Append-only: rewards keeps the original grant, topup_rewards
+			// accumulates every top-up. The next pass diffs the catalog
+			// against their sum, so repeats are no-ops by construction.
+			topupBlob, err := marshalRewards(diff)
 			if err != nil {
 				return topped, err
 			}
 			if _, err := tx.ExecContext(ctx,
-				"UPDATE quest_claims SET rewards = $1::jsonb, claimed_at = claimed_at WHERE user_id = $2 AND achievement_id = $3 AND level = $4",
-				newBlob, userID, aid, lvl.Level); err != nil {
+				"UPDATE quest_claims SET topup_rewards = topup_rewards || $1::jsonb WHERE user_id = $2 AND achievement_id = $3 AND level = $4",
+				topupBlob, userID, aid, lvl.Level); err != nil {
 				return topped, fmt.Errorf("achievements: reconcile ledger update: %w", err)
 			}
 			topped = append(topped, ToppedUpLevel{GroupKey: g.Key, Level: lvl.Level, Granted: granted})
@@ -201,11 +205,12 @@ func (e *Engine) reconcileProgress(ctx context.Context, tx *sql.Tx, userID strin
 }
 
 // reconcileClaims bulk-loads every claim row of the user: (achievement, level)
-// → granted rewards. A corrupt blob decodes to nil, i.e. tops up to the full
+// → granted rewards. The effective grant is the original rewards plus every
+// accumulated top-up; a corrupt blob decodes to nil, i.e. tops up to the full
 // catalog amount — same as the old per-level read did.
 func (e *Engine) reconcileClaims(ctx context.Context, tx *sql.Tx, userID string) (map[reconcileClaimKey][]Reward, error) {
 	rows, err := tx.QueryContext(ctx,
-		"SELECT achievement_id::text, level, COALESCE(rewards::text, '[]') FROM quest_claims WHERE user_id = $1",
+		"SELECT achievement_id::text, level, COALESCE(rewards::text, '[]'), COALESCE(topup_rewards::text, '[]') FROM quest_claims WHERE user_id = $1",
 		userID)
 	if err != nil {
 		return nil, fmt.Errorf("achievements: reconcile claims read: %w", err)
@@ -215,13 +220,15 @@ func (e *Engine) reconcileClaims(ctx context.Context, tx *sql.Tx, userID string)
 	for rows.Next() {
 		var aid string
 		var level int
-		var blob string
-		if err := rows.Scan(&aid, &level, &blob); err != nil {
+		var base, topup string
+		if err := rows.Scan(&aid, &level, &base, &topup); err != nil {
 			return nil, fmt.Errorf("achievements: reconcile claims scan: %w", err)
 		}
 		var rs []Reward
-		_ = json.Unmarshal([]byte(blob), &rs)
-		out[reconcileClaimKey{aid: aid, level: level}] = rs
+		_ = json.Unmarshal([]byte(base), &rs)
+		var extra []Reward
+		_ = json.Unmarshal([]byte(topup), &extra)
+		out[reconcileClaimKey{aid: aid, level: level}] = append(rs, extra...)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("achievements: reconcile claims rows: %w", err)

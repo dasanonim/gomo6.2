@@ -694,7 +694,9 @@ export default function Achievements() {
       if (gemsWon > 0) parts.push(t("quests.claimedGems", { count: gemsWon, label: formatGemsLabel(gemsWon) }));
       if (chestsWon > 0) parts.push(t("quests.recalcChest", { count: chestsWon }));
       toast.success(parts.length > 0 ? parts.join(", ") : t("quests.claimedDone"));
-      void reload();
+      // No reload: applyRecalc already patched drops/chests/recalcAvailable
+      // locally, and top-ups change no other page state. reload() stays the
+      // initial load and the conflict re-sync path (see useQuests).
     } catch {
       toast.error(t("quests.recalcFailed"));
     } finally {
