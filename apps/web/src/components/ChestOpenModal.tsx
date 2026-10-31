@@ -6,7 +6,6 @@ import { Gift } from "lucide-react";
 import { toast } from "sonner";
 import { CurrencyIcon } from "@/components/CurrencyIcon";
 import { useMotionOff } from "@/hooks/useTransitionStyle";
-import { cn } from "@/lib/utils";
 import { apiClient } from "@/integrations/api/client";
 import { formatDropsLabel } from "@/utils/formatDropsLabel";
 
@@ -66,6 +65,7 @@ async function loadCatalog(): Promise<{ rarities: RarityView[]; attempts: number
         rarities,
         attempts: typeof attempts === "number" && attempts > 0 ? attempts : FALLBACK_ATTEMPTS,
       };
+      warmTextures(rarities);
       return catalogCache;
     }
   } catch {
@@ -80,7 +80,22 @@ async function loadCatalog(): Promise<{ rarities: RarityView[]; attempts: number
     })),
     attempts: FALLBACK_ATTEMPTS,
   };
+  warmTextures(catalogCache.rarities);
   return catalogCache;
+}
+
+// Warm the browser cache for every curated texture the moment the catalog
+// lands: swapping rarity mid-ceremony must never flash a placeholder.
+function warmTextures(rarities: RarityView[]) {
+  try {
+    for (const r of rarities) {
+      for (const u of [r.image_url, r.opened_image_url]) {
+        if (u) new Image().src = u;
+      }
+    }
+  } catch {
+    /* non-DOM env (tests) — the <img> tags below still work */
+  }
 }
 
 interface ChestOpenModalProps {
@@ -297,12 +312,9 @@ export function ChestOpenModal({
             className="h-64 w-64 object-contain drop-shadow-2xl sm:h-80 sm:w-80"
           />
         ) : (
-          <span
-            className={cn("flex h-64 w-64 items-center justify-center rounded-3xl sm:h-80 sm:w-80")}
-            style={{ background: `${color}1f`, border: `2px dashed ${color}66` }}
-          >
-            <Gift className="h-20 w-20" style={{ color }} aria-hidden />
-          </span>
+          // No icon fallback by design (all chests carry curated textures):
+          // a transparent box keeps the layout while the PNG loads.
+          <span aria-hidden className="block h-64 w-64 sm:h-80 sm:w-80" />
         )}
       </motion.button>
 
