@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { motion, useAnimation, useReducedMotion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { Gift } from "lucide-react";
 import { toast } from "sonner";
 import { CurrencyIcon } from "@/components/CurrencyIcon";
@@ -138,7 +138,6 @@ export function ChestOpenModal({
   const [drops, setDrops] = useState(0);
   const [finalRarity, setFinalRarity] = useState("");
   const [live, setLive] = useState("");
-  const controls = useAnimation();
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const [imgFailed, setImgFailed] = useState(false);
@@ -302,7 +301,6 @@ export function ChestOpenModal({
           else tap();
         }}
         disabled={steps.length === 0}
-        animate={controls}
         whileTap={still ? undefined : { scale: 0.94 }}
         aria-label={
           opened
