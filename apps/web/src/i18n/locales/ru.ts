@@ -1184,7 +1184,6 @@ const ru: LocaleResources = {
     chestTapAria: "Осталось попыток: {{left}} из {{total}}. Тапни по сундуку",
     chestUpgraded: "Редкость выросла! Жми дальше",
     chestOpenedLabel: "Сундук открыт",
-    chestTake: "Забрать",
     rarity: {
       common: "Обычный",
       unusual: "Необычный",

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { motion, useAnimation, useReducedMotion } from "motion/react";
-import { Gift, X } from "lucide-react";
+import { Gift } from "lucide-react";
 import { toast } from "sonner";
 import { CurrencyIcon } from "@/components/CurrencyIcon";
 import { useMotionOff } from "@/hooks/useTransitionStyle";
@@ -128,6 +128,7 @@ export function ChestOpenModal({
   const [live, setLive] = useState("");
   const controls = useAnimation();
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const [imgFailed, setImgFailed] = useState(false);
 
   useEffect(() => {
@@ -160,6 +161,12 @@ export function ChestOpenModal({
   const src = opened ? view?.opened_image_url : view?.image_url;
 
   useEffect(() => setImgFailed(false), [src]);
+
+  // Once opened there are no controls left — move focus to the dialog so
+  // keyboard users can dismiss with Escape; the reward is already credited.
+  useEffect(() => {
+    if (opened) dialogRef.current?.focus();
+  }, [opened]);
 
   const tap = useCallback(async () => {
     if (busy || opened) return;
@@ -242,27 +249,26 @@ export function ChestOpenModal({
 
   return createPortal(
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-5 bg-black/60 p-4 backdrop-blur-md"
+      tabIndex={-1}
+      onClick={onClose}
+      className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-5 bg-black/60 p-4 backdrop-blur-md focus-visible:outline-none"
     >
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label={t("common.close")}
-        className="absolute right-4 top-4 rounded-full p-2 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-      >
-        <X className="size-5" />
-      </button>
-
       <span aria-hidden className="pointer-events-none absolute inset-0 opacity-30" style={{ background: `radial-gradient(ellipse 60% 45% at 50% 42%, ${color}66, transparent 70%)` }} />
 
-      {/* The chest: the only control on stage. */}
+      {/* The chest: the only control on stage. Taps roll mid-session;
+          after the opening tap any click dismisses (reward is credited). */}
       <motion.button
         type="button"
-        onClick={() => void tap()}
-        disabled={busy || opened}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (opened) onClose();
+          else void tap();
+        }}
+        disabled={busy}
         animate={controls}
         whileTap={still ? undefined : { scale: 0.94 }}
         aria-label={
@@ -306,19 +312,19 @@ export function ChestOpenModal({
           ))}
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-3">
+        <div className="flex flex-col items-center gap-1">
           <p className="inline-flex items-center gap-1.5 text-3xl font-bold tabular-nums text-white">
             <CurrencyIcon kind="drops" className="h-7 w-7" />+{drops}
           </p>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full bg-white px-8 py-2.5 text-sm font-semibold text-black transition-transform hover:scale-105 active:scale-95"
-          >
-            {t("quests.chestTake")}
-          </button>
+          <p className="text-xs text-white/60">{formatDropsLabel(drops)}</p>
         </div>
       )}
+
+      {/* Screen-reader dismissal: no visible chrome, but keyboard users
+          still get a labelled control (Escape works too). */}
+      <button type="button" onClick={onClose} tabIndex={-1} className="sr-only">
+        {t("common.close")}
+      </button>
 
       <span aria-live="polite" className="sr-only">
         {live}

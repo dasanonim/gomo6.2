@@ -1150,7 +1150,6 @@ const en: LocaleResources = {
     chestTapAria: "{{left}} of {{total}} taps left. Tap the chest",
     chestUpgraded: "Rarity up! Keep tapping",
     chestOpenedLabel: "Chest opened",
-    chestTake: "Take it",
     rarity: {
       common: "Common",
       unusual: "Unusual",

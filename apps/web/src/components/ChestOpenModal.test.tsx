@@ -62,7 +62,7 @@ describe("ChestOpenModal", () => {
       { type: "opened", rarity: "unusual", attempts_left: 0, attempts_total: 5, final_rarity: "unusual", drops: 60 },
     ];
     let n = 0;
-    const { onApplied, onProgress } = renderModal(() => Promise.resolve(taps[Math.min(n++, taps.length - 1)]));
+    const { onApplied, onProgress, onClose } = renderModal(() => Promise.resolve(taps[Math.min(n++, taps.length - 1)]));
 
     // Dots from the catalog budget before the first tap.
     const dialog = await screen.findByRole("dialog");
@@ -80,6 +80,10 @@ describe("ChestOpenModal", () => {
     await waitFor(() => expect(onApplied).toHaveBeenCalledWith(60));
     expect(await within(dialog).findByText("+60")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1); // catalog only — taps go through tapChest
+
+    // No take button, no cross: any click dismisses (reward is credited).
+    fireEvent.click(within(dialog).getByText("+60"));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
   it("resumes a mid-chest session from the snapshot", async () => {

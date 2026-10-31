@@ -231,7 +231,11 @@ describe("DailyQuests page", () => {
     await waitFor(() => expect(tapCalls.length).toBe(3));
 
     await waitFor(() => expect(within(dialog).getByText("+10")).toBeInTheDocument());
-    fireEvent.click(within(dialog).getByText("Забрать"));
+    // No take button, no cross: any click dismisses (reward is credited).
+    fireEvent.click(dialog);
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
 
     // The vault row is gone — the chest was credited and removed.
     await waitFor(() => {
