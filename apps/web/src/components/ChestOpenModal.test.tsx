@@ -1,19 +1,13 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MotionConfig } from "motion/react";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ChestOpenModal } from "./ChestOpenModal";
 
-const mockFetch = vi.fn();
-vi.stubGlobal("fetch", mockFetch);
-
-const STEPS = [
-  { type: "failed", rarity: "common", attempts_left: 4 },
-  { type: "upgraded", rarity: "unusual", attempts_left: 5 },
-  { type: "opened", rarity: "unusual", attempts_left: 0 },
-];
+const fetchMock = vi.fn();
+vi.stubGlobal("fetch", fetchMock);
 
 function setupCatalog() {
-  mockFetch.mockImplementation((url: string) =>
+  fetchMock.mockImplementation(() =>
     Promise.resolve({
       ok: true,
       status: 200,
@@ -26,7 +20,7 @@ function setupCatalog() {
               { rarity: "common", color: "#9ca3af", image_url: "/c.png", opened_image_url: "/c_o.png" },
               { rarity: "unusual", color: "#22c55e", image_url: "/u.png", opened_image_url: "/u_o.png" },
             ],
-            mechanics: [],
+            mechanics: [{ key: "rarity_chest", config: { attempts_per_tier: 5 } }],
           },
         }),
       text: () => Promise.resolve("{}"),
@@ -34,82 +28,79 @@ function setupCatalog() {
   );
 }
 
-function renderModal(applied: (r: { drops: number }) => void = () => {}) {
-  return render(
+function renderModal(tapChest: () => Promise<any>, props: Record<string, unknown> = {}) {
+  const onApplied = vi.fn();
+  const onProgress = vi.fn();
+  const onExpired = vi.fn();
+  const onClose = vi.fn();
+  render(
     <MotionConfig reducedMotion="always">
       <ChestOpenModal
         title="Сундук"
-        openChest={() => Promise.resolve({ rarity: "unusual", drops: 60, steps: STEPS })}
-        onApplied={applied}
-        onClose={() => {}}
+        tapChest={tapChest}
+        onApplied={onApplied}
+        onProgress={onProgress}
+        onExpired={onExpired}
+        onClose={onClose}
+        {...props}
       />
     </MotionConfig>,
   );
+  return { onApplied, onProgress, onExpired, onClose };
 }
 
+beforeEach(() => {
+  fetchMock.mockReset();
+});
+
 describe("ChestOpenModal", () => {
-  it("replays the server trace tap-by-tap and reveals the reward", async () => {
+  it("taps the server until the chest opens: fail shakes, upgrade flashes, reward lands", async () => {
     setupCatalog();
-    const applied = vi.fn();
-    renderModal(applied);
+    const taps = [
+      { type: "failed", rarity: "common", attempts_left: 4, attempts_total: 5 },
+      { type: "upgraded", rarity: "unusual", attempts_left: 5, attempts_total: 5 },
+      { type: "opened", rarity: "unusual", attempts_left: 0, attempts_total: 5, final_rarity: "unusual", drops: 60 },
+    ];
+    let n = 0;
+    const { onApplied, onProgress } = renderModal(() => Promise.resolve(taps[Math.min(n++, taps.length - 1)]));
 
-    // The single secure call lands, the parent credits immediately.
-    await waitFor(() => expect(applied).toHaveBeenCalledTimes(1));
-    expect(applied).toHaveBeenCalledWith(
-      expect.objectContaining({ rarity: "unusual", drops: 60 }),
-    );
-
-    // Three taps replay the three pre-rolled steps, no extra network.
-    const chest = await screen.findByRole("button", { name: "Жми ещё" });
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("0 из 3")).toBeInTheDocument();
+    // Dots from the catalog budget before the first tap.
+    const dialog = await screen.findByRole("dialog");
+    const chest = within(dialog).getByRole("button", { name: /Осталось попыток: 5 из 5/ });
+    // 5 dots rendered.
+    expect(dialog.querySelectorAll("span.rounded-full").length).toBe(5);
 
     fireEvent.click(chest);
-    await waitFor(() => expect(screen.getByText("1 из 3")).toBeInTheDocument());
-    fireEvent.click(chest);
-    await waitFor(() => expect(screen.getByText("Редкость выросла! Жми дальше")).toBeInTheDocument());
-    fireEvent.click(chest);
+    await waitFor(() => expect(onProgress).toHaveBeenCalledWith("common", 4));
 
-    await waitFor(() => expect(screen.getByText("+60")).toBeInTheDocument());
-    expect(screen.getByText("Необычный")).toBeInTheDocument();
-    expect(screen.getByText("Забрать")).toBeInTheDocument();
-    // Still a single catalog fetch + zero open POSTs from the modal itself.
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    fireEvent.click(chest);
+    await waitFor(() => expect(onProgress).toHaveBeenCalledWith("unusual", 5));
+
+    fireEvent.click(chest);
+    await waitFor(() => expect(onApplied).toHaveBeenCalledWith(60));
+    expect(await within(dialog).findByText("+60")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1); // catalog only — taps go through tapChest
   });
 
-  it("opens at once when the server sends no trace (old build)", async () => {
+  it("resumes a mid-chest session from the snapshot", async () => {
     setupCatalog();
-    render(
-      <MotionConfig reducedMotion="always">
-        <ChestOpenModal
-          title="Сундук"
-          openChest={() => Promise.resolve({ rarity: "rare", drops: 70 })}
-          onApplied={() => {}}
-          onClose={() => {}}
-        />
-      </MotionConfig>,
+    const { onApplied } = renderModal(
+      () => Promise.resolve({ type: "opened", rarity: "unusual", attempts_left: 0, attempts_total: 5, final_rarity: "unusual", drops: 40 }),
+      { initialRarity: "unusual", initialAttempts: 2 },
     );
-
-    const chest = await screen.findByRole("button", { name: "Жми ещё" });
-    fireEvent.click(chest);
-    await waitFor(() => expect(screen.getByText("+70")).toBeInTheDocument());
+    const dialog = await screen.findByRole("dialog");
+    within(dialog).getByRole("button", { name: /Осталось попыток: 2 из 5/ });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Осталось попыток: 2 из 5/ }));
+    await waitFor(() => expect(onApplied).toHaveBeenCalledWith(40));
   });
 
-  it("shows the failure state when the open call rejects", async () => {
+  it("drops the row when the chest is already gone server-side", async () => {
     setupCatalog();
-    render(
-      <MotionConfig reducedMotion="always">
-        <ChestOpenModal
-          title="Сундук"
-          openChest={() => Promise.reject(new Error("nope"))}
-          onApplied={() => {}}
-          onClose={() => {}}
-        />
-      </MotionConfig>,
-    );
-
-    await waitFor(() =>
-      expect(screen.getByText("Не получилось открыть сундук")).toBeInTheDocument(),
-    );
+    const err = Object.assign(new Error("gone"), { status: 409 });
+    const { onExpired, onClose } = renderModal(() => Promise.reject(err));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /Осталось попыток/ }));
+    await waitFor(() => expect(onExpired).toHaveBeenCalledTimes(1));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

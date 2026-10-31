@@ -634,17 +634,17 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 			protected.GET("/favorites/ids", favoritesHandler.GetFavoriteIds)
 			protected.DELETE("/favorites/:itemType/:itemId", favoritesHandler.RemoveFavorite)
 
-			// Quests: idempotent reward claims and chest opens (self only).
+			// Quests: idempotent reward claims and per-tap chest sessions (self only).
 			protected.POST("/quests/claim", questsHandler.Claim)
 			protected.POST("/quests/reconcile", questsHandler.Reconcile)
-			protected.POST("/quests/chests/:id/open", questsHandler.OpenChest)
+			protected.POST("/quests/chests/:id/tap", questsHandler.TapChest)
 
 			// Daily quests: rotating server-day set, self only (every read
 			// settles yesterday, so reads write).
 			protected.GET("/quests/daily", questsHandler.GetDaily)
 			protected.POST("/quests/daily/claim", questsHandler.ClaimDaily)
 			protected.POST("/quests/daily/restore", questsHandler.RestoreDailyStreak)
-			protected.POST("/quests/daily/chests/:id/open", questsHandler.OpenDailyChest)
+			protected.POST("/quests/daily/chests/:id/tap", questsHandler.TapDailyChest)
 
 			// Custom sidebar tabs (synced across devices).
 			protected.GET("/sidebar_tabs", sidebarTabsHandler.GetTabs)

@@ -3,6 +3,7 @@ package achievements
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -249,12 +250,15 @@ type DailyProgress struct {
 	AutoGranted []GrantedReward `json:"auto_granted,omitempty"`
 }
 
-// DailyChestInfo is one unopened daily chest.
+// DailyChestInfo is one unopened daily chest. StateRarity/StateAttempts carry
+// the persisted tap session so the modal resumes mid-chest sessions.
 type DailyChestInfo struct {
-	ID        string `json:"id"`
-	Day       string `json:"day"`
-	Mechanic  string `json:"mechanic"`
-	CreatedAt string `json:"created_at"`
+	ID            string `json:"id"`
+	Day           string `json:"day"`
+	Mechanic      string `json:"mechanic"`
+	CreatedAt     string `json:"created_at"`
+	StateRarity   string `json:"state_rarity,omitempty"`
+	StateAttempts *int   `json:"state_attempts,omitempty"`
 }
 
 // GetDailyProgress settles yesterday (auto-grant + streak) and returns today.
@@ -706,7 +710,7 @@ func (e *Engine) dailyDayCompleteTx(ctx context.Context, tx *sql.Tx, userID, day
 // dailyOpenChests lists the user's unopened daily chests.
 func (e *Engine) dailyOpenChests(ctx context.Context, userID string) ([]DailyChestInfo, error) {
 	rows, err := e.db.QueryContext(ctx, `
-SELECT id::text, quest_day::text, mechanic, created_at::text
+SELECT id::text, quest_day::text, mechanic, created_at::text, session::text
 FROM daily_chests WHERE user_id = $1 AND opened_at IS NULL
 ORDER BY created_at DESC LIMIT 20`, userID)
 	if err != nil {
@@ -716,60 +720,36 @@ ORDER BY created_at DESC LIMIT 20`, userID)
 	out := []DailyChestInfo{}
 	for rows.Next() {
 		var c DailyChestInfo
-		if err := rows.Scan(&c.ID, &c.Day, &c.Mechanic, &c.CreatedAt); err != nil {
+		var session sql.NullString
+		if err := rows.Scan(&c.ID, &c.Day, &c.Mechanic, &c.CreatedAt, &session); err != nil {
 			return nil, fmt.Errorf("achievements: daily chests scan: %w", err)
+		}
+		if snap := parseDailyChestSession(session); snap != nil {
+			c.StateRarity = snap.Rarity
+			c.StateAttempts = &snap.Attempts
 		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
 }
 
-// OpenDailyChest plays the chest session and credits the rolled drops.
-// One chest opens exactly once (opened_at guard).
-func (e *Engine) OpenDailyChest(ctx context.Context, userID, chestID string) (*ChestResult, error) {
-	if e.db == nil {
-		return nil, fmt.Errorf("achievements: OpenDailyChest: nil db")
+// parseDailyChestSession extracts rarity + attempts from a session snapshot.
+func parseDailyChestSession(session sql.NullString) *struct {
+	Rarity   string
+	Attempts int
+} {
+	if !session.Valid || session.String == "" {
+		return nil
 	}
-	tx, err := e.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("achievements: daily open begin: %w", err)
+	var st struct {
+		Rarity       string `json:"rarity"`
+		AttemptsLeft int    `json:"attempts_left"`
 	}
-	defer tx.Rollback()
-
-	var mechanic string
-	err = tx.QueryRowContext(ctx, `
-SELECT mechanic FROM daily_chests
-WHERE id = $1::uuid AND user_id = $2 AND opened_at IS NULL`,
-		chestID, userID).Scan(&mechanic)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, ErrChestUnknown
-		}
-		return nil, fmt.Errorf("achievements: daily open chest read: %w", err)
+	if err := json.Unmarshal([]byte(session.String), &st); err != nil || st.Rarity == "" {
+		return nil
 	}
-	res, err := playChestSession(mechanic)
-	if err != nil {
-		return nil, err
-	}
-	var balance int
-	if err := tx.QueryRowContext(ctx,
-		"UPDATE users SET drops = COALESCE(drops, 0) + $1 WHERE id = $2 RETURNING COALESCE(drops, 0)",
-		res.Drops, userID).Scan(&balance); err != nil {
-		return nil, fmt.Errorf("achievements: daily chest credit: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO drops_transactions (user_id, type, amount, balance_after, reference_type, description)
-VALUES ($1, 'daily_reward', $2, $3, 'daily', $4)`,
-		userID, res.Drops, balance, fmt.Sprintf("Daily chest: +%d drops", res.Drops)); err != nil {
-		return nil, fmt.Errorf("achievements: daily chest credit ledger: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE daily_chests SET opened_at = NOW(), reward_drops = $1 WHERE id = $2::uuid",
-		res.Drops, chestID); err != nil {
-		return nil, fmt.Errorf("achievements: daily chest close: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("achievements: daily open commit: %w", err)
-	}
-	return res, nil
+	return &struct {
+		Rarity   string
+		Attempts int
+	}{Rarity: st.Rarity, Attempts: st.AttemptsLeft}
 }

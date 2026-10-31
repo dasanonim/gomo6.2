@@ -54,14 +54,18 @@ type QuestProgress struct {
 	Levels          []QuestProgressLevel `json:"levels"`
 }
 
-// QuestChest is one inventory chest row.
+// QuestChest is one inventory chest row. StateRarity/StateAttempts describe
+// the persisted tap session (NULL session = never tapped): the modal renders
+// the dots correctly on mount and resumes mid-chest sessions.
 type QuestChest struct {
-	ID        string  `json:"id"`
-	QuestKey  string  `json:"quest_key"`
-	Level     int     `json:"level"`
-	Mechanic  string  `json:"mechanic"`
-	CreatedAt string  `json:"created_at"`
-	OpenedAt  *string `json:"opened_at,omitempty"`
+	ID            string  `json:"id"`
+	QuestKey      string  `json:"quest_key"`
+	Level         int     `json:"level"`
+	Mechanic      string  `json:"mechanic"`
+	CreatedAt     string  `json:"created_at"`
+	OpenedAt      *string `json:"opened_at,omitempty"`
+	StateRarity   string  `json:"state_rarity,omitempty"`
+	StateAttempts *int    `json:"state_attempts,omitempty"`
 }
 
 // GetProgress godoc
@@ -234,7 +238,7 @@ func (h *QuestsHandler) catalogUpdatedAt() string {
 func (h *QuestsHandler) openChests(userID string) []QuestChest {
 	rows, err := h.db.Query(`
 SELECT c.id::text, a.group_key, c.level, c.mechanic,
-       c.created_at::text, c.opened_at::text
+       c.created_at::text, c.opened_at::text, c.session::text
 FROM quest_chests c
 JOIN achievements a ON a.id = c.achievement_id
 WHERE c.user_id = $1 AND c.opened_at IS NULL
@@ -246,16 +250,41 @@ ORDER BY c.created_at DESC LIMIT 50`, userID)
 	out := []QuestChest{}
 	for rows.Next() {
 		var ch QuestChest
-		var opened sql.NullString
-		if err := rows.Scan(&ch.ID, &ch.QuestKey, &ch.Level, &ch.Mechanic, &ch.CreatedAt, &opened); err != nil {
+		var opened, session sql.NullString
+		if err := rows.Scan(&ch.ID, &ch.QuestKey, &ch.Level, &ch.Mechanic, &ch.CreatedAt, &opened, &session); err != nil {
 			continue
 		}
 		if opened.Valid {
 			ch.OpenedAt = &opened.String
 		}
+		if snap := parseChestSession(session); snap != nil {
+			ch.StateRarity = snap.Rarity
+			ch.StateAttempts = &snap.Attempts
+		}
 		out = append(out, ch)
 	}
 	return out
+}
+
+// chestSessionSnap is the client-facing slice of a persisted tap session.
+type chestSessionSnap struct {
+	Rarity   string
+	Attempts int
+}
+
+// parseChestSession extracts rarity + attempts from a session JSON snapshot.
+func parseChestSession(session sql.NullString) *chestSessionSnap {
+	if !session.Valid || session.String == "" {
+		return nil
+	}
+	var st struct {
+		Rarity       string `json:"rarity"`
+		AttemptsLeft int    `json:"attempts_left"`
+	}
+	if err := json.Unmarshal([]byte(session.String), &st); err != nil || st.Rarity == "" {
+		return nil
+	}
+	return &chestSessionSnap{Rarity: st.Rarity, Attempts: st.AttemptsLeft}
 }
 
 // ClaimRequest is the body of POST /quests/claim.
@@ -331,16 +360,16 @@ func (h *QuestsHandler) Reconcile(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"topped_up": topped}))
 }
 
-// OpenChest godoc
-// @Summary      Open a quest chest
-// @Description  Plays a full chest session server-side and credits the rolled drops. One chest opens exactly once.
+// TapChest godoc
+// @Summary      Tap a quest chest
+// @Description  Advances one chest tap server-side (upgrade, fail or open) and persists the session. The opening tap credits the rolled drops. A tap on an already-opened chest is 409.
 // @Tags         Quests
 // @Produce      json
 // @Param        id path string true "Chest UUID"
 // @Success      200 {object} models.APIResponse
-// @Router       /quests/chests/{id}/open [post]
+// @Router       /quests/chests/{id}/tap [post]
 // @Security     BearerAuth
-func (h *QuestsHandler) OpenChest(c *gin.Context) {
+func (h *QuestsHandler) TapChest(c *gin.Context) {
 	claims := httpx.EnsureAuth(c)
 	if claims == nil {
 		return
@@ -349,7 +378,7 @@ func (h *QuestsHandler) OpenChest(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Quests unavailable"))
 		return
 	}
-	res, err := h.engine.OpenChest(c.Request.Context(), claims.UserID, c.Param("id"))
+	res, err := h.engine.TapChest(c.Request.Context(), claims.UserID, c.Param("id"))
 	switch err {
 	case nil:
 		c.JSON(http.StatusOK, models.SuccessResponse(res))
@@ -358,6 +387,6 @@ func (h *QuestsHandler) OpenChest(c *gin.Context) {
 	case achievements.ErrChestOpened:
 		c.JSON(http.StatusConflict, models.ErrorResponse(err.Error()))
 	default:
-		httpx.ServerError(c, "open failed", err)
+		httpx.ServerError(c, "tap failed", err)
 	}
 }

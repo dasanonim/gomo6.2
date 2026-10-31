@@ -220,16 +220,21 @@ export default function DailyQuests() {
     loading,
     claim,
     restore,
-    openChest,
+    tapChest,
     reload,
     applyClaim,
     applyRestore,
     applyChestOpen,
+    applyChestTap,
   } = useDailyQuests(user?.id);
   const isOwner = Boolean(user?.id);
   const [claimingKey, setClaimingKey] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
-  const [openChestModal, setOpenChestModal] = useState<{ id: string } | null>(null);
+  const [openChestModal, setOpenChestModal] = useState<{
+    id: string;
+    rarity?: string;
+    attempts?: number;
+  } | null>(null);
   const inflight = useRef<Set<string>>(new Set());
 
   const doneCount = useMemo(() => quests.filter((q) => q.completed).length, [quests]);
@@ -301,16 +306,27 @@ export default function DailyQuests() {
     }
   };
 
-  const handleOpenChest = (id: string) => {
-    const key = `chest:${id}`;
+  const handleOpenChest = (ch: { id: string; state_rarity?: string; state_attempts?: number }) => {
+    const key = `chest:${ch.id}`;
     if (inflight.current.has(key)) return;
     inflight.current.add(key);
-    setOpenChestModal({ id });
+    setOpenChestModal({ id: ch.id, rarity: ch.state_rarity, attempts: ch.state_attempts });
   };
 
   const closeChestModal = () => {
     setOpenChestModal((m) => {
       if (m) inflight.current.delete(`chest:${m.id}`);
+      return null;
+    });
+  };
+
+  const expireChestModal = () => {
+    setOpenChestModal((m) => {
+      if (m) {
+        inflight.current.delete(`chest:${m.id}`);
+        applyChestOpen(m.id, 0);
+        void reload();
+      }
       return null;
     });
   };
@@ -422,7 +438,7 @@ export default function DailyQuests() {
                   </div>
                   <motion.button
                     type="button"
-                    onClick={() => handleOpenChest(ch.id)}
+                    onClick={() => handleOpenChest(ch)}
                     disabled={openChestModal?.id === ch.id}
                     {...pressFeedback(null)}
                     transition={springFor("snappy", null)}
@@ -440,8 +456,12 @@ export default function DailyQuests() {
       {openChestModal && (
         <ChestOpenModal
           title={t("quests.daily.chestFromDay")}
-          openChest={() => openChest(openChestModal.id)}
-          onApplied={(res) => applyChestOpen(openChestModal.id, res.drops)}
+          initialRarity={openChestModal.rarity}
+          initialAttempts={openChestModal.attempts}
+          tapChest={() => tapChest(openChestModal.id)}
+          onApplied={(won) => applyChestOpen(openChestModal.id, won)}
+          onProgress={(r, a) => applyChestTap(openChestModal.id, r, a)}
+          onExpired={expireChestModal}
           onClose={closeChestModal}
         />
       )}

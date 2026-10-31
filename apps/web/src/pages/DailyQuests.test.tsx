@@ -70,7 +70,15 @@ function ok(data: unknown) {
   };
 }
 
+const tapCalls: string[] = [];
+const tapQueue = [
+  { type: "failed", rarity: "common", attempts_left: 4, attempts_total: 5 },
+  { type: "upgraded", rarity: "unusual", attempts_left: 5, attempts_total: 5 },
+  { type: "opened", rarity: "unusual", attempts_left: 0, attempts_total: 5, final_rarity: "unusual", drops: 10 },
+];
+
 function setupFetch(daily: unknown = DAILY) {
+  tapCalls.length = 0;
   mockFetch.mockImplementation((url: string, opts?: RequestInit) => {
     if (String(url).includes("/quests/daily/claim") && opts?.method === "POST") {
       return Promise.resolve(ok({ granted: [{ kind: "drops", amount: 10 }] }));
@@ -79,18 +87,9 @@ function setupFetch(daily: unknown = DAILY) {
       return Promise.resolve(ok({ streak: 4, price: 80 }));
     }
     if (String(url).includes("/quests/daily/chests/") && opts?.method === "POST") {
-      return Promise.resolve(
-        ok({
-          rarity: "unusual",
-          drops: 10,
-          rewards: [],
-          steps: [
-            { type: "failed", rarity: "common", attempts_left: 4 },
-            { type: "upgraded", rarity: "unusual", attempts_left: 5 },
-            { type: "opened", rarity: "unusual", attempts_left: 0 },
-          ],
-        }),
-      );
+      tapCalls.push(String(url));
+      const next = tapQueue[Math.min(tapCalls.length - 1, tapQueue.length - 1)];
+      return Promise.resolve(ok(next));
     }
     if (String(url).includes("/quests/daily")) {
       return Promise.resolve(ok(daily));
@@ -207,7 +206,7 @@ describe("DailyQuests page", () => {
     expect(store["daily:seen:profile-user-1"]).toBe("2026-10-31");
   });
 
-  it("opens a chest through the modal: tap the trace, take the reward", async () => {
+  it("opens a chest through the modal: server taps, dots, reward", async () => {
     setupFetch({
       ...DAILY,
       chests: [{ id: "c1", day: "2026-10-31", mechanic: "rarity_chest", created_at: "" }],
@@ -219,24 +218,20 @@ describe("DailyQuests page", () => {
     });
     fireEvent.click(screen.getByText("Открыть"));
 
-    // One secure POST, then the trace replays locally.
-    await waitFor(() => {
-      expect(
-        mockFetch.mock.calls.filter(
-          ([url, opts]: any[]) =>
-            typeof url === "string" &&
-            url.includes("/quests/daily/chests/c1/open") &&
-            (opts as RequestInit)?.method === "POST",
-        ).length,
-      ).toBe(1);
-    });
-    const chest = await screen.findByRole("button", { name: "Жми ещё" });
+    // No server call until the first tap on the chest itself.
+    const dialog = await screen.findByRole("dialog");
+    expect(tapCalls.length).toBe(0);
+    const chest = within(dialog).getByRole("button", { name: /Осталось попыток: 5 из 5/ });
+
     fireEvent.click(chest);
-    await waitFor(() => expect(screen.getByText("1 из 3")).toBeInTheDocument());
+    await waitFor(() => expect(tapCalls.length).toBe(1));
     fireEvent.click(chest);
+    await waitFor(() => expect(tapCalls.length).toBe(2));
     fireEvent.click(chest);
-    await waitFor(() => expect(screen.getByText("+10")).toBeInTheDocument());
-    fireEvent.click(within(screen.getByRole("dialog")).getByText("Забрать"));
+    await waitFor(() => expect(tapCalls.length).toBe(3));
+
+    await waitFor(() => expect(within(dialog).getByText("+10")).toBeInTheDocument());
+    fireEvent.click(within(dialog).getByText("Забрать"));
 
     // The vault row is gone — the chest was credited and removed.
     await waitFor(() => {

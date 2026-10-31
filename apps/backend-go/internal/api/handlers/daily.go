@@ -109,15 +109,15 @@ func (h *QuestsHandler) RestoreDailyStreak(c *gin.Context) {
 	}
 }
 
-// OpenDailyChest godoc
-// @Summary      Open a daily chest
-// @Description  Plays the chest session and credits the rolled drops. One chest opens exactly once.
+// TapDailyChest godoc
+// @Summary      Tap a daily chest
+// @Description  Advances one daily chest tap server-side (upgrade, fail or open) and persists the session. The opening tap credits the rolled drops. A tap on an already-opened chest is 409.
 // @Tags         Quests
 // @Produce      json
 // @Param        id path string true "Daily chest ID"
-// @Router       /quests/daily/chests/{id}/open [post]
+// @Router       /quests/daily/chests/{id}/tap [post]
 // @Security     BearerAuth
-func (h *QuestsHandler) OpenDailyChest(c *gin.Context) {
+func (h *QuestsHandler) TapDailyChest(c *gin.Context) {
 	claims := httpx.EnsureAuth(c)
 	if claims == nil {
 		return
@@ -126,13 +126,13 @@ func (h *QuestsHandler) OpenDailyChest(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Quests unavailable"))
 		return
 	}
-	res, err := h.engine.OpenDailyChest(c.Request.Context(), claims.UserID, c.Param("id"))
+	res, err := h.engine.TapDailyChest(c.Request.Context(), claims.UserID, c.Param("id"))
 	switch err {
 	case nil:
 		c.JSON(http.StatusOK, models.SuccessResponse(res))
 	case achievements.ErrChestUnknown, achievements.ErrChestOpened:
 		c.JSON(http.StatusConflict, models.ErrorResponse(err.Error()))
 	default:
-		httpx.ServerError(c, "open failed", err)
+		httpx.ServerError(c, "tap failed", err)
 	}
 }

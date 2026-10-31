@@ -123,21 +123,110 @@ func TestClaimLevel_UnknownQuest(t *testing.T) {
 	}
 }
 
-// The open response carries the full tap trace: the client replays it
-// click-by-click, so the trace must be non-empty and end with the opening.
-func TestPlayChestSession_StepsTrace(t *testing.T) {
-	res, err := playChestSession("rarity_chest")
+// fixedTapSource is a deterministic gamification.Source: 0.0 always upgrades,
+// 0.99 always fails.
+type fixedTapSource float64
+
+func (f fixedTapSource) Float64() float64 { return float64(f) }
+
+// A tap that fails persists the session — the dots survive a modal close.
+func TestTapChest_FailPersistsSession(t *testing.T) {
+	db, mock, err := sqlmock.New()
 	if err != nil {
-		t.Fatalf("play: %v", err)
+		t.Fatal(err)
 	}
-	if len(res.Steps) == 0 {
-		t.Fatal("expected a non-empty step trace")
+	t.Cleanup(func() { db.Close() })
+	e := New(db, claimTestCatalog(t))
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT mechanic, session::text").
+		WithArgs("c1", "u1").
+		WillReturnRows(sqlmock.NewRows([]string{"mechanic", "session", "opened"}).
+			AddRow("rarity_chest", nil, false))
+	mock.ExpectExec("UPDATE quest_chests SET session").
+		WithArgs(sqlmock.AnyArg(), "c1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	out, err := e.tapChest(t.Context(), "quest_chests", "quest_reward", "quest", "Quest chest", "u1", "c1", fixedTapSource(0.99))
+	if err != nil {
+		t.Fatalf("tap: %v", err)
 	}
-	last := res.Steps[len(res.Steps)-1]
-	if last.Type != "opened" {
-		t.Fatalf("last step must open the chest, got %q", last.Type)
+	if out.Type != "failed" {
+		t.Fatalf("expected a failed tap, got %q", out.Type)
 	}
-	if res.Rarity == "" || res.Drops <= 0 {
-		t.Fatalf("expected rarity + drops, got %+v", res)
+	if out.AttemptsTotal != 5 || out.AttemptsLeft != 4 {
+		t.Fatalf("expected 4/5 attempts left, got %+v", out)
+	}
+	if out.Drops != 0 {
+		t.Fatalf("a failed tap must not credit, got %+v", out)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled: %v", err)
+	}
+}
+
+// A tap from mythic with a lucky roll upgrades to eternal and opens at once,
+// crediting the jackpot in the same transaction.
+func TestTapChest_UpgradeOpensAndCredits(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	e := New(db, claimTestCatalog(t))
+
+	session := `{"mechanic_key":"rarity_chest","rarity":"mythic","attempts_left":5,"opened":false}`
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT mechanic, session::text").
+		WithArgs("c9", "u1").
+		WillReturnRows(sqlmock.NewRows([]string{"mechanic", "session", "opened"}).
+			AddRow("rarity_chest", session, false))
+	mock.ExpectQuery("UPDATE users SET drops").
+		WithArgs(sqlmock.AnyArg(), "u1").
+		WillReturnRows(sqlmock.NewRows([]string{"drops"}).AddRow(800))
+	mock.ExpectExec("INSERT INTO drops_transactions").
+		WithArgs("u1", "daily_reward", sqlmock.AnyArg(), 800, "daily", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE daily_chests SET opened_at").
+		WithArgs(sqlmock.AnyArg(), "c9").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	out, err := e.tapChest(t.Context(), "daily_chests", "daily_reward", "daily", "Daily chest", "u1", "c9", fixedTapSource(0.0))
+	if err != nil {
+		t.Fatalf("tap: %v", err)
+	}
+	if out.Type != "opened" || out.FinalRarity != "eternal" {
+		t.Fatalf("expected an eternal opening, got %+v", out)
+	}
+	if out.Drops <= 0 {
+		t.Fatalf("the opening tap must credit drops, got %+v", out)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled: %v", err)
+	}
+}
+
+func TestTapChest_AlreadyOpened(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	e := New(db, claimTestCatalog(t))
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT mechanic, session::text").
+		WithArgs("c1", "u1").
+		WillReturnRows(sqlmock.NewRows([]string{"mechanic", "session", "opened"}).
+			AddRow("rarity_chest", nil, true))
+	mock.ExpectRollback()
+
+	if _, err := e.tapChest(t.Context(), "quest_chests", "quest_reward", "quest", "Quest chest", "u1", "c1", fixedTapSource(0.0)); !errors.Is(err, ErrChestOpened) {
+		t.Fatalf("expected ErrChestOpened, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled: %v", err)
 	}
 }
