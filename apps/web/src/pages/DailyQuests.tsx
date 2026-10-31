@@ -178,6 +178,26 @@ function DailyCard({
 }
 
 /**
+ * Yesterday's auto-grant as one toast line ("Вчерашнее долетело: +40
+ * дропсов, сундук"). Null when there is nothing to announce — the chest, if
+ * any, is already sitting in the vault below, ready to open.
+ */
+export function formatAutoGranted(
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  granted: DailyReward[],
+): string | null {
+  if (granted.length === 0) return null;
+  const parts: string[] = [];
+  const dropsWon = granted
+    .filter((g) => g.kind === "drops")
+    .reduce((sum, g) => sum + (g.amount ?? 0), 0);
+  if (dropsWon > 0) parts.push(t("quests.claimedDrops", { count: dropsWon, label: formatDropsLabel(dropsWon) }));
+  if (granted.some((g) => g.kind === "chest")) parts.push(t("quests.chest"));
+  if (parts.length === 0) return null;
+  return `${t("quests.daily.autoTitle")}: ${parts.join(", ")}`;
+}
+
+/**
  * Daily quests screen: today's three (deterministic per server date), the
  * streak header, the bought-back-series banner and the day-chest vault.
  * The set is seen-marked on load so the quests-page button can raise its
@@ -195,6 +215,7 @@ export default function DailyQuests() {
     streak,
     chests,
     drops,
+    autoGranted,
     loading,
     claim,
     restore,
@@ -220,6 +241,16 @@ export default function DailyQuests() {
       /* ignore */
     }
   }, [user?.id, day]);
+
+  // Yesterday's auto-grant, announced once per day: settle credited it just
+  // now (repeats return nothing new), so one toast per day is exact.
+  const autoToastDay = useRef<string | null>(null);
+  useEffect(() => {
+    if (!day || autoGranted.length === 0 || autoToastDay.current === day) return;
+    autoToastDay.current = day;
+    const text = formatAutoGranted(t, autoGranted);
+    if (text) toast.success(text);
+  }, [day, autoGranted, t]);
 
   const handleClaim = async (quest: DailyQuest) => {
     if (inflight.current.has(quest.key)) return;

@@ -48,6 +48,26 @@ func exactMatcher() sqlmock.QueryMatcher {
 	})
 }
 
+// The day's set is a pure function of the date: it exists the moment the
+// server answers, with no scheduler, no midnight wait and no seeding.
+func TestDailySetFor_AvailableImmediately(t *testing.T) {
+	set := DailySetFor(dailyNow())
+	if len(set) != DailyQuestCount {
+		t.Fatalf("today has %d quests, want %d", len(set), DailyQuestCount)
+	}
+	for _, q := range set {
+		if q.Threshold < 1 {
+			t.Errorf("%s: non-positive threshold %d", q.Key, q.Threshold)
+		}
+		if len(q.Rewards) == 0 {
+			t.Errorf("%s: no rewards", q.Key)
+		}
+		if _, ok := dailyProgressQueries[q.Key]; !ok {
+			t.Errorf("%s: no day counter query", q.Key)
+		}
+	}
+}
+
 func TestDailySetFor_Deterministic(t *testing.T) {
 	day := mustParseDay("2026-10-31")
 	a := DailySetFor(day)
@@ -191,8 +211,10 @@ func TestSettleDailyDay_AutoGrants(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	if err := e.settleDailyDay(t.Context(), "u1", day); err != nil {
+	if got, err := e.settleDailyDay(t.Context(), "u1", day); err != nil {
 		t.Fatalf("settle: %v", err)
+	} else if len(got) != len(set)+1 {
+		t.Fatalf("expected %d auto-grants (quests + day chest), got %+v", len(set)+1, got)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled: %v", err)

@@ -112,6 +112,23 @@ describe("useDailyQuests", () => {
     expect(mockFetch.mock.calls.filter(([u]) => String(u).includes("/quests/daily/restore")).length).toBe(0);
   });
 
+  it("exposes yesterday's auto-grant for the one-time toast", async () => {
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(
+        ok({
+          ...DAILY,
+          auto_granted: [
+            { kind: "drops", amount: 40 },
+            { kind: "chest", chest_id: "c9" },
+          ],
+        }),
+      ),
+    );
+    const { result } = renderHook(() => useDailyQuests("u1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.autoGranted).toHaveLength(2);
+  });
+
   it("applyChestOpen drops the chest and adds drops without refetching", async () => {
     mockFetch.mockImplementation(() =>
       Promise.resolve(ok({ ...DAILY, chests: [{ id: "c9", day: "2026-10-31", mechanic: "rarity_chest", created_at: "" }] })),

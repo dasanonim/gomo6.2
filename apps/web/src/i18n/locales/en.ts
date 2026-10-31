@@ -1167,6 +1167,7 @@ const en: LocaleResources = {
       newToday: "New quests",
       dayClosed: "Day closed. New quests at 00:00 UTC",
       chestFromDay: "Reward for the day",
+      autoTitle: "Yesterday's leftovers landed",
       restoreTitle: "Streak broken",
       restoreText: "Yesterday fell short by one day. Buy the streak back for {{price}} {{label}}?",
       restoreButton: "Restore streak",

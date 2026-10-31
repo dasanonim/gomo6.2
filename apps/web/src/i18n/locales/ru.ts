@@ -1201,6 +1201,7 @@ const ru: LocaleResources = {
       newToday: "Новые задания",
       dayClosed: "День закрыт. Новые задания — в 00:00 UTC",
       chestFromDay: "Награда за день",
+      autoTitle: "Вчерашнее долетело",
       restoreTitle: "Серия прервалась",
       restoreText: "Вчера не хватило одного дня. Вернуть серию за {{price}} {{label}}?",
       restoreButton: "Восстановить серию",

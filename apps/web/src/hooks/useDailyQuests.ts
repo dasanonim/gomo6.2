@@ -53,6 +53,8 @@ interface DailyProgressResponse {
   streak: DailyStreak;
   chests?: DailyChest[];
   drops: number;
+  /** What yesterday's settle credited just now (nil when nothing was owed). */
+  auto_granted?: DailyReward[];
 }
 
 const EMPTY: DailyProgressResponse = {
@@ -98,6 +100,7 @@ export function useDailyQuests(userId: string | undefined) {
   const [streak, setStreak] = useState<DailyStreak>(EMPTY.streak);
   const [chests, setChests] = useState<DailyChest[]>([]);
   const [drops, setDrops] = useState(0);
+  const [autoGranted, setAutoGranted] = useState<DailyReward[]>([]);
   const [loading, setLoading] = useState(Boolean(userId));
   const firstLoad = useRef(true);
   useEffect(() => {
@@ -117,6 +120,7 @@ export function useDailyQuests(userId: string | undefined) {
       setStreak(data.streak ?? EMPTY.streak);
       setChests(data.chests ?? []);
       setDrops(data.drops ?? 0);
+      setAutoGranted(data.auto_granted ?? []);
     } finally {
       if (initial) {
         firstLoad.current = false;
@@ -243,6 +247,7 @@ export function useDailyQuests(userId: string | undefined) {
     streak,
     chests,
     drops,
+    autoGranted,
     loading,
     claim,
     restore,

@@ -1,7 +1,7 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MotionConfig } from "motion/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import DailyQuests from "./DailyQuests";
+import DailyQuests, { formatAutoGranted } from "./DailyQuests";
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
@@ -159,6 +159,21 @@ describe("DailyQuests page", () => {
     await waitFor(() => {
       expect(screen.queryByText("Серия прервалась")).not.toBeInTheDocument();
     });
+  });
+
+  it("formats the auto-grant toast line", () => {
+    const t = (key: string, opts?: Record<string, unknown>) => {
+      if (key === "quests.claimedDrops") return `+${opts?.count} ${opts?.label}`;
+      if (key === "quests.chest") return "сундук";
+      return "Вчерашнее долетело";
+    };
+    expect(
+      formatAutoGranted(t, [
+        { kind: "drops", amount: 40 },
+        { kind: "chest", chest_id: "c9", mechanic: "rarity_chest" },
+      ]),
+    ).toBe("Вчерашнее долетело: +40 дропсов, сундук");
+    expect(formatAutoGranted(t, [])).toBeNull();
   });
 
   it("marks the day as seen so the quests button drops its «!»", async () => {

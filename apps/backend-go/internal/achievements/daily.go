@@ -244,6 +244,9 @@ type DailyProgress struct {
 	Streak      DailyStreak          `json:"streak"`
 	OpenChests  []DailyChestInfo     `json:"chests"`
 	Drops       int                  `json:"drops"`
+	// AutoGranted is what yesterday's settle credited just now (nil when
+	// nothing was owed): the page toasts it once.
+	AutoGranted []GrantedReward `json:"auto_granted,omitempty"`
 }
 
 // DailyChestInfo is one unopened daily chest.
@@ -256,7 +259,9 @@ type DailyChestInfo struct {
 
 // GetDailyProgress settles yesterday (auto-grant + streak) and returns today.
 // Safe to call on every page load: every write is idempotent (claim PK,
-// streak advance guarded by last_completed_day).
+// streak advance guarded by last_completed_day). AutoGranted carries what
+// yesterday's settle credited just now, so the page can toast it once —
+// repeats return nothing new by construction.
 func (e *Engine) GetDailyProgress(ctx context.Context, userID string) (*DailyProgress, error) {
 	if e.db == nil {
 		return nil, fmt.Errorf("achievements: GetDailyProgress: nil db")
@@ -266,10 +271,17 @@ func (e *Engine) GetDailyProgress(ctx context.Context, userID string) (*DailyPro
 	}
 	today := DailyDayString(dailyNow())
 	yesterday := DailyDayString(dailyNow().AddDate(0, 0, -1))
-	if err := e.settleDailyDay(ctx, userID, yesterday); err != nil {
+	auto, err := e.settleDailyDay(ctx, userID, yesterday)
+	if err != nil {
 		e.logf("settle daily %s: %v", yesterday, err)
+		auto = nil
 	}
-	return e.dailyProgress(ctx, userID, today)
+	out, err := e.dailyProgress(ctx, userID, today)
+	if err != nil {
+		return nil, err
+	}
+	out.AutoGranted = auto
+	return out, nil
 }
 
 // dailyProgress reads one day without settling: quests with counts, the
@@ -406,22 +418,25 @@ func DailyRestorePrice(streak int) int {
 // auto-grants (автозачёт), a fully completed day grants its chest, and the
 // streak advances or resets. Only full completion moves the streak; a single
 // missed day is left for RestoreStreak instead of resetting immediately.
-func (e *Engine) settleDailyDay(ctx context.Context, userID, day string) error {
+// It returns what was credited just now (nil when nothing was owed), so the
+// caller can surface it once — repeats grant nothing new.
+func (e *Engine) settleDailyDay(ctx context.Context, userID, day string) ([]GrantedReward, error) {
 	tx, err := e.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("achievements: daily settle begin: %w", err)
+		return nil, fmt.Errorf("achievements: daily settle begin: %w", err)
 	}
 	defer tx.Rollback()
+	granted := []GrantedReward{}
 
 	if _, err := tx.ExecContext(ctx,
 		"SELECT pg_advisory_xact_lock(hashtext($1)::bigint)",
 		"achievements:daily:"+userID+":"+day); err != nil {
-		return fmt.Errorf("achievements: daily settle lock: %w", err)
+		return nil, fmt.Errorf("achievements: daily settle lock: %w", err)
 	}
 
 	claims, err := e.dailyClaims(ctx, tx, userID, day)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	set := DailySetFor(mustParseDay(day))
 	complete := true
@@ -433,7 +448,7 @@ func (e *Engine) settleDailyDay(ctx context.Context, userID, day string) error {
 			continue
 		}
 		if err := tx.QueryRowContext(ctx, q, userID, day).Scan(&n); err != nil {
-			return fmt.Errorf("achievements: daily settle count %s: %w", t.Key, err)
+			return nil, fmt.Errorf("achievements: daily settle count %s: %w", t.Key, err)
 		}
 		if n < t.Threshold {
 			complete = false
@@ -443,23 +458,27 @@ func (e *Engine) settleDailyDay(ctx context.Context, userID, day string) error {
 			continue
 		}
 		for _, r := range t.Rewards {
-			if _, err := grantDailyReward(ctx, tx, userID, day, t.Key, r, "daily_auto"); err != nil {
-				return err
+			gr, err := grantDailyReward(ctx, tx, userID, day, t.Key, r, "daily_auto")
+			if err != nil {
+				return nil, err
 			}
+			granted = append(granted, gr)
 		}
 	}
 	if complete && !claims[dailyFullKey] {
-		if _, err := grantDailyReward(ctx, tx, userID, day, dailyFullKey, dailyFullChestReward(), "daily_auto"); err != nil {
-			return err
+		gr, err := grantDailyReward(ctx, tx, userID, day, dailyFullKey, dailyFullChestReward(), "daily_auto")
+		if err != nil {
+			return nil, err
 		}
+		granted = append(granted, gr)
 	}
 	if err := e.advanceStreakTx(ctx, tx, userID, day, complete); err != nil {
-		return err
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("achievements: daily settle commit: %w", err)
+		return nil, fmt.Errorf("achievements: daily settle commit: %w", err)
 	}
-	return nil
+	return granted, nil
 }
 
 // advanceStreakTx moves the series for a settled past day. A complete day
