@@ -673,7 +673,7 @@ export default function Achievements() {
     }
   };
 
-  // Rework top-up ("забрать недоданное"): the catalog version the user last
+  // Rework top-up ("добрать заслуженное"): the catalog version the user last
   // saw lives in localStorage; a newer catalog_updated_at raises the banner.
   const seenKey = user?.id ? `quests:catalog:seen:${user.id}` : null;
   const [reconciling, setReconciling] = useState(false);

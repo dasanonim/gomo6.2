@@ -79,7 +79,7 @@ func (e *Engine) levelRewards(groupKey string, level int) []Reward {
 
 // ReconcileUser tops up every already-claimed level whose catalog rewards grew
 // since the claim (rewards rework, threshold reshuffle — anything). It is the
-// "забрать недоданное" behind POST /quests/reconcile: safe to run any number
+// "добрать заслуженное" behind POST /quests/reconcile: safe to run any number
 // of times, grants only positive diffs, and appends them to the claim row's
 // topup_rewards — the original rewards column is never rewritten, so the row
 // keeps what was actually granted at claim time plus every later top-up.

@@ -67,7 +67,7 @@ export interface UseQuestsResult {
   catalogUpdatedAt: string;
   loading: boolean;
   claim: (questKey: string, level: number) => Promise<QuestReward[]>;
-  /** Top up reworked rewards ("забрать недоданное"). Idempotent. */
+  /** Top up reworked rewards ("добрать заслуженное"). Idempotent. */
   reconcile: () => Promise<ToppedUpLevel[]>;
   openChest: (id: string) => Promise<ChestResult>;
   reload: () => Promise<void>;

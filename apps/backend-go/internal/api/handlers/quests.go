@@ -305,7 +305,7 @@ func (h *QuestsHandler) Claim(c *gin.Context) {
 
 // Reconcile godoc
 // @Summary      Top up reworked quest rewards
-// @Description  Grants the positive difference for every already-claimed level whose catalog rewards grew ("забрать недоданное"). Idempotent: repeats grant nothing.
+// @Description  Grants the positive difference for every already-claimed level whose catalog rewards grew ("добрать заслуженное"). Idempotent: repeats grant nothing.
 // @Tags         Quests
 // @Produce      json
 // @Success      200 {object} models.APIResponse
