@@ -2,6 +2,8 @@ package achievements
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -205,6 +207,37 @@ func TestTapChest_UpgradeOpensAndCredits(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled: %v", err)
+	}
+}
+
+// sqlmock matches query text but never the driver arg count, so a dropped $N
+// stays green in tests and explodes only against real Postgres. This pins
+// every tapChest query to the arg count its call site passes.
+func TestTapChestQueries_PlaceholderCounts(t *testing.T) {
+	highest := func(q string) int {
+		top := 0
+		for i := 1; ; i++ {
+			if !strings.Contains(q, fmt.Sprintf("$%d", i)) {
+				return top
+			}
+			top = i
+		}
+	}
+	cases := []struct {
+		name string
+		q    string
+		args int
+	}{
+		{"select", fmt.Sprintf(tapChestSelectQuery, "quest_chests"), 2},
+		{"session", fmt.Sprintf(tapChestSessionQuery, "quest_chests"), 2},
+		{"credit", tapChestCreditQuery, 2},
+		{"ledger", tapChestLedgerQuery, 6},
+		{"close", fmt.Sprintf(tapChestCloseQuery, "quest_chests"), 2},
+	}
+	for _, tc := range cases {
+		if got := highest(tc.q); got != tc.args {
+			t.Errorf("%s: query has $%d but the call site passes %d args", tc.name, got, tc.args)
+		}
 	}
 }
 

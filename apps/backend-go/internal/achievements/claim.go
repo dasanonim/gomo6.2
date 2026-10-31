@@ -189,6 +189,23 @@ func (e *Engine) TapDailyChest(ctx context.Context, userID, chestID string) (*Ch
 
 // tapChest runs one tap inside a row-locked transaction. table/ledger/ref/desc
 // vary between the quest and daily vaults; the mechanic is identical.
+//
+// Query placeholder counts are pinned by TestTapChestQueries_PlaceholderCounts:
+// sqlmock matches query text but never the driver arg count, so a dropped $N
+// stays green in tests and explodes only in production (exactly the outage
+// that motivated the test).
+const (
+	tapChestSelectQuery = `
+SELECT mechanic, session::text, opened_at IS NOT NULL FROM %s
+WHERE id = $1::uuid AND user_id = $2 FOR UPDATE`
+	tapChestSessionQuery = `UPDATE %s SET session = $1::jsonb WHERE id = $2::uuid`
+	tapChestCreditQuery  = `UPDATE users SET drops = COALESCE(drops, 0) + $1 WHERE id = $2 RETURNING COALESCE(drops, 0)`
+	tapChestLedgerQuery  = `
+INSERT INTO drops_transactions (user_id, type, amount, balance_after, reference_type, description)
+VALUES ($1, $2, $3, $4, $5, $6)`
+	tapChestCloseQuery = `UPDATE %s SET opened_at = NOW(), reward_drops = $1, session = NULL WHERE id = $2::uuid`
+)
+
 func (e *Engine) tapChest(ctx context.Context, table, ledgerType, ref, desc, userID, chestID string, src gamification.Source) (*ChestTap, error) {
 	if e.db == nil {
 		return nil, fmt.Errorf("achievements: tapChest: nil db")
@@ -202,9 +219,7 @@ func (e *Engine) tapChest(ctx context.Context, table, ledgerType, ref, desc, use
 	var mechanic string
 	var sessionRaw sql.NullString
 	var opened bool
-	err = tx.QueryRowContext(ctx, fmt.Sprintf(`
-SELECT mechanic, session::text, opened_at IS NOT NULL FROM %s
-WHERE id = $1::uuid AND user_id = $2 FOR UPDATE`, table),
+	err = tx.QueryRowContext(ctx, fmt.Sprintf(tapChestSelectQuery, table),
 		chestID, userID).Scan(&mechanic, &sessionRaw, &opened)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -247,7 +262,7 @@ WHERE id = $1::uuid AND user_id = $2 FOR UPDATE`, table),
 			return nil, fmt.Errorf("achievements: tap chest session encode: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf("UPDATE %s SET session = $1::jsonb WHERE id = $2::uuid", table),
+			fmt.Sprintf(tapChestSessionQuery, table),
 			string(blob), chestID); err != nil {
 			return nil, fmt.Errorf("achievements: tap chest session store: %w", err)
 		}
@@ -267,19 +282,16 @@ WHERE id = $1::uuid AND user_id = $2 FOR UPDATE`, table),
 	out.Drops = drops
 	out.Detail = detail
 	var balance int
-	if err := tx.QueryRowContext(ctx,
-		"UPDATE users SET drops = COALESCE(drops, 0) + $1 WHERE id = $2 RETURNING COALESCE(drops, 0)",
+	if err := tx.QueryRowContext(ctx, tapChestCreditQuery,
 		drops, userID).Scan(&balance); err != nil {
 		return nil, fmt.Errorf("achievements: tap chest credit: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO drops_transactions (user_id, type, amount, balance_after, reference_type, description)
-VALUES ($1, $2, $3, $4, $5)`,
+	if _, err := tx.ExecContext(ctx, tapChestLedgerQuery,
 		userID, ledgerType, drops, balance, ref, fmt.Sprintf("%s: +%d drops", desc, drops)); err != nil {
 		return nil, fmt.Errorf("achievements: tap chest credit ledger: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		fmt.Sprintf("UPDATE %s SET opened_at = NOW(), reward_drops = $1, session = NULL WHERE id = $2::uuid", table),
+		fmt.Sprintf(tapChestCloseQuery, table),
 		drops, chestID); err != nil {
 		return nil, fmt.Errorf("achievements: tap chest close: %w", err)
 	}
