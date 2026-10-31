@@ -10,9 +10,15 @@ const mockFetch = vi.fn();
 
 vi.stubGlobal("fetch", mockFetch);
 
+// Controllable router: the toast deep-link rides in location.state.
+const routerCtl = vi.hoisted(() => ({ state: null as unknown, calls: [] as any[] }));
+
 vi.mock("react-router-dom", () => ({
   useParams: () => ({ userId: "profile-user-1" }),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => (to: any, opts: any) => {
+    routerCtl.calls.push([to, opts]);
+  },
+  useLocation: () => ({ pathname: "/achievements/profile-user-1", state: routerCtl.state }),
   Link: ({ to, children, className }: any) => (
     <a href={to} className={className}>
       {children}
@@ -136,6 +142,8 @@ function setupFetch({
 beforeEach(() => {
   clearQueryCache();
   mockFetch.mockReset();
+  routerCtl.state = null;
+  routerCtl.calls = [];
 });
 
 // Motion reduced to instant: AnimatePresence exits settle synchronously,
@@ -289,6 +297,48 @@ describe("Achievements page", () => {
     await waitFor(() => {
       expect(screen.queryByText("Писатель")).not.toBeInTheDocument();
     });
+  });
+
+  it("scrolls to and blinks the quest opened from the unlock toast", async () => {
+    routerCtl.state = { focusQuest: "entries" };
+    setupFetch();
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Писатель")).toBeInTheDocument();
+    });
+    const card = document.getElementById("quest-entries");
+    expect(card).not.toBeNull();
+    expect(card?.className).toMatch(/ring-primary/);
+    // The neighbour card stays calm.
+    expect(document.getElementById("quest-qs_avatar")?.className).not.toMatch(/ring-primary/);
+    // The deep-link state is consumed so re-renders don't blink again.
+    expect(routerCtl.calls).toContainEqual(["/achievements/profile-user-1", { replace: true }]);
+  });
+
+  it("blinks a first-steps row opened from the unlock toast", async () => {
+    routerCtl.state = { focusQuest: "qs_avatar" };
+    setupFetch();
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Лицо")).toBeInTheDocument();
+    });
+    const row = document.getElementById("quest-qs_avatar");
+    expect(row?.className).toMatch(/bg-primary/);
+    expect(routerCtl.calls).toContainEqual(["/achievements/profile-user-1", { replace: true }]);
+  });
+
+  it("ignores an unknown toast quest without crashing", async () => {
+    routerCtl.state = { focusQuest: "nope" };
+    setupFetch();
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Писатель")).toBeInTheDocument();
+    });
+    expect(document.getElementById("quest-nope")).toBeNull();
+    expect(routerCtl.calls).toContainEqual(["/achievements/profile-user-1", { replace: true }]);
   });
 
   it("shows progress for locked levels", async () => {
