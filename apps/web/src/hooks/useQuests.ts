@@ -45,9 +45,16 @@ export interface QuestChest {
   created_at: string;
 }
 
+export interface ChestStep {
+  type: "upgraded" | "failed" | "opened" | string;
+  rarity: string;
+  attempts_left: number;
+}
+
 export interface ChestResult {
   rarity: string;
   drops: number;
+  steps?: ChestStep[];
 }
 
 export interface ToppedUpLevel {

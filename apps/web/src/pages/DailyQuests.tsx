@@ -35,6 +35,7 @@ import {
   type DailyQuest,
   type DailyReward,
 } from "@/hooks/useDailyQuests";
+import { ChestOpenModal } from "@/components/ChestOpenModal";
 import { useAuth } from "@/hooks/useAuth";
 
 const ICONS: Record<string, LucideIcon> = {
@@ -228,6 +229,7 @@ export default function DailyQuests() {
   const isOwner = Boolean(user?.id);
   const [claimingKey, setClaimingKey] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
+  const [openChestModal, setOpenChestModal] = useState<{ id: string } | null>(null);
   const inflight = useRef<Set<string>>(new Set());
 
   const doneCount = useMemo(() => quests.filter((q) => q.completed).length, [quests]);
@@ -299,22 +301,18 @@ export default function DailyQuests() {
     }
   };
 
-  const handleOpenChest = async (id: string) => {
+  const handleOpenChest = (id: string) => {
     const key = `chest:${id}`;
     if (inflight.current.has(key)) return;
     inflight.current.add(key);
-    setClaimingKey(key);
-    try {
-      const res = await openChest(id);
-      applyChestOpen(id, res.drops);
-      toast.success(t("quests.chestOpened", { count: res.drops, label: formatDropsLabel(res.drops) }));
-    } catch {
-      await reload();
-      toast.error(t("quests.openFailed"));
-    } finally {
-      inflight.current.delete(key);
-      setClaimingKey(null);
-    }
+    setOpenChestModal({ id });
+  };
+
+  const closeChestModal = () => {
+    setOpenChestModal((m) => {
+      if (m) inflight.current.delete(`chest:${m.id}`);
+      return null;
+    });
   };
 
   if (loading) {
@@ -424,13 +422,13 @@ export default function DailyQuests() {
                   </div>
                   <motion.button
                     type="button"
-                    onClick={() => void handleOpenChest(ch.id)}
-                    disabled={claimingKey === `chest:${ch.id}`}
+                    onClick={() => handleOpenChest(ch.id)}
+                    disabled={openChestModal?.id === ch.id}
                     {...pressFeedback(null)}
                     transition={springFor("snappy", null)}
                     className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50"
                   >
-                    {claimingKey === `chest:${ch.id}` && <Loader2 className="h-3 w-3 animate-spin" />}
+                    {openChestModal?.id === ch.id && <Loader2 className="h-3 w-3 animate-spin" />}
                     {t("quests.open")}
                   </motion.button>
                 </div>
@@ -439,6 +437,14 @@ export default function DailyQuests() {
           </section>
         )}
       </div>
+      {openChestModal && (
+        <ChestOpenModal
+          title={t("quests.daily.chestFromDay")}
+          openChest={() => openChest(openChestModal.id)}
+          onApplied={(res) => applyChestOpen(openChestModal.id, res.drops)}
+          onClose={closeChestModal}
+        />
+      )}
     </main>
   );
 }

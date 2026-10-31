@@ -122,3 +122,22 @@ func TestClaimLevel_UnknownQuest(t *testing.T) {
 		t.Fatalf("expected ErrQuestUnknown, got %v", err)
 	}
 }
+
+// The open response carries the full tap trace: the client replays it
+// click-by-click, so the trace must be non-empty and end with the opening.
+func TestPlayChestSession_StepsTrace(t *testing.T) {
+	res, err := playChestSession("rarity_chest")
+	if err != nil {
+		t.Fatalf("play: %v", err)
+	}
+	if len(res.Steps) == 0 {
+		t.Fatal("expected a non-empty step trace")
+	}
+	last := res.Steps[len(res.Steps)-1]
+	if last.Type != "opened" {
+		t.Fatalf("last step must open the chest, got %q", last.Type)
+	}
+	if res.Rarity == "" || res.Drops <= 0 {
+		t.Fatalf("expected rarity + drops, got %+v", res)
+	}
+}

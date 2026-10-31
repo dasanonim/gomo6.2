@@ -42,6 +42,7 @@ import { formatDropsLabel } from "@/utils/formatDropsLabel";
 import { formatGemsLabel } from "@/utils/formatGemsLabel";
 import { useQuests, questErrorStatus, type Quest, type QuestLevel, type QuestReward, type QuestChest } from "@/hooks/useQuests";
 import { useDailyQuests, dailySeenKey } from "@/hooks/useDailyQuests";
+import { ChestOpenModal } from "@/components/ChestOpenModal";
 import { smoothScrollToElement } from "@/utils/smoothScroll";
 import { refreshUnclaimedCount } from "@/hooks/useUnclaimedRewards";
 import { useAuth } from "@/hooks/useAuth";
@@ -579,6 +580,7 @@ export default function Achievements() {
   const [profile, setProfile] = useState<{ id: string; username: string } | null>(null);
   const [profileLoading, setProfileLoading] = useState(Boolean(userId));
   const [claimingKey, setClaimingKey] = useState<string | null>(null);
+  const [openChestModal, setOpenChestModal] = useState<{ id: string; title: string } | null>(null);
 
   useEffect(() => {
     if (!userId) {
@@ -770,23 +772,18 @@ export default function Achievements() {
     }
   };
 
-  const handleOpenChest = async (id: string) => {    const key = `chest:${id}`;
+  const handleOpenChest = (chest: QuestChest) => {
+    const key = `chest:${chest.id}`;
     if (inflight.current.has(key)) return;
     inflight.current.add(key);
-    setClaimingKey(key);
-    try {
-      const res = await openChest(id);
-      applyChestOpen(id, res.drops);
-      toast.success(t("quests.chestOpened", { count: res.drops, label: formatDropsLabel(res.drops) }));
-    } catch (err) {
-      await reload();
-      if (questErrorStatus(err) !== 409) {
-        toast.error(t("quests.openFailed"));
-      }
-    } finally {
-      inflight.current.delete(key);
-      setClaimingKey(null);
-    }
+    setOpenChestModal({ id: chest.id, title: t("quests.chestName") });
+  };
+
+  const closeChestModal = () => {
+    setOpenChestModal((m) => {
+      if (m) inflight.current.delete(`chest:${m.id}`);
+      return null;
+    });
   };
 
   if (profileLoading || loading) {
@@ -910,8 +907,8 @@ export default function Achievements() {
                     key={ch.id}
                     chest={ch}
                     index={i}
-                    claiming={claimingKey === `chest:${ch.id}`}
-                    onOpen={() => void handleOpenChest(ch.id)}
+                    claiming={openChestModal?.id === ch.id}
+                    onOpen={() => handleOpenChest(ch)}
                   />
                 ))}
               </AnimatePresence>
@@ -968,6 +965,14 @@ export default function Achievements() {
           </ContentEnter>
         )}
       </div>
+      {isOwner && openChestModal && (
+        <ChestOpenModal
+          title={openChestModal.title}
+          openChest={() => openChest(openChestModal.id)}
+          onApplied={(res) => applyChestOpen(openChestModal.id, res.drops)}
+          onClose={closeChestModal}
+        />
+      )}
     </main>
   );
 }

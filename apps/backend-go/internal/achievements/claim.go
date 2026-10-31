@@ -161,11 +161,22 @@ VALUES ($1, $2, $3, $4) RETURNING id::text`,
 	return gr, nil
 }
 
-// ChestResult is the outcome of opening a quest chest.
+// ChestResult is the outcome of opening a quest chest. Steps replays the
+// session tap-by-tap (upgrade → fail → … → opened) so the client can run an
+// interactive opening: every click reveals the next pre-rolled step. The
+// outcome is fixed server-side at open time — clicks only replay it.
 type ChestResult struct {
 	Rarity string                `json:"rarity"`
 	Drops  int                   `json:"drops"`
 	Detail []gamification.Reward `json:"rewards"`
+	Steps  []ChestStep           `json:"steps"`
+}
+
+// ChestStep is one tap of the server-side session, in order.
+type ChestStep struct {
+	Type         string `json:"type"`
+	Rarity       string `json:"rarity"`
+	AttemptsLeft int    `json:"attempts_left"`
 }
 
 // playChestSession runs one full gamification chest session server-side and
@@ -180,13 +191,14 @@ func playChestSession(mechanic string) (*ChestResult, error) {
 		return nil, fmt.Errorf("achievements: chest start: %w", err)
 	}
 	src := cryptoSource{}
+	steps := make([]ChestStep, 0, 32)
 	var ev gamification.Event
 	for i := 0; i < 1000 && !st.IsOpened(); i++ {
 		st, ev, err = gamification.Tap(st, src)
 		if err != nil {
 			return nil, fmt.Errorf("achievements: chest tap: %w", err)
 		}
-		_ = ev
+		steps = append(steps, ChestStep{Type: string(ev.Type), Rarity: string(ev.Rarity), AttemptsLeft: ev.AttemptsLeft})
 	}
 	if !st.IsOpened() {
 		return nil, fmt.Errorf("achievements: chest did not open")
@@ -196,7 +208,7 @@ func playChestSession(mechanic string) (*ChestResult, error) {
 	for _, r := range detail {
 		drops += r.Amount
 	}
-	return &ChestResult{Rarity: string(st.FinalRarity), Drops: drops, Detail: detail}, nil
+	return &ChestResult{Rarity: string(st.FinalRarity), Drops: drops, Detail: detail, Steps: steps}, nil
 }
 
 // OpenChest plays a full gamification session for one of the user's unopened

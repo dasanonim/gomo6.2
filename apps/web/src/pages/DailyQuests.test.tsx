@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MotionConfig } from "motion/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import DailyQuests, { formatAutoGranted } from "./DailyQuests";
@@ -79,7 +79,18 @@ function setupFetch(daily: unknown = DAILY) {
       return Promise.resolve(ok({ streak: 4, price: 80 }));
     }
     if (String(url).includes("/quests/daily/chests/") && opts?.method === "POST") {
-      return Promise.resolve(ok({ rarity: "epic", drops: 60, rewards: [] }));
+      return Promise.resolve(
+        ok({
+          rarity: "unusual",
+          drops: 10,
+          rewards: [],
+          steps: [
+            { type: "failed", rarity: "common", attempts_left: 4 },
+            { type: "upgraded", rarity: "unusual", attempts_left: 5 },
+            { type: "opened", rarity: "unusual", attempts_left: 0 },
+          ],
+        }),
+      );
     }
     if (String(url).includes("/quests/daily")) {
       return Promise.resolve(ok(daily));
@@ -194,5 +205,42 @@ describe("DailyQuests page", () => {
       expect(screen.getByText("Лайк-машина")).toBeInTheDocument();
     });
     expect(store["daily:seen:profile-user-1"]).toBe("2026-10-31");
+  });
+
+  it("opens a chest through the modal: tap the trace, take the reward", async () => {
+    setupFetch({
+      ...DAILY,
+      chests: [{ id: "c1", day: "2026-10-31", mechanic: "rarity_chest", created_at: "" }],
+    });
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Лайк-машина")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("Открыть"));
+
+    // One secure POST, then the trace replays locally.
+    await waitFor(() => {
+      expect(
+        mockFetch.mock.calls.filter(
+          ([url, opts]: any[]) =>
+            typeof url === "string" &&
+            url.includes("/quests/daily/chests/c1/open") &&
+            (opts as RequestInit)?.method === "POST",
+        ).length,
+      ).toBe(1);
+    });
+    const chest = await screen.findByRole("button", { name: "Жми ещё" });
+    fireEvent.click(chest);
+    await waitFor(() => expect(screen.getByText("1 из 3")).toBeInTheDocument());
+    fireEvent.click(chest);
+    fireEvent.click(chest);
+    await waitFor(() => expect(screen.getByText("+10")).toBeInTheDocument());
+    fireEvent.click(within(screen.getByRole("dialog")).getByText("Забрать"));
+
+    // The vault row is gone — the chest was credited and removed.
+    await waitFor(() => {
+      expect(screen.queryByText("Открыть")).not.toBeInTheDocument();
+    });
   });
 });

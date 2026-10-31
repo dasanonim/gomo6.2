@@ -40,6 +40,18 @@ export interface DailyChest {
   created_at: string;
 }
 
+export interface DailyChestStep {
+  type: "upgraded" | "failed" | "opened" | string;
+  rarity: string;
+  attempts_left: number;
+}
+
+export interface DailyChestResult {
+  rarity: string;
+  drops: number;
+  steps?: DailyChestStep[];
+}
+
 export interface DailyRestoreResult {
   streak: number;
   price: number;
@@ -188,14 +200,14 @@ export function useDailyQuests(userId: string | undefined) {
   }, []);
 
   const openChest = useCallback(
-    async (id: string): Promise<{ drops: number }> => {
-      const body = await apiClient.request<{ drops?: number }>(
+    async (id: string): Promise<DailyChestResult> => {
+      const body = await apiClient.request<DailyChestResult>(
         `/api/v1/quests/daily/chests/${encodeURIComponent(id)}/open`,
         { method: "POST" },
       );
-      const data = body.data as { drops?: number } | undefined;
+      const data = body.data as DailyChestResult | undefined;
       if (!data || typeof data.drops !== "number") throw new Error("open failed");
-      return { drops: data.drops };
+      return data;
     },
     [],
   );
