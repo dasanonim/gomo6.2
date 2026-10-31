@@ -98,6 +98,31 @@ function warmTextures(rarities: RarityView[]) {
   }
 }
 
+/** Fire-and-forget WAAPI keyframes. Feature-detected: jsdom and old engines
+ * lack Element.animate, and the state is already updated — never crash. */
+function playKeyframes(
+  el: { animate?: unknown; getAnimations?: unknown } | null,
+  frames: Keyframe[],
+  options: KeyframeAnimationOptions,
+) {
+  try {
+    if (el && typeof el.animate === "function") {
+      if (typeof el.getAnimations === "function") {
+        for (const a of el.getAnimations() as Animation[]) {
+          try {
+            a.cancel();
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      (el.animate as (f: Keyframe[], o: KeyframeAnimationOptions) => Animation).call(el, frames, options);
+    }
+  } catch {
+    /* non-DOM env — the UI state already reflects the tap */
+  }
+}
+
 interface ChestOpenModalProps {
   title: string;
   /** Plays the full session server-side (credited at once). Fired on mount. */
@@ -230,15 +255,12 @@ export function ChestOpenModal({
     if (next.type === "opened") {
       setOpened(true);
       setLive(t("quests.chestOpened", { count: drops, label: formatDropsLabel(drops) }));
-      if (!still && imgRef.current) {
-        imgRef.current.animate(
-          [
-            { transform: "scale(0.85)", opacity: 0.4 },
-            { transform: "scale(1.06)", opacity: 1 },
-            { transform: "scale(1)", opacity: 1 },
-          ],
-          { duration: 500, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" },
-        );
+      if (!still) {
+        playKeyframes(imgRef.current, [
+          { transform: "scale(0.85)", opacity: 0.4 },
+          { transform: "scale(1.06)", opacity: 1 },
+          { transform: "scale(1)", opacity: 1 },
+        ], { duration: 500, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" });
       }
       return;
     }
@@ -251,31 +273,24 @@ export function ChestOpenModal({
       if (next.type === "upgraded") setLive(t("quests.chestUpgraded"));
       return;
     }
-    el.getAnimations().forEach((a) => a.cancel());
     if (next.type === "upgraded") {
       setLive(t("quests.chestUpgraded"));
-      el.animate(
-        [
-          { transform: "translateY(0) scale(1)" },
-          { transform: "translateY(-14px) scale(1.08)" },
-          { transform: "translateY(0) scale(0.95)" },
-          { transform: "translateY(-6px) scale(1.03)" },
-          { transform: "translateY(0) scale(1)" },
-        ],
-        { duration: 600, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" },
-      );
+      playKeyframes(el, [
+        { transform: "translateY(0) scale(1)" },
+        { transform: "translateY(-14px) scale(1.08)" },
+        { transform: "translateY(0) scale(0.95)" },
+        { transform: "translateY(-6px) scale(1.03)" },
+        { transform: "translateY(0) scale(1)" },
+      ], { duration: 600, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" });
     } else {
-      el.animate(
-        [
-          { transform: "translateX(0)" },
-          { transform: "translateX(-8px)" },
-          { transform: "translateX(7px)" },
-          { transform: "translateX(-5px)" },
-          { transform: "translateX(4px)" },
-          { transform: "translateX(0)" },
-        ],
-        { duration: 400, easing: "ease-in-out" },
-      );
+      playKeyframes(el, [
+        { transform: "translateX(0)" },
+        { transform: "translateX(-8px)" },
+        { transform: "translateX(7px)" },
+        { transform: "translateX(-5px)" },
+        { transform: "translateX(4px)" },
+        { transform: "translateX(0)" },
+      ], { duration: 400, easing: "ease-in-out" });
     }
   }, [steps, revealed, opened, drops, still, t]);
 
