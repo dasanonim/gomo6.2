@@ -143,11 +143,12 @@ export function ChestOpenModal({
   const imgRef = useRef<HTMLImageElement | null>(null);
   const [imgFailed, setImgFailed] = useState(false);
   const doneRef = useRef(false);
-  // StrictMode mounts effects twice in dev: the play call must fire exactly
-  // once per modal, otherwise two racing opens double-credit (the row lock
-  // serializes them, but the loser must not even be sent). Refs survive the
-  // double-mount, so this guard holds where a cleanup flag cannot.
-  const firedRef = useRef(false);
+  // StrictMode mounts effects twice in dev: the play call must be SENT once
+  // but DELIVERED to the surviving mount. A cleanup flag alone drops the
+  // first response while a fire-once guard starves the second mount (dead
+  // modal). Refs survive the double-mount, so the single in-flight promise
+  // is shared: one POST total, result processed by whoever is mounted.
+  const reqRef = useRef<Promise<ChestOpenOutcome> | null>(null);
 
   useEffect(() => {
     void loadCatalog().then((c) => {
@@ -159,10 +160,9 @@ export function ChestOpenModal({
 
   // The point of no return: the session plays and credits on mount.
   useEffect(() => {
-    if (firedRef.current) return;
-    firedRef.current = true;
     let cancelled = false;
-    openChest()
+    if (!reqRef.current) reqRef.current = openChest();
+    reqRef.current
       .then((res) => {
         if (cancelled) return;
         // No trace (old build) — synthesize a single opening step.

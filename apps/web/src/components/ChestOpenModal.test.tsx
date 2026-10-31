@@ -95,14 +95,17 @@ describe("ChestOpenModal", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // catalog only
   });
 
-  it("fires the play call exactly once under StrictMode double-mount", async () => {
+  it("fires the play call exactly once under StrictMode double-mount and delivers the result", async () => {
     setupCatalog();
     const openChest = vi.fn(() =>
       Promise.resolve({ rarity: "common", drops: 20, steps: [{ type: "opened", rarity: "common", attempts_left: 0 }] }),
     );
-    renderModal(openChest, true);
+    const { onApplied } = renderModal(openChest, true);
     await waitFor(() => expect(openChest).toHaveBeenCalledTimes(1));
-    // A second racing open would double-credit without the row lock.
+    // The surviving mount must process the shared response (a dropped
+    // response leaves the modal dead: disabled chest, eternal loading).
+    await waitFor(() => expect(onApplied).toHaveBeenCalledWith(20));
+    // No second POST even after settling.
     await new Promise((r) => setTimeout(r, 50));
     expect(openChest).toHaveBeenCalledTimes(1);
   });
