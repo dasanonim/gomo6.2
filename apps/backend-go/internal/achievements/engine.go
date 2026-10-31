@@ -492,39 +492,87 @@ func (e *Engine) RecomputeUser(ctx context.Context, userID string) {
 	}
 }
 
+// recomputeBatchSize is one page of the full backfill. User ids stream from
+// the DB in keyset pages, so memory stays flat no matter the table size.
+const recomputeBatchSize = 200
+
 // RecomputeAll backfills every milestone for every user from live data. It is
 // the one-time startup migration after a catalog rework: counter values are
 // recomputed from the source tables, derived/tenure groups are re-evaluated,
 // and levels are applied exactly. The caller decides how often this runs
-// (startup marker).
+// (startup marker); routes runs it in a background goroutine so serving never
+// waits for it.
+//
+// Users stream in keyset-ordered pages with per-page progress logs, and ctx
+// cancellation is honored between users, so a restart stops the pass cleanly
+// instead of holding one giant transaction and the whole id list in memory.
+// Per-user recompute stays idempotent (applyLevelExact), so an interrupted
+// pass simply converges on the next run or lazily via live events.
 func (e *Engine) RecomputeAll(ctx context.Context) {
 	if e.db == nil {
 		return
 	}
-	rows, err := e.db.QueryContext(ctx, "SELECT id::text FROM users")
+	e.logf("RecomputeAll: starting paginated backfill")
+	total := 0
+	after := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			e.logf("RecomputeAll: cancelled after %d user(s): %v", total, err)
+			return
+		}
+		batch, err := e.listUserPage(ctx, after, recomputeBatchSize)
+		if err != nil {
+			e.logf("RecomputeAll: list users: %v", err)
+			return
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, uid := range batch {
+			if err := ctx.Err(); err != nil {
+				e.logf("RecomputeAll: cancelled after %d user(s): %v", total, err)
+				return
+			}
+			e.RecomputeUser(ctx, uid)
+			total++
+		}
+		after = batch[len(batch)-1]
+		e.logf("RecomputeAll: progress %d user(s)", total)
+		if len(batch) < recomputeBatchSize {
+			break
+		}
+	}
+	e.logf("RecomputeAll: done (%d user(s))", total)
+}
+
+// listUserPage returns one keyset-ordered page of user ids (text). after is
+// the last id of the previous page, "" for the first page.
+func (e *Engine) listUserPage(ctx context.Context, after string, limit int) ([]string, error) {
+	var rows *sql.Rows
+	var err error
+	if after == "" {
+		rows, err = e.db.QueryContext(ctx,
+			"SELECT id::text FROM users ORDER BY id LIMIT $1", limit)
+	} else {
+		rows, err = e.db.QueryContext(ctx,
+			"SELECT id::text FROM users WHERE id > $1::uuid ORDER BY id LIMIT $2", after, limit)
+	}
 	if err != nil {
-		e.logf("RecomputeAll: list users: %v", err)
-		return
+		return nil, err
 	}
 	defer rows.Close()
-	var userIDs []string
+	var out []string
 	for rows.Next() {
 		var uid string
 		if err := rows.Scan(&uid); err != nil {
-			e.logf("RecomputeAll: scan user: %v", err)
-			continue
+			return nil, err
 		}
-		userIDs = append(userIDs, uid)
+		out = append(out, uid)
 	}
 	if err := rows.Err(); err != nil {
-		e.logf("RecomputeAll: iterate users: %v", err)
-		return
+		return nil, err
 	}
-	e.logf("RecomputeAll: recomputing %d user(s)", len(userIDs))
-	for _, uid := range userIDs {
-		e.RecomputeUser(ctx, uid)
-	}
-	e.logf("RecomputeAll: done")
+	return out, nil
 }
 
 func (e *Engine) recomputeGroup(ctx context.Context, userID, key string) {

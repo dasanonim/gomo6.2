@@ -1287,7 +1287,10 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, redis *redis.Client, wsHub *web
 	// catalog are dropped and counters are seeded from the real source tables,
 	// so unlocks appear immediately instead of after the next action. Guarded by
 	// a Redis marker so it only runs once per Redis lifetime; on a fresh DB the
-	// backfill also populates the user_achievement_counters table.
+	// backfill also populates the user_achievement_counters table. The pass
+	// itself streams users in keyset pages (see RecomputeAll), so memory stays
+	// flat and a restart stops it cleanly; per-user recompute is idempotent, so
+	// an interrupted pass converges on the next run or lazily via live events.
 	if redis != nil {
 		backfillKey := "achievements:backfill:v4"
 		claimed, err := redis.SetNX(context.Background(), backfillKey, "1", 0).Result()
