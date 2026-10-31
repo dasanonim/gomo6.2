@@ -718,7 +718,14 @@ export default function Achievements() {
     flashTimer.current = setTimeout(() => setFlashKey(null), 3000);
     return () => cancelAnimationFrame(raf);
   }, [loading, quests, focusQuest, location.pathname, navigate]);
-  const showReworked = isOwner && Boolean(catalogUpdatedAt) && reworkedSeen !== catalogUpdatedAt;
+  // The banner means "changed since YOU last looked": a stored seen version
+  // must exist and differ. Without this a plain backend restart (or a first
+  // ever visit) would raise it for everyone.
+  const showReworked =
+    isOwner &&
+    Boolean(catalogUpdatedAt) &&
+    reworkedSeen !== null &&
+    reworkedSeen !== catalogUpdatedAt;
   const markReworkedSeen = () => {
     if (!seenKey || !catalogUpdatedAt) return;
     try {

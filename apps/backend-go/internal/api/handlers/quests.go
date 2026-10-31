@@ -220,6 +220,8 @@ func recalcOwes(already, current []achievements.Reward) bool {
 
 // catalogUpdatedAt is the newest code-catalog mirror write — the frontend
 // compares it with the seen version to show the "quests reworked" banner.
+// Sync bumps it only when a definition hash actually changes, so restarts
+// alone never move it.
 func (h *QuestsHandler) catalogUpdatedAt() string {
 	var ts string
 	if err := h.db.QueryRow(

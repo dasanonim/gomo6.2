@@ -400,7 +400,12 @@ DO UPDATE SET
 	-- survive every boot (the Go catalog leaves it empty).
 	hidden = EXCLUDED.hidden,
 	sort_order = EXCLUDED.sort_order, levels = EXCLUDED.levels,
-	definition_hash = EXCLUDED.definition_hash, updated_at = NOW()`,
+	definition_hash = EXCLUDED.definition_hash,
+	-- updated_at is the "catalog changed" signal the frontend compares
+	-- against its seen version: bump it only when the definition hash
+	-- actually changed, so a plain restart never raises the rework banner.
+	updated_at = CASE WHEN achievements.definition_hash IS DISTINCT FROM EXCLUDED.definition_hash
+		THEN NOW() ELSE achievements.updated_at END`,
 		GroupID(g.Key), g.Key, g.TitleKey, description, string(g.Category), g.Icon,
 		atype, string(g.Kind), g.ImageURL, g.SortOrder, levels, hash)
 	if err != nil {

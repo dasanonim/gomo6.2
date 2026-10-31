@@ -411,6 +411,28 @@ describe("Achievements page", () => {
     expect(screen.getByLabelText("Новые задания")).toBeInTheDocument();
   });
 
+  it("stays quiet on a plain restart with no seen version", async () => {
+    const store: Record<string, string> = {};
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => {
+        store[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete store[k];
+      },
+    });
+    setupFetch({ recalcAvailable: false, catalogUpdatedAt: "2026-10-31T00:00:00Z" });
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Лицо")).toBeInTheDocument();
+    });
+    // A newer catalog timestamp alone (backend restart bump) raises nothing
+    // without a stored seen version to differ from.
+    expect(screen.queryByText("Квесты обновлены")).not.toBeInTheDocument();
+  });
+
   it("shows progress for locked levels", async () => {
     setupFetch();
     renderPage();
