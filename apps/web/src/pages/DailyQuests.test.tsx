@@ -70,15 +70,20 @@ function ok(data: unknown) {
   };
 }
 
-const tapCalls: string[] = [];
-const tapQueue = [
-  { type: "failed", rarity: "common", attempts_left: 4, attempts_total: 5 },
-  { type: "upgraded", rarity: "unusual", attempts_left: 5, attempts_total: 5 },
-  { type: "opened", rarity: "unusual", attempts_left: 0, attempts_total: 5, final_rarity: "unusual", drops: 10 },
-];
+const openCalls: string[] = [];
+const openOutcome = {
+  rarity: "unusual",
+  drops: 10,
+  rewards: [],
+  steps: [
+    { type: "failed", rarity: "common", attempts_left: 4 },
+    { type: "upgraded", rarity: "unusual", attempts_left: 5 },
+    { type: "opened", rarity: "unusual", attempts_left: 0 },
+  ],
+};
 
 function setupFetch(daily: unknown = DAILY) {
-  tapCalls.length = 0;
+  openCalls.length = 0;
   mockFetch.mockImplementation((url: string, opts?: RequestInit) => {
     if (String(url).includes("/quests/daily/claim") && opts?.method === "POST") {
       return Promise.resolve(ok({ granted: [{ kind: "drops", amount: 10 }] }));
@@ -87,9 +92,8 @@ function setupFetch(daily: unknown = DAILY) {
       return Promise.resolve(ok({ streak: 4, price: 80 }));
     }
     if (String(url).includes("/quests/daily/chests/") && opts?.method === "POST") {
-      tapCalls.push(String(url));
-      const next = tapQueue[Math.min(tapCalls.length - 1, tapQueue.length - 1)];
-      return Promise.resolve(ok(next));
+      openCalls.push(String(url));
+      return Promise.resolve(ok(openOutcome));
     }
     if (String(url).includes("/quests/daily")) {
       return Promise.resolve(ok(daily));
@@ -218,17 +222,17 @@ describe("DailyQuests page", () => {
     });
     fireEvent.click(screen.getByText("Открыть"));
 
-    // No server call until the first tap on the chest itself.
+    // The play call fires on mount and credits at once.
     const dialog = await screen.findByRole("dialog");
-    expect(tapCalls.length).toBe(0);
+    await waitFor(() => expect(openCalls.length).toBe(1));
     const chest = within(dialog).getByRole("button", { name: /Осталось попыток: 5 из 5/ });
 
     fireEvent.click(chest);
-    await waitFor(() => expect(tapCalls.length).toBe(1));
+    await waitFor(() =>
+      within(dialog).getByRole("button", { name: /Осталось попыток: 4 из 5/ }),
+    );
     fireEvent.click(chest);
-    await waitFor(() => expect(tapCalls.length).toBe(2));
     fireEvent.click(chest);
-    await waitFor(() => expect(tapCalls.length).toBe(3));
 
     await waitFor(() => expect(within(dialog).getByText("+10")).toBeInTheDocument());
     // No take button, no cross: any click dismisses (reward is credited).

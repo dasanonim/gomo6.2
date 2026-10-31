@@ -38,17 +38,18 @@ export interface DailyChest {
   day: string;
   mechanic: string;
   created_at: string;
-  state_rarity?: string;
-  state_attempts?: number;
 }
 
-export interface DailyChestTap {
+export interface DailyChestStep {
   type: "upgraded" | "failed" | "opened" | string;
   rarity: string;
   attempts_left: number;
-  attempts_total: number;
-  final_rarity?: string;
-  drops?: number;
+}
+
+export interface DailyChestOutcome {
+  rarity: string;
+  drops: number;
+  steps?: DailyChestStep[];
 }
 
 export interface DailyRestoreResult {
@@ -198,14 +199,14 @@ export function useDailyQuests(userId: string | undefined) {
     return data;
   }, []);
 
-  const tapChest = useCallback(
-    async (id: string): Promise<DailyChestTap> => {
-      const body = await apiClient.request<DailyChestTap>(
-        `/api/v1/quests/daily/chests/${encodeURIComponent(id)}/tap`,
+  const openChest = useCallback(
+    async (id: string): Promise<DailyChestOutcome> => {
+      const body = await apiClient.request<DailyChestOutcome>(
+        `/api/v1/quests/daily/chests/${encodeURIComponent(id)}/open`,
         { method: "POST" },
       );
-      const data = body.data as DailyChestTap | undefined;
-      if (!data || !data.type) throw new Error("tap failed");
+      const data = body.data as DailyChestOutcome | undefined;
+      if (!data || typeof data.drops !== "number") throw new Error("open failed");
       return data;
     },
     [],
@@ -250,12 +251,6 @@ export function useDailyQuests(userId: string | undefined) {
     if (dropsWon > 0) setDrops((g) => g + dropsWon);
   }, []);
 
-  const applyChestTap = useCallback((id: string, rarity: string, attempts: number) => {
-    setChests((prev) =>
-      prev.map((c) => (c.id !== id ? c : { ...c, state_rarity: rarity, state_attempts: attempts })),
-    );
-  }, []);
-
   return {
     day,
     quests,
@@ -268,11 +263,10 @@ export function useDailyQuests(userId: string | undefined) {
     loading,
     claim,
     restore,
-    tapChest,
+    openChest,
     reload,
     applyClaim,
     applyRestore,
     applyChestOpen,
-    applyChestTap,
   };
 }

@@ -580,12 +580,7 @@ export default function Achievements() {
   const [profile, setProfile] = useState<{ id: string; username: string } | null>(null);
   const [profileLoading, setProfileLoading] = useState(Boolean(userId));
   const [claimingKey, setClaimingKey] = useState<string | null>(null);
-  const [openChestModal, setOpenChestModal] = useState<{
-    id: string;
-    title: string;
-    rarity?: string;
-    attempts?: number;
-  } | null>(null);
+  const [openChestModal, setOpenChestModal] = useState<{ id: string; title: string } | null>(null);
 
   useEffect(() => {
     if (!userId) {
@@ -608,7 +603,7 @@ export default function Achievements() {
 
   const trophyUserId =
     profile?.id ?? (userId && isPublicId(userId) ? undefined : userId);
-  const { quests, chests, drops, unclaimedCount, recalcAvailable, catalogUpdatedAt, loading, claim, reconcile, tapChest, reload, applyClaim, applyRecalc, applyChestOpen, applyChestTap } =
+  const { quests, chests, drops, unclaimedCount, recalcAvailable, catalogUpdatedAt, loading, claim, reconcile, openChest, reload, applyClaim, applyRecalc, applyChestOpen } =
     useQuests(trophyUserId);
   const isOwner = Boolean(user?.id && trophyUserId && user.id === trophyUserId);
   // Daily button state: one extra light read; the day may already contain
@@ -781,12 +776,9 @@ export default function Achievements() {
     const key = `chest:${chest.id}`;
     if (inflight.current.has(key)) return;
     inflight.current.add(key);
-    setOpenChestModal({
-      id: chest.id,
-      title: t("quests.chestName"),
-      rarity: chest.state_rarity,
-      attempts: chest.state_attempts,
-    });
+    // The play call fires on modal mount and credits at once: opening the
+    // modal IS starting, there is no backing out of the ceremony.
+    setOpenChestModal({ id: chest.id, title: t("quests.chestName") });
   };
 
   const closeChestModal = () => {
@@ -990,11 +982,8 @@ export default function Achievements() {
       {isOwner && openChestModal && (
         <ChestOpenModal
           title={openChestModal.title}
-          initialRarity={openChestModal.rarity}
-          initialAttempts={openChestModal.attempts}
-          tapChest={() => tapChest(openChestModal.id)}
+          openChest={() => openChest(openChestModal.id)}
           onApplied={(won) => applyChestOpen(openChestModal.id, won)}
-          onProgress={(r, a) => applyChestTap(openChestModal.id, r, a)}
           onExpired={expireChestModal}
           onClose={closeChestModal}
         />

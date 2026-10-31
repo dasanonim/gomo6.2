@@ -43,17 +43,18 @@ export interface QuestChest {
   level: number;
   mechanic: string;
   created_at: string;
-  state_rarity?: string;
-  state_attempts?: number;
 }
 
-export interface ChestTap {
+export interface ChestStep {
   type: "upgraded" | "failed" | "opened" | string;
   rarity: string;
   attempts_left: number;
-  attempts_total: number;
-  final_rarity?: string;
-  drops?: number;
+}
+
+export interface ChestOpenOutcome {
+  rarity: string;
+  drops: number;
+  steps?: ChestStep[];
 }
 
 export interface ToppedUpLevel {
@@ -75,7 +76,7 @@ export interface UseQuestsResult {
   claim: (questKey: string, level: number) => Promise<QuestReward[]>;
   /** Top up reworked rewards ("добрать заслуженное"). Idempotent. */
   reconcile: () => Promise<ToppedUpLevel[]>;
-  tapChest: (id: string) => Promise<ChestTap>;
+  openChest: (id: string) => Promise<ChestOpenOutcome>;
   reload: () => Promise<void>;
   /** Patch one level as claimed without any request (after a successful claim). */
   applyClaim: (questKey: string, level: number, granted: QuestReward[]) => void;
@@ -83,8 +84,6 @@ export interface UseQuestsResult {
   applyRecalc: (topped: ToppedUpLevel[]) => void;
   /** Drop an opened chest and credit its drops without any request. */
   applyChestOpen: (id: string, drops: number) => void;
-  /** Patch a tapped chest's session snapshot (keeps reopen fresh). */
-  applyChestTap: (id: string, rarity: string, attempts: number) => void;
 }
 
 interface ProgressResponse {
@@ -209,14 +208,14 @@ export function useQuests(userId: string | undefined): UseQuestsResult {
     [],
   );
 
-  const tapChest = useCallback(
-    async (id: string): Promise<ChestTap> => {
-      const body = await apiClient.request<ChestTap>(
-        `/api/v1/quests/chests/${encodeURIComponent(id)}/tap`,
+  const openChest = useCallback(
+    async (id: string): Promise<ChestOpenOutcome> => {
+      const body = await apiClient.request<ChestOpenOutcome>(
+        `/api/v1/quests/chests/${encodeURIComponent(id)}/open`,
         { method: "POST" },
       );
-      const data = body.data as ChestTap | undefined;
-      if (!data || !data.type) throw new Error("tap failed");
+      const data = body.data as ChestOpenOutcome | undefined;
+      if (!data || typeof data.drops !== "number") throw new Error("open failed");
       return data;
     },
     [],
@@ -262,12 +261,6 @@ export function useQuests(userId: string | undefined): UseQuestsResult {
     if (dropsWon > 0) setDrops((g) => g + dropsWon);
   }, []);
 
-  const applyChestTap = useCallback((id: string, rarity: string, attempts: number) => {
-    setChests((prev) =>
-      prev.map((c) => (c.id !== id ? c : { ...c, state_rarity: rarity, state_attempts: attempts })),
-    );
-  }, []);
-
   const reconcile = useCallback(async (): Promise<ToppedUpLevel[]> => {
     const body = await apiClient.request<{ topped_up?: ToppedUpLevel[] }>(
       "/api/v1/quests/reconcile",
@@ -309,11 +302,10 @@ export function useQuests(userId: string | undefined): UseQuestsResult {
     loading,
     claim,
     reconcile,
-    tapChest,
+    openChest,
     reload,
     applyClaim,
     applyRecalc,
     applyChestOpen,
-    applyChestTap,
   };
 }

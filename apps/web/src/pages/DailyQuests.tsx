@@ -220,21 +220,16 @@ export default function DailyQuests() {
     loading,
     claim,
     restore,
-    tapChest,
+    openChest,
     reload,
     applyClaim,
     applyRestore,
     applyChestOpen,
-    applyChestTap,
   } = useDailyQuests(user?.id);
   const isOwner = Boolean(user?.id);
   const [claimingKey, setClaimingKey] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
-  const [openChestModal, setOpenChestModal] = useState<{
-    id: string;
-    rarity?: string;
-    attempts?: number;
-  } | null>(null);
+  const [openChestModal, setOpenChestModal] = useState<{ id: string } | null>(null);
   const inflight = useRef<Set<string>>(new Set());
 
   const doneCount = useMemo(() => quests.filter((q) => q.completed).length, [quests]);
@@ -306,11 +301,13 @@ export default function DailyQuests() {
     }
   };
 
-  const handleOpenChest = (ch: { id: string; state_rarity?: string; state_attempts?: number }) => {
-    const key = `chest:${ch.id}`;
+  const handleOpenChest = (id: string) => {
+    const key = `chest:${id}`;
     if (inflight.current.has(key)) return;
     inflight.current.add(key);
-    setOpenChestModal({ id: ch.id, rarity: ch.state_rarity, attempts: ch.state_attempts });
+    // The play call fires on modal mount and credits at once: opening the
+    // modal IS starting, there is no backing out of the ceremony.
+    setOpenChestModal({ id });
   };
 
   const closeChestModal = () => {
@@ -438,7 +435,7 @@ export default function DailyQuests() {
                   </div>
                   <motion.button
                     type="button"
-                    onClick={() => handleOpenChest(ch)}
+                    onClick={() => handleOpenChest(ch.id)}
                     disabled={openChestModal?.id === ch.id}
                     {...pressFeedback(null)}
                     transition={springFor("snappy", null)}
@@ -456,11 +453,8 @@ export default function DailyQuests() {
       {openChestModal && (
         <ChestOpenModal
           title={t("quests.daily.chestFromDay")}
-          initialRarity={openChestModal.rarity}
-          initialAttempts={openChestModal.attempts}
-          tapChest={() => tapChest(openChestModal.id)}
+          openChest={() => openChest(openChestModal.id)}
           onApplied={(won) => applyChestOpen(openChestModal.id, won)}
-          onProgress={(r, a) => applyChestTap(openChestModal.id, r, a)}
           onExpired={expireChestModal}
           onClose={closeChestModal}
         />

@@ -10,14 +10,19 @@ import { cn } from "@/lib/utils";
 import { apiClient } from "@/integrations/api/client";
 import { formatDropsLabel } from "@/utils/formatDropsLabel";
 
-/** One server-driven tap. The server owns the roll; the client only shows it. */
-export interface ChestTapOutcome {
+/** One pre-rolled tap of the server session, revealed click by click. */
+export interface ChestReplayStep {
   type: "upgraded" | "failed" | "opened" | string;
   rarity: string;
   attempts_left: number;
-  attempts_total: number;
-  final_rarity?: string;
-  drops?: number;
+}
+
+/** The full session: played AND credited server-side the moment the modal
+ * opens. Steps replay the ceremony tap by tap. */
+export interface ChestOpenOutcome {
+  rarity: string;
+  drops: number;
+  steps?: ChestReplayStep[];
 }
 
 interface RarityView {
@@ -80,15 +85,10 @@ async function loadCatalog(): Promise<{ rarities: RarityView[]; attempts: number
 
 interface ChestOpenModalProps {
   title: string;
-  /** Persisted session snapshot (keeps dots right on mount, resumes mid-chest). */
-  initialRarity?: string;
-  initialAttempts?: number;
-  /** One server tap per call. */
-  tapChest: () => Promise<ChestTapOutcome>;
-  /** The opening tap landed: credit drops + drop the vault row. */
+  /** Plays the full session server-side (credited at once). Fired on mount. */
+  openChest: () => Promise<ChestOpenOutcome>;
+  /** The opening call landed: credit drops + drop the vault row. */
   onApplied: (drops: number) => void;
-  /** Patch the vault row snapshot after every tap (reopen stays fresh). */
-  onProgress: (rarity: string, attempts: number) => void;
   /** The chest is gone server-side (already opened elsewhere): drop the row. */
   onExpired: () => void;
   onClose: () => void;
@@ -96,18 +96,16 @@ interface ChestOpenModalProps {
 
 /**
  * Interactive chest opening: two elements on a blurred stage — the chest and
- * the attempt dots below it. No panel, no chrome. Every tap is one server
- * POST (upgrade, fail or open); the server persists the session, so closing
- * mid-chest and reopening resumes the dots where they were. Textures come
- * from the curated gamification bucket, rarity reads as glow color.
+ * the attempt dots below it. No panel, no chrome. The full session is played
+ * and credited the moment the modal opens, so there is no backing out and
+ * leaving mid-way loses nothing; every tap reveals the next pre-rolled step
+ * (fail shakes, upgrade flashes new texture, opened swaps to the reward).
+ * Dismissal unlocks only when the ceremony is over — any click then closes.
  */
 export function ChestOpenModal({
   title,
-  initialRarity,
-  initialAttempts,
-  tapChest,
+  openChest,
   onApplied,
-  onProgress,
   onExpired,
   onClose,
 }: ChestOpenModalProps) {
@@ -117,135 +115,146 @@ export function ChestOpenModal({
   const still = reduce || motionOff;
   const [rarities, setRarities] = useState<RarityView[]>([]);
   const [total, setTotal] = useState(FALLBACK_ATTEMPTS);
-  const [rarity, setRarity] = useState(initialRarity || "common");
-  const [left, setLeft] = useState(
-    typeof initialAttempts === "number" ? initialAttempts : FALLBACK_ATTEMPTS,
-  );
+  const [steps, setSteps] = useState<ChestReplayStep[]>([]);
+  const [revealed, setRevealed] = useState(0);
+  const [rarity, setRarity] = useState("common");
+  const [left, setLeft] = useState(FALLBACK_ATTEMPTS);
   const [opened, setOpened] = useState(false);
   const [drops, setDrops] = useState(0);
   const [finalRarity, setFinalRarity] = useState("");
-  const [busy, setBusy] = useState(false);
   const [live, setLive] = useState("");
   const controls = useAnimation();
-  const imgRef = useRef<HTMLImageElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
   const [imgFailed, setImgFailed] = useState(false);
+  const doneRef = useRef(false);
 
   useEffect(() => {
     void loadCatalog().then((c) => {
       setRarities(c.rarities);
       setTotal(c.attempts);
-      // Untapped chests always start at a full budget; a snapshot only
-      // overrides when the session really began (non-full budget or rarity).
-      if (typeof initialAttempts !== "number") setLeft(c.attempts);
+      setLeft((v) => (v === FALLBACK_ATTEMPTS ? c.attempts : v));
     });
+  }, []);
+
+  // The point of no return: the session plays and credits on mount.
+  useEffect(() => {
+    let cancelled = false;
+    openChest()
+      .then((res) => {
+        if (cancelled) return;
+        // No trace (old build) — synthesize a single opening step.
+        const trace =
+          res.steps && res.steps.length > 0
+            ? res.steps
+            : [{ type: "opened", rarity: res.rarity, attempts_left: 0 }];
+        setSteps(trace);
+        setDrops(res.drops);
+        setFinalRarity(res.rarity);
+        if (!doneRef.current) {
+          doneRef.current = true;
+          onApplied(res.drops);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // 409 = opened elsewhere: the row is dead, drop it.
+        if ((err as { status?: number })?.status === 409) {
+          onExpired();
+        } else {
+          toast.error(t("quests.openFailed"));
+        }
+        onClose();
+      });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Lock the page scroll while the ceremony runs.
+  // Lock the page scroll; Escape works only once the ceremony is over.
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && doneRef.current && steps.length > 0 && revealed >= steps.length) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => {
       document.body.style.overflow = prev;
       window.removeEventListener("keydown", onKey);
     };
-  }, [onClose]);
+  }, [onClose, revealed, steps.length]);
 
+  // Once opened there are no controls left — move focus to the dialog.
+  useEffect(() => {
+    if (opened) dialogRef.current?.focus();
+  }, [opened]);
+
+  const totalCount = steps.length;
   const view = rarities.find((r) => r.rarity === (opened ? finalRarity : rarity));
   const color = view?.color ?? FALLBACK_COLORS[opened ? finalRarity : rarity] ?? "#9ca3af";
   const src = opened ? view?.opened_image_url : view?.image_url;
 
   useEffect(() => setImgFailed(false), [src]);
 
-  // Once opened there are no controls left — move focus to the dialog so
-  // keyboard users can dismiss with Escape; the reward is already credited.
-  useEffect(() => {
-    if (opened) dialogRef.current?.focus();
-  }, [opened]);
-
-  const tap = useCallback(async () => {
-    if (busy || opened) return;
-    setBusy(true);
-    try {
-      const ev = await tapChest();
-      const nextTotal = ev.attempts_total > 0 ? ev.attempts_total : total;
-      setTotal(nextTotal);
-      setRarity(ev.rarity);
-      setLeft(ev.attempts_left);
-      onProgress(ev.rarity, ev.attempts_left);
-      if (ev.type === "opened") {
-        const won = ev.drops ?? 0;
-        setDrops(won);
-        setFinalRarity(ev.final_rarity || ev.rarity);
-        setOpened(true);
-        setLive(t("quests.chestOpened", { count: won, label: formatDropsLabel(won) }));
-        onApplied(won);
-        if (!still && imgRef.current) {
-          imgRef.current.animate(
-            [
-              { transform: "scale(0.85)", opacity: 0.4 },
-              { transform: "scale(1.06)", opacity: 1 },
-              { transform: "scale(1)", opacity: 1 },
-            ],
-            { duration: 500, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" },
-          );
-        }
-      } else if (!still) {
-        const el = imgRef.current;
-        if (el) {
-          el.getAnimations().forEach((a) => a.cancel());
-          if (ev.type === "upgraded") {
-            setLive(t("quests.chestUpgraded"));
-            el.animate(
-              [
-                { transform: "translateY(0) scale(1)" },
-                { transform: "translateY(-14px) scale(1.08)" },
-                { transform: "translateY(0) scale(0.95)" },
-                { transform: "translateY(-6px) scale(1.03)" },
-                { transform: "translateY(0) scale(1)" },
-              ],
-              { duration: 600, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" },
-            );
-          } else {
-            el.animate(
-              [
-                { transform: "translateX(0)" },
-                { transform: "translateX(-8px)" },
-                { transform: "translateX(7px)" },
-                { transform: "translateX(-5px)" },
-                { transform: "translateX(4px)" },
-                { transform: "translateX(0)" },
-              ],
-              { duration: 400, easing: "ease-in-out" },
-            );
-          }
-        } else if (ev.type === "upgraded") {
-          setLive(t("quests.chestUpgraded"));
-        }
-      } else if (ev.type === "upgraded") {
-        setLive(t("quests.chestUpgraded"));
+  const tap = useCallback(() => {
+    if (steps.length === 0 || revealed >= steps.length || opened) return;
+    const next = steps[revealed];
+    setRevealed((n) => n + 1);
+    setRarity(next.rarity);
+    setLeft(next.attempts_left);
+    if (next.type === "opened") {
+      setOpened(true);
+      setLive(t("quests.chestOpened", { count: drops, label: formatDropsLabel(drops) }));
+      if (!still && imgRef.current) {
+        imgRef.current.animate(
+          [
+            { transform: "scale(0.85)", opacity: 0.4 },
+            { transform: "scale(1.06)", opacity: 1 },
+            { transform: "scale(1)", opacity: 1 },
+          ],
+          { duration: 500, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" },
+        );
       }
-    } catch (err) {
-      // 409 = opened elsewhere (or doubled): the row is dead, drop it.
-      if ((err as { status?: number })?.status === 409) {
-        onExpired();
-        onClose();
-      } else {
-        // Visible, not just screen-reader: a stuck chest with silent taps
-        // is indistinguishable from a broken mechanic (e.g. a stale backend
-        // that doesn't know /tap yet answers 404 here).
-        toast.error(t("quests.openFailed"));
-        setLive(t("quests.openFailed"));
-      }
-    } finally {
-      setBusy(false);
+      return;
     }
-  }, [busy, opened, tapChest, total, still, controls, onApplied, onProgress, onExpired, onClose, t]);
+    if (still) {
+      if (next.type === "upgraded") setLive(t("quests.chestUpgraded"));
+      return;
+    }
+    const el = imgRef.current;
+    if (!el) {
+      if (next.type === "upgraded") setLive(t("quests.chestUpgraded"));
+      return;
+    }
+    el.getAnimations().forEach((a) => a.cancel());
+    if (next.type === "upgraded") {
+      setLive(t("quests.chestUpgraded"));
+      el.animate(
+        [
+          { transform: "translateY(0) scale(1)" },
+          { transform: "translateY(-14px) scale(1.08)" },
+          { transform: "translateY(0) scale(0.95)" },
+          { transform: "translateY(-6px) scale(1.03)" },
+          { transform: "translateY(0) scale(1)" },
+        ],
+        { duration: 600, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" },
+      );
+    } else {
+      el.animate(
+        [
+          { transform: "translateX(0)" },
+          { transform: "translateX(-8px)" },
+          { transform: "translateX(7px)" },
+          { transform: "translateX(-5px)" },
+          { transform: "translateX(4px)" },
+          { transform: "translateX(0)" },
+        ],
+        { duration: 400, easing: "ease-in-out" },
+      );
+    }
+  }, [steps, revealed, opened, drops, still, t]);
 
   return createPortal(
     <div
@@ -254,21 +263,21 @@ export function ChestOpenModal({
       aria-modal="true"
       aria-label={title}
       tabIndex={-1}
-      onClick={onClose}
+      onClick={opened ? onClose : undefined}
       className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-5 bg-black/60 p-4 backdrop-blur-md focus-visible:outline-none"
     >
       <span aria-hidden className="pointer-events-none absolute inset-0 opacity-30" style={{ background: `radial-gradient(ellipse 60% 45% at 50% 42%, ${color}66, transparent 70%)` }} />
 
-      {/* The chest: the only control on stage. Taps roll mid-session;
-          after the opening tap any click dismisses (reward is credited). */}
+      {/* The chest: the only control on stage. Mid-ceremony taps reveal
+          the next pre-rolled step; after the opening tap any click closes. */}
       <motion.button
         type="button"
         onClick={(e) => {
           e.stopPropagation();
           if (opened) onClose();
-          else void tap();
+          else tap();
         }}
-        disabled={busy}
+        disabled={steps.length === 0}
         animate={controls}
         whileTap={still ? undefined : { scale: 0.94 }}
         aria-label={
@@ -321,7 +330,7 @@ export function ChestOpenModal({
       )}
 
       {/* Screen-reader dismissal: no visible chrome, but keyboard users
-          still get a labelled control (Escape works too). */}
+          still get a labelled control (Escape works too, once opened). */}
       <button type="button" onClick={onClose} tabIndex={-1} className="sr-only">
         {t("common.close")}
       </button>
