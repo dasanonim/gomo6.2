@@ -230,3 +230,65 @@ func TestTapChest_AlreadyOpened(t *testing.T) {
 		t.Errorf("unfulfilled: %v", err)
 	}
 }
+
+// Five straight misses on a fresh chest: the first four taps persist the
+// shrinking session, the fifth (last attempt) opens at common and credits.
+// This is the exact "после последней попытки выпадает награда" path.
+func TestTapChest_ExhaustionOpensAtCommon(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	e := New(db, claimTestCatalog(t))
+
+	session := func(left int) string {
+		return `{"mechanic_key":"rarity_chest","rarity":"common","attempts_left":` + string(rune('0'+left)) + `,"opened":false}`
+	}
+	// First tap reads NULL (never tapped); the rest read back the session
+	// the previous tap stored.
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT mechanic, session::text").WithArgs("c1", "u1").
+		WillReturnRows(sqlmock.NewRows([]string{"mechanic", "session", "opened"}).AddRow("rarity_chest", nil, false))
+	for i := 4; i >= 1; i-- {
+		mock.ExpectExec("UPDATE quest_chests SET session").WithArgs(sqlmock.AnyArg(), "c1").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+		if i > 1 {
+			mock.ExpectBegin()
+			mock.ExpectQuery("SELECT mechanic, session::text").WithArgs("c1", "u1").
+				WillReturnRows(sqlmock.NewRows([]string{"mechanic", "session", "opened"}).AddRow("rarity_chest", session(i), false))
+		}
+	}
+	// The last attempt: credit chain + stamp, like any opening tap.
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT mechanic, session::text").WithArgs("c1", "u1").
+		WillReturnRows(sqlmock.NewRows([]string{"mechanic", "session", "opened"}).AddRow("rarity_chest", session(1), false))
+	mock.ExpectQuery("UPDATE users SET drops").WithArgs(sqlmock.AnyArg(), "u1").
+		WillReturnRows(sqlmock.NewRows([]string{"drops"}).AddRow(120))
+	mock.ExpectExec("INSERT INTO drops_transactions").WithArgs("u1", "quest_reward", sqlmock.AnyArg(), 120, "quest", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE quest_chests SET opened_at").WithArgs(sqlmock.AnyArg(), "c1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	var last *ChestTap
+	for i := 0; i < 5; i++ {
+		last, err = e.tapChest(t.Context(), "quest_chests", "quest_reward", "quest", "Quest chest", "u1", "c1", fixedTapSource(0.99))
+		if err != nil {
+			t.Fatalf("tap %d: %v", i+1, err)
+		}
+		if i < 4 && last.Type != "failed" {
+			t.Fatalf("tap %d: expected failed, got %+v", i+1, last)
+		}
+	}
+	if last.Type != "opened" || last.FinalRarity != "common" {
+		t.Fatalf("5th tap must open at common, got %+v", last)
+	}
+	if last.Drops <= 0 {
+		t.Fatalf("the last attempt must credit drops, got %+v", last)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled: %v", err)
+	}
+}

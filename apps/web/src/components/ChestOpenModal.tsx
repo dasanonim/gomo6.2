@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { motion, useAnimation, useReducedMotion } from "motion/react";
 import { Gift, X } from "lucide-react";
+import { toast } from "sonner";
 import { CurrencyIcon } from "@/components/CurrencyIcon";
 import { useMotionOff } from "@/hooks/useTransitionStyle";
 import { cn } from "@/lib/utils";
@@ -228,6 +229,10 @@ export function ChestOpenModal({
         onExpired();
         onClose();
       } else {
+        // Visible, not just screen-reader: a stuck chest with silent taps
+        // is indistinguishable from a broken mechanic (e.g. a stale backend
+        // that doesn't know /tap yet answers 404 here).
+        toast.error(t("quests.openFailed"));
         setLive(t("quests.openFailed"));
       }
     } finally {
